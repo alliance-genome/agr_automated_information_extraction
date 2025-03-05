@@ -19,7 +19,7 @@ def upload_dataset_from_csv(csv_file: str, title: str, description: str, mod_abb
             if not agrkb_id:
                 xref = row.get('XREF')
                 agrkb_id = get_curie_from_xref(xref)
-                if not agrkb_id or not positive:
+                if not agrkb_id:
                     logger.warning(f"Skipping invalid row: {row}")
                     continue
             add_entry_to_dataset(mod_abbreviation=mod_abbreviation, topic=topic, dataset_type="document",
