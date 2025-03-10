@@ -4,7 +4,7 @@ ENV TZ=UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /usr/src/app
 ADD ./requirements.txt .
-ADD abc_utils.py .
+ADD utils/abc_utils.py .
 ADD agr_document_classifier/agr_document_classifier.py .
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .

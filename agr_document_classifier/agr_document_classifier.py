@@ -5,7 +5,6 @@ import json
 import logging
 import os
 import os.path
-import re
 import shutil
 import sys
 from collections import defaultdict
@@ -20,7 +19,7 @@ import requests.exceptions
 from gensim.models import KeyedVectors
 from grobid_client import Client
 from grobid_client.api.pdf import process_fulltext_document
-from grobid_client.models import Article, ProcessForm, TextWithRefs
+from grobid_client.models import Article, ProcessForm
 from grobid_client.types import TEI, File
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
@@ -28,12 +27,13 @@ from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
-from abc_utils import get_jobs_to_classify, download_tei_files_for_references, send_classification_tag_to_abc, \
+from utils.abc_utils import get_jobs_to_classify, download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     job_category_topic_map, set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
     upload_classification_model, download_classification_model, set_job_failure
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
+from utils.tei_utils import get_sentences_from_tei_section
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -226,26 +226,6 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, 
 
 def load_classifier(mod_abbreviation, topic, file_path):
     download_classification_model(mod_abbreviation=mod_abbreviation, topic=topic, output_path=file_path)
-
-
-def get_sentences_from_tei_section(section):
-    sentences = []
-    num_errors = 0  # Initialize error count
-    for paragraph in section.paragraphs:
-        if isinstance(paragraph, TextWithRefs):
-            paragraph = [paragraph]
-        for sentence in paragraph:
-            try:
-                if not sentence.text.isdigit() and not (
-                        len(section.paragraphs) == 3 and
-                        section.paragraphs[0][0].text in ['\n', ' '] and
-                        section.paragraphs[-1][0].text in ['\n', ' ']
-                ):
-                    sentences.append(re.sub('<[^<]+>', '', sentence.text))
-            except Exception as e:
-                num_errors += 1
-    sentences = [sentence if sentence.endswith(".") else f"{sentence}." for sentence in sentences]
-    return sentences, num_errors
 
 
 def remove_stopwords(text):

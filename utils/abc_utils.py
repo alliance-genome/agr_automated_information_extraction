@@ -523,7 +523,8 @@ def get_all_ref_curies(mod_abbreviation: str):
         cursor = connection.cursor()
 
         mod_query = f"SELECT mod_id FROM mod WHERE abbreviation = '{mod_abbreviation}'"
-        mod_id = cursor.execute(mod_query).fetchone()[0]
+        cursor.execute(mod_query)
+        mod_id = cursor.fetchone()[0]
         # Query to fetch CURIEs
         query = f"SELECT curie FROM reference WHERE reference_id IN (SELECT reference_id FROM mod_corpus_association WHERE mod_id = {mod_id} AND corpus is true)"
         cursor.execute(query)

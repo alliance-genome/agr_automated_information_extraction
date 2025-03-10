@@ -2,7 +2,7 @@ import csv
 import logging
 import sys
 
-from abc_utils import get_curie_from_xref, create_dataset, add_entry_to_dataset
+from utils.abc_utils import get_curie_from_xref, create_dataset, add_entry_to_dataset
 
 logger = logging.getLogger(__name__)
 

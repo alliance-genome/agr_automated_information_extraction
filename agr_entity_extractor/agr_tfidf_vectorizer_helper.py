@@ -1,9 +1,11 @@
-import os
 import argparse
+import os
 
+from grobid_client.types import TEI
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-from abc_utils import get_all_ref_curies, download_tei_files_for_references
+from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references
+from utils.tei_utils import get_sentences_from_tei_section, convert_tei_to_text
 
 
 def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None):
@@ -11,8 +13,22 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None):
     download_dir = os.getenv("AGR_CORPUS_DOWNLOAD_DIR", "/tmp/alliance_corpus")
     download_tei_files_for_references(ref_curies, download_dir, mod_abbreviation=mod_abbreviation)
     downloaded_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".tei"))
+
+    for tei_file in downloaded_files:
+        try:
+            with open(tei_file, "rb") as file_stream:
+                article = TEI.parse(file_stream, figures=True)
+                article_text = convert_tei_to_text(article)
+                with open(tei_file.replace(".tei", ".txt"), "w") as text_file:
+                    text_file.write(article_text)
+                os.remove(tei_file)
+        except Exception as e:
+            print(f"Error parsing TEI file {tei_file}: {e}")
+            continue
+
     tfidf_vectorizer = TfidfVectorizer(input='filename')
-    tfidf_vectorizer.fit(downloaded_files)
+    text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
+    tfidf_vectorizer.fit(text_files)
     return tfidf_vectorizer
 
 
