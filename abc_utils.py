@@ -3,12 +3,11 @@ import json
 import logging
 import os
 import urllib.request
-from enum import Enum
 from typing import List
 from urllib.error import HTTPError
 
+import psycopg2
 import requests
-from cachetools import TTLCache
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "literature-rest.alliancegenome.org")
@@ -293,7 +292,7 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
         logger.error(e)
 
 
-def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation, progress_interval=0.0):
+def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
     for idx, reference_curie in enumerate(reference_curies, start=1):
         all_reffiles_for_pap_api = f'https://{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
@@ -506,3 +505,36 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
                 all_curated_entity_names.append(entity_name)
         current_page += 1
     return all_curated_entity_names
+
+
+def get_all_ref_curies(mod_abbreviation: str):
+    db_params = {
+        "dbname": os.getenv("DB_NAME", "default_dbname"),
+        "user": os.getenv("DB_USER", "default_user"),
+        "password": os.getenv("DB_PASSWORD", "default_password"),
+        "host": os.getenv("DB_HOST", "default_host"),
+        "port": os.getenv("DB_PORT", "default_port")
+    }
+
+    curies = []
+    try:
+        # Connect to PostgreSQL
+        connection = psycopg2.connect(**db_params)
+        cursor = connection.cursor()
+
+        mod_query = f"SELECT mod_id FROM mod WHERE abbreviation = '{mod_abbreviation}'"
+        mod_id = cursor.execute(mod_query).fetchone()[0]
+        # Query to fetch CURIEs
+        query = f"SELECT curie FROM reference WHERE reference_id IN (SELECT reference_id FROM mod_corpus_association WHERE mod_id = {mod_id} AND corpus is true)"
+        cursor.execute(query)
+
+        # Fetch the result
+        curies = [row[0] for row in cursor.fetchall()]
+
+        # Close cursor and connection
+        cursor.close()
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error while fetching CURIEs from database: {e}")
+
+    return curies
