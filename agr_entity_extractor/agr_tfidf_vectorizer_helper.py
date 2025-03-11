@@ -12,6 +12,23 @@ from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 logger = logging.getLogger(__name__)
 
 
+class CustomTokenizer:
+    def __init__(self, model_name, additional_tokens=None):
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
+        if additional_tokens:
+            self.tokenizer.add_tokens(additional_tokens)
+        self.max_length = self.tokenizer.model_max_length
+
+    def __call__(self, text):
+        # Split the text into smaller chunks
+        tokens = []
+        for i in range(0, len(text), self.max_length):
+            chunk = text[i:i + self.max_length]
+            chunk_tokens = self.tokenizer.tokenize(chunk)
+            tokens.extend(chunk_tokens)
+        return tokens
+
+
 def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir: bool = False):
     download_dir = os.getenv("AGR_CORPUS_DOWNLOAD_DIR", "/tmp/alliance_corpus")
     if wipe_download_dir:
@@ -44,14 +61,8 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
     curated_genes = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
     curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     logger.info("Loading BioBERT tokenizer and adding curated genes and alleles to it.")
-    tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
-    tokenizer.add_tokens(curated_genes + curated_alleles, special_tokens=False)
-
-    # Custom tokenizer function
-    def custom_tokenizer(text):
-        tokens = tokenizer.tokenize(text)
-        return tokens
-
+    custom_tokenizer = CustomTokenizer(model_name="dmis-lab/biobert-base-cased-v1.2",
+                                       additional_tokens=curated_genes + curated_alleles)
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=custom_tokenizer)
     text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
     logger.info(f"Fitting TFIDF vectorizer on text files.")
