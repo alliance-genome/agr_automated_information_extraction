@@ -3,11 +3,11 @@ import logging
 import os
 import shutil
 
-from grobid_client.types import TEI
 from sklearn.feature_extraction.text import TfidfVectorizer
+from transformers import AutoTokenizer
 
-from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references
-from utils.tei_utils import get_sentences_from_tei_section, convert_tei_to_text, convert_all_tei_files_in_dir_to_txt
+from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references, get_all_curated_entities
+from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 logger = logging.getLogger(__name__)
 
@@ -33,10 +33,36 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
 
     if tei_files_present:
         convert_all_tei_files_in_dir_to_txt(download_dir)
-    tfidf_vectorizer = TfidfVectorizer(input='filename')
+
+    curated_genes = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
+    #curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
+    tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
+    tokenizer.add_tokens(curated_genes)
+
+    # Custom tokenizer function
+    def custom_tokenizer(text):
+        tokens = tokenizer.tokenize(text)
+        return tokens
+
+    tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=custom_tokenizer)
     text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
     tfidf_vectorizer.fit(text_files)
-    return tfidf_vectorizer
+    string_vectorizer = TfidfVectorizer(vocabulary=tfidf_vectorizer.vocabulary_)
+    dummy_corpus = ["dummy document"]
+    string_vectorizer.fit(dummy_corpus)
+
+    tfidf_matrix = string_vectorizer.transform(["this is a test for lin-12"])
+
+    # Get feature names (words)
+    feature_names = string_vectorizer.get_feature_names_out()
+
+    # Find the index of the word
+    word = "lin-12"
+    word_index = feature_names.tolist().index(word)
+
+    # Get the TF-IDF value for the word
+    tfidf_value = tfidf_matrix[0, word_index]
+    return string_vectorizer
 
 
 def save_vectorizer_to_file(vectorizer, output_path="tfidf_vectorizer.pkl"):

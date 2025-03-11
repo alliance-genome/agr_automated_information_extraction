@@ -7,7 +7,7 @@ from agr_entity_extractor.string_matching_extractor import AllianceStringMatchin
 def extractor():
     c_elegans_genes = ["lin-12", "ced-3"]
     config = PretrainedConfig(num_labels=2)
-    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased")
+    tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
     tokenizer.add_tokens(c_elegans_genes)
     # Wrap the tokenizer with the custom pre-tokenizer
     return AllianceStringMatchingEntityExtractor(
