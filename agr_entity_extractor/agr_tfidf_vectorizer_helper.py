@@ -119,6 +119,7 @@ def main():
     vectorizer = fit_vectorizer_on_agr_corpus(mod_abbreviation=args.mod_abbreviation,
                                               wipe_download_dir=args.wipe_download_dir)
     save_vectorizer_to_file(vectorizer, args.output_path)
+    logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
     if args.upload_to_alliance:
         stats = {
             "model_name": "TFIDF vectorizer",
@@ -129,7 +130,7 @@ def main():
         }
         upload_ml_model(task_type="tfidf_vectorization", mod_abbreviation=args.mod_abbreviation, topic=None,
                         model_path=args.output_path, stats=stats, dataset_id=None, file_extension="pkl")
-    print(f"TFIDF vectorizer saved to {args.output_path}")
+        logger.info(f"TFIDF vectorizer uploaded to the Alliance API for {args.mod_abbreviation}.")
 
 
 if __name__ == "__main__":

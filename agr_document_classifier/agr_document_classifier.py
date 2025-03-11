@@ -220,8 +220,8 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
     model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
-    upload_ml_model("biocuration_topic_classification", mod_abbreviation, topic, model_path, stats,
-                    dataset_id=dataset_id, file_extension="joblib")
+    upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
+                    model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
 
 def load_classifier(mod_abbreviation, topic, file_path):
