@@ -35,9 +35,9 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
         convert_all_tei_files_in_dir_to_txt(download_dir)
 
     curated_genes = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
-    #curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
+    curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     tokenizer = AutoTokenizer.from_pretrained("dmis-lab/biobert-base-cased-v1.2")
-    tokenizer.add_tokens(curated_genes)
+    tokenizer.add_tokens(curated_genes + curated_alleles, special_tokens=False)
 
     # Custom tokenizer function
     def custom_tokenizer(text):
@@ -47,21 +47,9 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=custom_tokenizer)
     text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
     tfidf_vectorizer.fit(text_files)
-    string_vectorizer = TfidfVectorizer(vocabulary=tfidf_vectorizer.vocabulary_)
+    string_vectorizer = TfidfVectorizer(vocabulary=tfidf_vectorizer.vocabulary_, tokenizer=custom_tokenizer)
     dummy_corpus = ["dummy document"]
     string_vectorizer.fit(dummy_corpus)
-
-    tfidf_matrix = string_vectorizer.transform(["this is a test for lin-12"])
-
-    # Get feature names (words)
-    feature_names = string_vectorizer.get_feature_names_out()
-
-    # Find the index of the word
-    word = "lin-12"
-    word_index = feature_names.tolist().index(word)
-
-    # Get the TF-IDF value for the word
-    tfidf_value = tfidf_matrix[0, word_index]
     return string_vectorizer
 
 
