@@ -30,7 +30,7 @@ from sklearn.preprocessing import StandardScaler
 from utils.abc_utils import get_jobs_to_classify, download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     job_category_topic_map, set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
-    upload_classification_model, download_classification_model, set_job_failure
+    upload_ml_model, download_classification_model, set_job_failure
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
 from utils.tei_utils import get_sentences_from_tei_section
@@ -220,8 +220,8 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
     model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
-    upload_classification_model(mod_abbreviation, topic, model_path, stats, dataset_id=dataset_id,
-                                file_extension="joblib")
+    upload_ml_model("biocuration_topic_classification", mod_abbreviation, topic, model_path, stats,
+                    dataset_id=dataset_id, file_extension="joblib")
 
 
 def load_classifier(mod_abbreviation, topic, file_path):
@@ -482,10 +482,11 @@ def upload_pre_existing_model(args, training_set):
     stats["average_precision"] = stats["precision"]
     stats["average_recall"] = stats["recall"]
     stats["average_f1"] = stats["f1_score"]
-    upload_classification_model(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                model_path=f"/data/agr_document_classifier/training/{args.mod_train}_"
-                                           f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
-                                stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
+    upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
+                    topic=args.datatype_train,
+                    model_path=f"/data/agr_document_classifier/training/{args.mod_train}_"
+                               f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
+                    stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
 def train_and_save_model(args, training_data_dir, training_set):

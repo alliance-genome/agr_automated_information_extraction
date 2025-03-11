@@ -6,7 +6,8 @@ import shutil
 from sklearn.feature_extraction.text import TfidfVectorizer
 from transformers import AutoTokenizer
 
-from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references, get_all_curated_entities
+from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references, get_all_curated_entities, \
+    upload_ml_model
 from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 logger = logging.getLogger(__name__)
@@ -103,6 +104,10 @@ def main():
     )
     parser.add_argument("--wipe-download-dir", action="store_true",
                         help="If set, wipes the download directory before processing")
+    parser.add_argument("--log-level", default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    parser.add_argument("-u", "--upload-to-alliance", action="store_true",
+                        help="If set, uploads the vectorizer to the Alliance API")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -114,6 +119,16 @@ def main():
     vectorizer = fit_vectorizer_on_agr_corpus(mod_abbreviation=args.mod_abbreviation,
                                               wipe_download_dir=args.wipe_download_dir)
     save_vectorizer_to_file(vectorizer, args.output_path)
+    if args.upload_to_alliance:
+        stats = {
+            "model_name": "TFIDF vectorizer",
+            "average_precision": None,
+            "average_recall": None,
+            "average_f1": None,
+            "best_params": None,
+        }
+        upload_ml_model(task_type="tfidf_vectorization", mod_abbreviation=args.mod_abbreviation, topic=None,
+                        model_path=args.output_path, stats=stats, dataset_id=None, file_extension="pkl")
     print(f"TFIDF vectorizer saved to {args.output_path}")
 
 
