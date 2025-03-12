@@ -109,16 +109,5 @@ POSSIBLE_CLASSIFIERS = {
             'learning_rate': ['constant', 'optimal', 'invscaling', 'adaptive'],  # Learning rate schedule
             'eta0': [0.01, 0.1, 1]  # Initial learning rate for the 'constant', 'invscaling' or 'adaptive' schedules
         }
-    },
-    'Perceptron': {
-        'model': Perceptron(random_state=42, max_iter=1000),
-        'params': {
-            'penalty': [None, 'l2', 'l1', 'elasticnet'],  # The penalty (aka regularization term) to be used
-            'alpha': np.logspace(-6, -1, 10),  # Constant that multiplies the regularization term
-            'fit_intercept': [True, False],  # Whether the intercept should be estimated or not
-            'shuffle': [True, False],  # Whether or not the training data should be shuffled after each epoch
-            'eta0': [0.01, 0.1, 1],  # Constant by which the updates are multiplied
-            'warm_start': [True, False]  # Whether to reuse the solution of the previous call to fit as initialization
-        }
     }
 }
