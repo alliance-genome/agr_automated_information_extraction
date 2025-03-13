@@ -363,6 +363,8 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
     }
 
     model_dir = os.path.dirname(model_path)
+    if topic is None:
+        topic = "no_topic"
     metadata_filename = f"{mod_abbreviation}_{topic.replace(':', '_')}_metadata.json"
     metadata_path = os.path.join(model_dir, metadata_filename)
     with open(metadata_path, "w") as metadata_file:
