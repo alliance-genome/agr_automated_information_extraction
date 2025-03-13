@@ -30,9 +30,10 @@ class CustomTokenizer:
         return tokens
 
 
-def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir: bool = False):
+def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir: bool = False,
+                                 continue_download: bool = False,):
     download_dir = os.getenv("AGR_CORPUS_DOWNLOAD_DIR", "/tmp/alliance_corpus")
-    if wipe_download_dir:
+    if wipe_download_dir and not continue_download:
         logger.info(f"Wiping download directory: {download_dir}")
         if os.path.exists(download_dir):
             shutil.rmtree(download_dir)
@@ -41,15 +42,22 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
 
     tei_files_present = False
     txt_files_present = False
-    if os.path.exists(download_dir) and len(os.listdir(download_dir)) > 0:
-        tei_files_present = len([file for file in os.listdir(download_dir) if file.endswith(".tei")]) > 0
-        txt_files_present = len([file for file in os.listdir(download_dir) if file.endswith(".txt")]) > 0
+    if not continue_download:
+        if os.path.exists(download_dir) and len(os.listdir(download_dir)) > 0:
+            tei_files_present = len([file for file in os.listdir(download_dir) if file.endswith(".tei")]) > 0
+            txt_files_present = len([file for file in os.listdir(download_dir) if file.endswith(".txt")]) > 0
 
     if not tei_files_present and not txt_files_present:
-        logger.info("No TEI files found in the download directory. Downloading TEI files.")
+        if not continue_download:
+            logger.info("No TEI files found in the download directory. Downloading TEI files.")
         logger.info(f"Getting all reference curies for {mod_abbreviation} from the Alliance ABC API.")
         ref_curies = get_all_ref_curies(mod_abbreviation=mod_abbreviation)
         logger.info(f"Downloading TEI files for {len(ref_curies)} references.")
+        if continue_download:
+            logger.info("Skipping download of TEI files that are already present.")
+            ref_curies_present = set(f.replace("_", ":")[:-4] for f in os.listdir(download_dir)
+                                     if f.endswith(".tei"))
+            ref_curies = list(set(ref_curies) - ref_curies_present)
         download_tei_files_for_references(ref_curies, download_dir, mod_abbreviation=mod_abbreviation)
         tei_files_present = True
 
@@ -108,6 +116,8 @@ def main():
                         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
     parser.add_argument("-u", "--upload-to-alliance", action="store_true",
                         help="If set, uploads the vectorizer to the Alliance API")
+    parser.add_argument("-c", "--continue-download", action="store_true",
+                        help="If set, the script will skip the download of TEI files that are already present.")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -117,7 +127,8 @@ def main():
         stream=None)
 
     vectorizer = fit_vectorizer_on_agr_corpus(mod_abbreviation=args.mod_abbreviation,
-                                              wipe_download_dir=args.wipe_download_dir)
+                                              wipe_download_dir=args.wipe_download_dir,
+                                              continue_download=args.continue_download)
     save_vectorizer_to_file(vectorizer, args.output_path)
     logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
     if args.upload_to_alliance:
