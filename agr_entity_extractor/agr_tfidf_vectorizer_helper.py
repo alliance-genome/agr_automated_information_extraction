@@ -69,7 +69,7 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
                 "tokenizer.")
     curated_genes = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
     # curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
-    logger.info("Loading BioBERT tokenizer and adding curated genes and alleles to it.")
+    logger.info("Loading BioBERT tokenizer and adding curated genes to it.")
     custom_tokenizer = CustomTokenizer(model_name="dmis-lab/biobert-base-cased-v1.2",
                                        additional_tokens=curated_genes)
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=custom_tokenizer)
