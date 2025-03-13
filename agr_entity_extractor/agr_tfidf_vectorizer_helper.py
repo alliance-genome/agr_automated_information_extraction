@@ -126,11 +126,14 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=None)
 
-    vectorizer = fit_vectorizer_on_agr_corpus(mod_abbreviation=args.mod_abbreviation,
-                                              wipe_download_dir=args.wipe_download_dir,
-                                              continue_download=args.continue_download)
-    save_vectorizer_to_file(vectorizer, args.output_path)
-    logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
+    if not os.path.exists(args.output_path):
+
+        vectorizer = fit_vectorizer_on_agr_corpus(mod_abbreviation=args.mod_abbreviation,
+                                                  wipe_download_dir=args.wipe_download_dir,
+                                                  continue_download=args.continue_download)
+        save_vectorizer_to_file(vectorizer, args.output_path)
+        logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
+
     if args.upload_to_alliance:
         stats = {
             "model_name": "TFIDF vectorizer",
