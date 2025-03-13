@@ -68,10 +68,10 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
     logger.info("Downloading list of curated genes and alleles from the Alliance ABC API and adding them to the "
                 "tokenizer.")
     curated_genes = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
-    curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
+    # curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     logger.info("Loading BioBERT tokenizer and adding curated genes and alleles to it.")
     custom_tokenizer = CustomTokenizer(model_name="dmis-lab/biobert-base-cased-v1.2",
-                                       additional_tokens=curated_genes + curated_alleles)
+                                       additional_tokens=curated_genes)
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=custom_tokenizer)
     text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
     logger.info(f"Fitting TFIDF vectorizer on text files.")
