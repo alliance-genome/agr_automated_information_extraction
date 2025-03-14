@@ -32,13 +32,7 @@ def convert_tei_to_text(tei_object):
         sec_sentences, _ = get_sentences_from_tei_section(section)
         sentences.extend(sec_sentences)
     fulltext = " ".join(sentences)
-    abstract = ""
-    for section in tei_object.sections:
-        if section.name == "ABSTRACT":
-            abs_sentences, _ = get_sentences_from_tei_section(section)
-            abstract = " ".join(abs_sentences)
-            break
-    return f"{tei_object.title}\n\n{abstract}\n\n{fulltext}"
+    return fulltext
 
 
 def convert_all_tei_files_in_dir_to_txt(dir_path):

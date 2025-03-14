@@ -30,7 +30,7 @@ from sklearn.preprocessing import StandardScaler
 from utils.abc_utils import get_jobs_to_classify, download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     job_category_topic_map, set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
-    upload_ml_model, download_classification_model, set_job_failure
+    upload_ml_model, download_abc_model, set_job_failure, load_all_jobs
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
 from utils.tei_utils import get_sentences_from_tei_section
@@ -224,8 +224,8 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, 
                     model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
 
-def load_classifier(mod_abbreviation, topic, file_path):
-    download_classification_model(mod_abbreviation=mod_abbreviation, topic=topic, output_path=file_path)
+def load_abc_model(mod_abbreviation, topic, file_path, task_type):
+    download_abc_model(mod_abbreviation=mod_abbreviation, topic=topic, output_path=file_path, task_type=task_type)
 
 
 def remove_stopwords(text):
@@ -356,40 +356,18 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def load_jobs_to_classify():
-    mod_datatype_jobs = defaultdict(list)
-    limit = 1000
-    offset = 0
-    jobs_already_added = set()
-    logger.info("Loading jobs to classify from ABC ...")
-
-    while all_jobs := get_jobs_to_classify(limit, offset):
-        for job in all_jobs:
-            reference_id = job["reference_id"]
-            datatype = job["job_name"].replace("_classification_job", "")
-            mod_id = job["mod_id"]
-            if (mod_id, datatype, reference_id) not in jobs_already_added:
-                mod_datatype_jobs[(mod_id, datatype)].append(job)
-                jobs_already_added.add((mod_id, datatype, reference_id))
-        offset += limit
-
-    logger.info("Finished loading jobs to classify from ABC ...")
-    return mod_datatype_jobs
-
-
-def process_classification_jobs(mod_id, datatype, jobs, embedding_model):
+def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    datatype = datatype.replace(" ", "_")
-    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr)
-    topic = job_category_topic_map[datatype]
-    classifier_file_path = f"/data/agr_document_classifier/{mod_abbr}_{datatype}_classifier.joblib"
+    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, pipeline_name="abc_document_classifier")
+    classifier_file_path = (f"/data/agr_document_classifier/biocuration_topic_classification_{mod_abbr}_"
+                            f"{topic.replace(':', '_')}_classifier.joblib")
     try:
-        load_classifier(mod_abbr, topic, classifier_file_path)
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic} ({datatype}).")
+        load_abc_model(mod_abbreviation=mod_abbr, topic=topic, file_path=classifier_file_path,
+                       task_type="biocuration_topic_classification")
+        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic} ({datatype}). "
-                           f"Skipping.")
+            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
             return
         else:
             raise
@@ -516,11 +494,11 @@ def train_mode(args):
 
 
 def classify_mode(args):
-    mod_datatype_jobs = load_jobs_to_classify()
+    mod_topic_jobs = load_all_jobs("classification_job")
     embedding_model = load_embedding_model(args.embedding_model_path)
 
-    for (mod_id, datatype), jobs in mod_datatype_jobs.items():
-        process_classification_jobs(mod_id, datatype, jobs, embedding_model)
+    for (mod_id, topic), jobs in mod_topic_jobs.items():
+        process_classification_jobs(mod_id, topic, jobs, embedding_model)
 
 
 def main():

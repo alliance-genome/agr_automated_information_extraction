@@ -3,7 +3,8 @@ import json
 import logging
 import os
 import urllib.request
-from typing import List
+from collections import defaultdict
+from typing import List, Tuple, Dict
 from urllib.error import HTTPError
 
 import psycopg2
@@ -92,8 +93,8 @@ def get_curie_from_reference_id(reference_id):
         logger.error(e)
 
 
-def get_tet_source_id(mod_abbreviation: str):
-    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/abc_document_classifier/{mod_abbreviation}'
+def get_tet_source_id(mod_abbreviation: str, pipeline_name: str):
+    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/{pipeline_name}/{mod_abbreviation}'
            f'/{mod_abbreviation}')
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
@@ -164,8 +165,8 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
         return False
 
 
-def get_jobs_to_classify(limit: int = 1000, offset: int = 0):
-    jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/classification_job?limit={limit}&offset={offset}'
+def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0):
+    jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
     request = urllib.request.Request(url=jobs_url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -242,6 +243,20 @@ def get_curie_from_xref(xref):
             return resp_obj["curie"]
     except HTTPError as e:
         logger.error(e)
+
+
+def get_pmids_from_reference_curies(curies: List[str]):
+    curie_pmid = {}
+    for curie in curies:
+        ref_data_api = f'{blue_api_base_url}/reference/{curie}'
+        request = urllib.request.Request(url=ref_data_api)
+        request.add_header("Content-type", "application/json")
+        request.add_header("Accept", "application/json")
+        with urllib.request.urlopen(request) as response:
+            resp = response.read().decode("utf8")
+            resp_obj = json.loads(resp)
+            curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
+                                 if xref["curie"].startswith("PMID")][0]
 
 
 def get_link_title_abstract_and_tpc(curie):
@@ -324,8 +339,9 @@ def convert_pdf_with_grobid(file_content):
     return response
 
 
-def download_classification_model(mod_abbreviation: str, topic: str, output_path: str):
-    download_url = f"{blue_api_base_url}/ml_model/download/biocuration_topic_classification/{mod_abbreviation}/{topic}"
+def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str,  topic: str = None):
+    download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
+            topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -541,3 +557,39 @@ def get_all_ref_curies(mod_abbreviation: str):
         logger.error(f"Error while fetching CURIEs from database: {e}")
 
     return curies
+
+
+def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
+    """
+    Loads and processes all jobs with a specified label from an external source, organizing
+    them by module ID and topic.
+
+    This function retrieves jobs in batches from an external source, identified by a
+    specific `job_label`. It processes each job, ensuring duplicates (based on their
+    module ID, topic, and reference ID) are not added multiple times. The jobs are
+    grouped by `(module ID, topic)` and returned in a dictionary for further usage.
+
+    :param job_label: The label used to filter and load jobs from the external database.
+    :type job_label: str
+    :return: A dictionary where keys are tuples of `(module ID, topic)` and the values
+        are lists of job dictionaries filtered and grouped accordingly.
+    :rtype: Dict[Tuple[str, str], List[dict]]
+    """
+    mod_datatype_jobs = defaultdict(list)
+    limit = 1000
+    offset = 0
+    jobs_already_added = set()
+    logger.info("Loading jobs from ABC ...")
+
+    while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset):
+        for job in all_jobs:
+            reference_id = job["reference_id"]
+            topic = job["topic"]
+            mod_id = job["mod_id"]
+            if (mod_id, topic, reference_id) not in jobs_already_added:
+                mod_datatype_jobs[(mod_id, topic)].append(job)
+                jobs_already_added.add((mod_id, topic, reference_id))
+        offset += limit
+
+    logger.info("Finished loading jobs to classify from ABC ...")
+    return mod_datatype_jobs
