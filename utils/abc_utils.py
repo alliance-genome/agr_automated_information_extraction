@@ -10,7 +10,7 @@ import psycopg2
 import requests
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
-blue_api_base_url = os.environ.get('ABC_API_SERVER', "literature-rest.alliancegenome.org")
+blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,7 @@ job_category_topic_map = {
 
 
 def get_mod_species_map():
-    url = f'https://{blue_api_base_url}/mod/taxons/default'
+    url = f'{blue_api_base_url}/mod/taxons/default'
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -43,7 +43,7 @@ def get_mod_species_map():
 
 
 def get_mod_id_from_abbreviation(mod_abbreviation):
-    url = f'https://{blue_api_base_url}/mod/{mod_abbreviation}'
+    url = f'{blue_api_base_url}/mod/{mod_abbreviation}'
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -79,7 +79,7 @@ def get_cached_mod_abbreviation_from_id(mod_id):
 
 
 def get_curie_from_reference_id(reference_id):
-    url = f'https://{blue_api_base_url}/reference/{reference_id}'
+    url = f'{blue_api_base_url}/reference/{reference_id}'
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -93,7 +93,7 @@ def get_curie_from_reference_id(reference_id):
 
 
 def get_tet_source_id(mod_abbreviation: str):
-    url = (f'https://{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/abc_document_classifier/{mod_abbreviation}'
+    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/abc_document_classifier/{mod_abbreviation}'
            f'/{mod_abbreviation}')
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
@@ -106,7 +106,7 @@ def get_tet_source_id(mod_abbreviation: str):
     except HTTPError as e:
         if e.code == 404:
             # Create a new source if not exists
-            create_url = f'https://{blue_api_base_url}/topic_entity_tag/source'
+            create_url = f'{blue_api_base_url}/topic_entity_tag/source'
             token = get_authentication_token()
             headers = generate_headers(token)
             create_data = json.dumps({
@@ -134,7 +134,7 @@ def get_tet_source_id(mod_abbreviation: str):
 
 def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, negated: bool,
                                    confidence_level: str, tet_source_id):
-    url = f'https://{blue_api_base_url}/topic_entity_tag/'
+    url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
         "created_by": "default_user",
@@ -165,7 +165,7 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
 
 
 def get_jobs_to_classify(limit: int = 1000, offset: int = 0):
-    jobs_url = f'https://{blue_api_base_url}/workflow_tag/jobs/classification_job?limit={limit}&offset={offset}'
+    jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/classification_job?limit={limit}&offset={offset}'
     request = urllib.request.Request(url=jobs_url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -179,7 +179,7 @@ def get_jobs_to_classify(limit: int = 1000, offset: int = 0):
 
 
 def set_job_started(job):
-    url = f'https://{blue_api_base_url}/workflow_tag/job/started/{job["reference_workflow_tag_id"]}'
+    url = f'{blue_api_base_url}/workflow_tag/job/started/{job["reference_workflow_tag_id"]}'
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -192,7 +192,7 @@ def set_job_started(job):
 
 
 def set_job_success(job):
-    url = f'https://{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
+    url = f'{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -205,7 +205,7 @@ def set_job_success(job):
 
 
 def set_job_failure(job):
-    url = f'https://{blue_api_base_url}/workflow_tag/job/failed/{job["reference_workflow_tag_id"]}'
+    url = f'{blue_api_base_url}/workflow_tag/job/failed/{job["reference_workflow_tag_id"]}'
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -218,7 +218,7 @@ def set_job_failure(job):
 
 
 def get_file_from_abc_reffile_obj(referencefile_json_obj):
-    file_download_api = (f"https://{blue_api_base_url}/reference/referencefile/download_file/"
+    file_download_api = (f"{blue_api_base_url}/reference/referencefile/download_file/"
                          f"{referencefile_json_obj['referencefile_id']}")
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -231,7 +231,7 @@ def get_file_from_abc_reffile_obj(referencefile_json_obj):
 
 
 def get_curie_from_xref(xref):
-    ref_by_xref_api = f'https://{blue_api_base_url}/reference/by_cross_reference/{xref}'
+    ref_by_xref_api = f'{blue_api_base_url}/reference/by_cross_reference/{xref}'
     request = urllib.request.Request(url=ref_by_xref_api)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -245,7 +245,7 @@ def get_curie_from_xref(xref):
 
 
 def get_link_title_abstract_and_tpc(curie):
-    ref_data_api = f'https://{blue_api_base_url}/reference/{curie}'
+    ref_data_api = f'{blue_api_base_url}/reference/{curie}'
     request = urllib.request.Request(url=ref_data_api)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -260,7 +260,7 @@ def get_link_title_abstract_and_tpc(curie):
 
 
 def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
-    all_reffiles_for_pap_api = f'https://{blue_api_base_url}/reference/referencefile/show_all/{agr_curie}'
+    all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{agr_curie}'
     request = urllib.request.Request(url=all_reffiles_for_pap_api)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -295,7 +295,7 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
     for idx, reference_curie in enumerate(reference_curies, start=1):
-        all_reffiles_for_pap_api = f'https://{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
+        all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
         request = urllib.request.Request(url=all_reffiles_for_pap_api)
         request.add_header("Content-type", "application/json")
         request.add_header("Accept", "application/json")
@@ -325,7 +325,7 @@ def convert_pdf_with_grobid(file_content):
 
 
 def download_classification_model(mod_abbreviation: str, topic: str, output_path: str):
-    download_url = f"https://{blue_api_base_url}/ml_model/download/biocuration_topic_classification/{mod_abbreviation}/{topic}"
+    download_url = f"{blue_api_base_url}/ml_model/download/biocuration_topic_classification/{mod_abbreviation}/{topic}"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -343,7 +343,7 @@ def download_classification_model(mod_abbreviation: str, topic: str, output_path
 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
                     topic: str = None, file_extension: str = ""):
-    upload_url = f"https://{blue_api_base_url}/ml_model/upload"
+    upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -364,8 +364,8 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
 
     model_dir = os.path.dirname(model_path)
     if topic is None:
-        topic = "no_topic"
-    metadata_filename = f"{mod_abbreviation}_{topic.replace(':', '_')}_metadata.json"
+        topic = "notopic"
+    metadata_filename = f"{task_type}_{mod_abbreviation}_{topic.replace(':', '_')}_metadata.json"
     metadata_path = os.path.join(model_dir, metadata_filename)
     with open(metadata_path, "w") as metadata_file:
         json.dump(metadata, metadata_file, indent=4)
@@ -395,7 +395,7 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
 
 # Function to create a dataset
 def create_dataset(title: str, description: str, mod_abbreviation: str, topic: str, dataset_type: str) -> (int, int):
-    create_dataset_url = f"https://{blue_api_base_url}/datasets/"
+    create_dataset_url = f"{blue_api_base_url}/datasets/"
     token = get_authentication_token()
     headers = generate_headers(token)
     payload = {
@@ -419,7 +419,7 @@ def create_dataset(title: str, description: str, mod_abbreviation: str, topic: s
 # Function to add an entry to the dataset
 def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, version: int, reference_curie: str,
                          classification_value: str):
-    add_entry_url = f"https://{blue_api_base_url}/datasets/data_entry/"
+    add_entry_url = f"{blue_api_base_url}/datasets/data_entry/"
     token = get_authentication_token()
     headers = generate_headers(token)
     payload = {
@@ -440,7 +440,7 @@ def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, v
 
 def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False):
     endpoint = "metadata" if metadata_only else "download"
-    response = requests.get(f"https://{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/")
+    response = requests.get(f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/")
     if response.status_code == 200:
         dataset = response.json()
         logger.info(f"Dataset {endpoint} downloaded successfully.")
