@@ -358,7 +358,7 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "precision": stats["average_precision"],
         "recall": stats["average_recall"],
         "f1_score": stats["average_f1"],
-        "parameters": str(stats["best_params"]),
+        "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
         "dataset_id": dataset_id
     }
 
