@@ -257,6 +257,7 @@ def get_pmids_from_reference_curies(curies: List[str]):
             resp_obj = json.loads(resp)
             curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
                                  if xref["curie"].startswith("PMID")][0]
+    return curie_pmid
 
 
 def get_link_title_abstract_and_tpc(curie):

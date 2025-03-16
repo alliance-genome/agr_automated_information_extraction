@@ -76,6 +76,15 @@ def convert_tei_to_txt(tei_directory):
         logger.error(f"Error converting TEI files: {e}")
 
 
+def rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict: dict, dir_to_convert: str, file_extension: str = "pdf"):
+    for curie, pmid in curie_to_pmid_dict.items():
+        curie_file = os.path.join(dir_to_convert, f"{curie.replace(':', '_')}.{file_extension}")
+        pmid_file = os.path.join(dir_to_convert, f"{pmid.replace(':', '_')}.{file_extension}")
+        if os.path.exists(curie_file):
+            os.rename(curie_file, pmid_file)
+            logger.info(f"Renamed {curie_file} to {pmid_file}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Download reference files from the Alliance using abc_utils."
@@ -118,30 +127,14 @@ def main():
 
     if args.download == "pdf":
         download_pdfs(output_directory, args.mod_abbreviation, curie_list)
-        for curie, pmid in curie_to_pmid_dict.items():
-            curie_file = os.path.join(output_directory, f"{curie.replace(':', '_')}.pdf")
-            pmid_file = os.path.join(output_directory, f"{pmid.replace(':', '_')}.pdf")
-            if os.path.exists(curie_file):
-                os.rename(curie_file, pmid_file)
-                logger.info(f"Renamed {curie_file} to {pmid_file}")
-
+        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="pdf")
     elif args.download == "tei":
         download_tei_files(output_directory, args.mod_abbreviation, curie_list)
-        for curie, pmid in curie_to_pmid_dict.items():
-            curie_file = os.path.join(output_directory, f"{curie.replace(':', '_')}.tei")
-            pmid_file = os.path.join(output_directory, f"{pmid.replace(':', '_')}.tei")
-            if os.path.exists(curie_file):
-                os.rename(curie_file, pmid_file)
-                logger.info(f"Renamed {curie_file} to {pmid_file}")
+        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="tei")
     elif args.download == "text":
         # First, download TEI files, then convert them to text files
         download_tei_files(output_directory, args.mod_abbreviation, curie_list)
-        for curie, pmid in curie_to_pmid_dict.items():
-            curie_file = os.path.join(output_directory, f"{curie.replace(':', '_')}.tei")
-            pmid_file = os.path.join(output_directory, f"{pmid.replace(':', '_')}.tei")
-            if os.path.exists(curie_file):
-                os.rename(curie_file, pmid_file)
-                logger.info(f"Renamed {curie_file} to {pmid_file}")
+        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="tei")
         convert_tei_to_txt(output_directory)
     else:
         logger.error("Invalid option for --download. Use 'pdf', 'tei', or 'text'.")
