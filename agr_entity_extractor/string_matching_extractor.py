@@ -1,6 +1,6 @@
-import pickle
 from collections import defaultdict
 
+import dill
 import torch
 from transformers import PreTrainedModel, PretrainedConfig
 
@@ -20,7 +20,7 @@ class AllianceStringMatchingEntityExtractorConfig(PretrainedConfig):
 class AllianceStringMatchingEntityExtractor(PreTrainedModel):
     config_class = AllianceStringMatchingEntityExtractorConfig
 
-    def __init__(self, config, entity_type, min_matches, tfidf_threshold,
+    def __init__(self, config, min_matches, tfidf_threshold,
                  tokenizer, vectorizer, entities_to_extract, match_uppercase: bool = False):
         super().__init__(config)
         self.config = config
@@ -29,9 +29,20 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
         self.min_matches = min_matches
         self.tokenizer = tokenizer
         self.vectorizer = vectorizer
-        self.entities_to_extract = set(entities_to_extract)
+        self.entities_to_extract = set(entities_to_extract) if entities_to_extract else None
         # Dummy parameter so that the model has parameters.
         self.dummy_param = torch.nn.Parameter(torch.zeros(1))
+
+    def set_entities_to_extract(self, entities_to_extract):
+        self.entities_to_extract = set(entities_to_extract)
+        self.tokenizer.tokenizer.add_tokens(entities_to_extract)
+        self.vectorizer.tokenizer.tokenizer.add_tokens(entities_to_extract)
+
+    def set_tfidf_threshold(self, tfidf_threshold):
+        self.tfidf_threshold = tfidf_threshold
+
+    def set_min_matches(self, min_matches):
+        self.min_matches = min_matches
 
     def forward(self, input_ids, attention_mask=None, labels=None, **kwargs):
         logits = self.custom_entity_extraction(input_ids)
@@ -86,34 +97,36 @@ def main():
     parser = argparse.ArgumentParser(description="Upload the entity extractor model to the Alliance ML API")
     parser.add_argument("-m", "--mod-abbreviation", required=True,
                         help="The MOD abbreviation (e.g., FB, WB, SGD, etc.)")
+    parser.add_argument("--min-matches", required=True, help="Minimum number of matches required for an "
+                                                             "entity to be extracted")
+    parser.add_argument("--tfidf-threshold", required=True, help="TF-IDF threshold for entity extraction")
     parser.add_argument("-t", "--topic", required=True, help="The topic of the model")
     args = parser.parse_args()
 
-    tfidf_vectorizer_model_file_path = (f"/data/agr_entity_extractor/tfidf_vectorization_"
-                                        f"{args.mod_abbreviation}_notopic.pkl")
+    tfidf_vectorizer_model_file_path = (f"/data/agr_entity_extraction/tfidf_vectorization_"
+                                        f"{args.mod_abbreviation}_notopic.dpkl")
     download_abc_model(mod_abbreviation=args.mod_abbreviation, topic=None,
                        output_path=tfidf_vectorizer_model_file_path, task_type="tfidf_vectorization")
 
-    tfidf_vectorizer = pickle.load(open(tfidf_vectorizer_model_file_path, "rb"))
+    tfidf_vectorizer = dill.load(open(tfidf_vectorizer_model_file_path, "rb"))
 
-    entity_extraction_model_file_path = (f"/data/agr_entity_extractor/biocuration_entity_extraction_"
-                                         f"{args.mod_abbreviation}_{args.topic.replace(':', '_')}.pkl")
+    entity_extraction_model_file_path = (f"/data/agr_entity_extraction/biocuration_entity_extraction_"
+                                         f"{args.mod_abbreviation}_{args.topic.replace(':', '_')}.dpkl")
 
     # Initialize the model
     config = AllianceStringMatchingEntityExtractorConfig()
     model = AllianceStringMatchingEntityExtractor(
         config=config,
-        entity_type=args.entity_type,
         min_matches=args.min_matches,
         tfidf_threshold=args.tfidf_threshold,
-        tokenizer=tfidf_vectorizer.tokenizer_,
+        tokenizer=tfidf_vectorizer.tokenizer,
         vectorizer=tfidf_vectorizer,
-        entities_to_extract=args.entities
+        entities_to_extract=None
     )
 
     # Serialize the model
     with open(entity_extraction_model_file_path, "wb") as file:
-        pickle.dump(model, file)
+        dill.dump(model, file)
 
     stats = {
         "model_name": "Alliance String Matching Entity Extractor",
@@ -123,7 +136,7 @@ def main():
         "best_params": None,
     }
     upload_ml_model(task_type="biocuration_entity_extraction", mod_abbreviation=args.mod_abbreviation,
-                    model_path=entity_extraction_model_file_path, stats=stats, topic=args.topic, file_extension="pkl")
+                    model_path=entity_extraction_model_file_path, stats=stats, topic=args.topic, file_extension="dpkl")
 
 
 if __name__ == "__main__":

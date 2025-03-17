@@ -13,11 +13,11 @@ def extractor():
     return AllianceStringMatchingEntityExtractor(
         config=config,
         entities_to_extract=c_elegans_genes,
-        entity_type="gene",
         min_matches=1,
         tfidf_threshold=0.1,
         match_uppercase=False,
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        vectorizer=None
     )
 
 

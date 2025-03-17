@@ -165,6 +165,38 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
         return False
 
 
+def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
+    url = f'{blue_api_base_url}/topic_entity_tag/'
+    token = get_authentication_token()
+    tet_data = json.dumps({
+        "created_by": "default_user",
+        "updated_by": "default_user",
+        "topic": topic,
+        "entity": entity,
+        "species": get_cached_mod_species_map()[mod_abbreviation],
+        "topic_entity_tag_source_id": tet_source_id,
+        "negated": negated,
+        "confidence_level": confidence_level,
+        "reference_curie": reference_curie,
+        "force_insertion": True
+    }).encode('utf-8')
+    headers = generate_headers(token)
+    try:
+        create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
+        create_request.add_header("Content-type", "application/json")
+        create_request.add_header("Accept", "application/json")
+        with urllib.request.urlopen(create_request) as create_response:
+            if create_response.getcode() == 201:
+                logger.debug("TET created")
+                return True
+            else:
+                logger.error(f"Failed to create TET: {str(tet_data)}")
+                return False
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error occurred during TET upload: {e}")
+        return False
+
+
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
     request = urllib.request.Request(url=jobs_url)
@@ -487,6 +519,7 @@ def get_entity_name(entity_type, a_team_api_search_result_obj, mod_abbreviation:
 
 def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
     all_curated_entity_names = []
+    entity_name_curie_mappings = {}
     params = {
         "searchFilters": {
             "dataProviderFilter": {
@@ -522,8 +555,9 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
             entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
             if entity_name:
                 all_curated_entity_names.append(entity_name)
+                entity_name_curie_mappings[entity_name] = result['curie']
         current_page += 1
-    return all_curated_entity_names
+    return all_curated_entity_names, entity_name_curie_mappings
 
 
 def get_all_ref_curies(mod_abbreviation: str):

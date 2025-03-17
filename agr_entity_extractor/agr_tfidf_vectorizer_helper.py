@@ -1,13 +1,15 @@
 import argparse
 import logging
 import os
+import pickle
 import shutil
 
+import dill
 from sklearn.feature_extraction.text import TfidfVectorizer
 from transformers import AutoTokenizer
 
 from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references, get_all_curated_entities, \
-    upload_ml_model
+    upload_ml_model, download_abc_model
 from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 logger = logging.getLogger(__name__)
@@ -67,8 +69,8 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
 
     logger.info("Downloading list of curated genes and alleles from the Alliance ABC API and adding them to the "
                 "tokenizer.")
-    curated_genes = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
-    # curated_alleles = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
+    curated_genes, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
+    # curated_alleles, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     logger.info("Loading BioBERT tokenizer and adding curated genes to it.")
     custom_tokenizer = CustomTokenizer(model_name="dmis-lab/biobert-base-cased-v1.2",
                                        additional_tokens=curated_genes)

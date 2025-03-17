@@ -6,6 +6,43 @@ from grobid_client.models import TextWithRefs
 from grobid_client.types import TEI
 
 
+class AllianceTEI:
+    def __init__(self):
+        self.tei_obj = None
+
+    def load_from_file(self, file_path):
+        with open(file_path, "rb") as file_stream:
+            self.tei_obj = TEI.parse(file_stream, figures=True)
+
+    def get_title(self):
+        if self.tei_obj is None:
+            return None
+        else:
+            return self.tei_obj.title
+
+    def get_abstract(self):
+        if self.tei_obj is None:
+            return None
+        else:
+            return self.tei_obj.abstract
+
+    def get_fulltext(self):
+        if self.tei_obj is None:
+            return None
+        else:
+            return get_fulltext_from_tei(self.tei_obj)
+
+    def get_sentences(self):
+        if self.tei_obj is None:
+            return None
+        else:
+            sentences = []
+            for section in self.tei_obj.sections:
+                sec_sentences, _ = get_sentences_from_tei_section(section)
+                sentences.extend(sec_sentences)
+            return sentences
+
+
 def get_sentences_from_tei_section(section):
     sentences = []
     num_errors = 0  # Initialize error count
@@ -26,7 +63,7 @@ def get_sentences_from_tei_section(section):
     return sentences, num_errors
 
 
-def convert_tei_to_text(tei_object):
+def get_fulltext_from_tei(tei_object):
     sentences = []
     for section in tei_object.sections:
         sec_sentences, _ = get_sentences_from_tei_section(section)
@@ -40,7 +77,7 @@ def convert_all_tei_files_in_dir_to_txt(dir_path):
         try:
             with open(tei_file, "rb") as file_stream:
                 article = TEI.parse(file_stream, figures=True)
-                article_text = convert_tei_to_text(article)
+                article_text = get_fulltext_from_tei(article)
                 with open(tei_file.replace(".tei", ".txt"), "w") as text_file:
                     text_file.write(article_text)
         except Exception as e:
