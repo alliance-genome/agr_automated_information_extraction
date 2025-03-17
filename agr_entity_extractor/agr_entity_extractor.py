@@ -2,6 +2,7 @@ import argparse
 import copy
 import logging
 import os
+import pickle
 import sys
 
 import requests
@@ -29,7 +30,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             raise
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
-    classifier_model = joblib.load(classifier_file_path)
+    entity_extraction_model = pickle.load(open(entity_extraction_model_file_path, "rb"))
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]

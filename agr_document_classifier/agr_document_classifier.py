@@ -27,9 +27,9 @@ from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.preprocessing import StandardScaler
 
-from utils.abc_utils import get_jobs_to_classify, download_tei_files_for_references, send_classification_tag_to_abc, \
+from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
-    job_category_topic_map, set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
+    set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
     upload_ml_model, download_abc_model, set_job_failure, load_all_jobs
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
@@ -224,10 +224,6 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, 
                     model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
 
-def load_abc_model(mod_abbreviation, topic, file_path, task_type):
-    download_abc_model(mod_abbreviation=mod_abbreviation, topic=topic, output_path=file_path, task_type=task_type)
-
-
 def remove_stopwords(text):
     stop_words = set(stopwords.words('english'))
     word_tokens = word_tokenize(text)
@@ -362,8 +358,8 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     classifier_file_path = (f"/data/agr_document_classifier/biocuration_topic_classification_{mod_abbr}_"
                             f"{topic.replace(':', '_')}_classifier.joblib")
     try:
-        load_abc_model(mod_abbreviation=mod_abbr, topic=topic, file_path=classifier_file_path,
-                       task_type="biocuration_topic_classification")
+        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
+                           task_type="biocuration_topic_classification")
         logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:

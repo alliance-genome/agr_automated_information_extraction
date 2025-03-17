@@ -1,8 +1,10 @@
+import pickle
 from collections import defaultdict
 
 import torch
-from sklearn.feature_extraction.text import TfidfVectorizer
 from transformers import PreTrainedModel, PretrainedConfig
+
+from utils.abc_utils import upload_ml_model, download_abc_model
 
 
 class AllianceStringMatchingEntityExtractorConfig(PretrainedConfig):
@@ -19,13 +21,14 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
     config_class = AllianceStringMatchingEntityExtractorConfig
 
     def __init__(self, config, entity_type, min_matches, tfidf_threshold,
-                 tokenizer, entities_to_extract, match_uppercase: bool = False):
+                 tokenizer, vectorizer, entities_to_extract, match_uppercase: bool = False):
         super().__init__(config)
         self.config = config
         self.tfidf_threshold = tfidf_threshold
         self.match_uppercase = match_uppercase
         self.min_matches = min_matches
         self.tokenizer = tokenizer
+        self.vectorizer = vectorizer
         self.entities_to_extract = set(entities_to_extract)
         # Dummy parameter so that the model has parameters.
         self.dummy_param = torch.nn.Parameter(torch.zeros(1))
@@ -45,12 +48,6 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
         """
         batch_tokens = [self.tokenizer.convert_ids_to_tokens(seq) for seq in input_ids]
         logits_list = []
-        tfidf_vectorizer = TfidfVectorizer(
-            tokenizer=lambda x: x,
-            preprocessor=lambda x: x,
-            token_pattern=None
-        )
-        tfidf_vectorizer.fit(batch_tokens)
 
         global_token_counts = defaultdict(int)
         for tokens in batch_tokens:
@@ -62,15 +59,15 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             # Initialize token-level logits: shape (num_tokens, num_labels).
             token_logits = torch.zeros(len(tokens), self.config.num_labels, device=input_ids.device)
             # Get the TF-IDF values for the document.
-            doc_tfidf = tfidf_vectorizer.transform([tokens])
+            doc_tfidf = self.vectorizer.transform([tokens])
             # For each token in the document...
             for i, token in enumerate(tokens):
                 if token in self.entities_to_extract:
                     # Use the in-document frequency (count) for this token.
                     token_count = global_token_counts[token]
                     # Get the tf-idf score for this token, if it exists in the fitted vocabulary.
-                    if token in tfidf_vectorizer.vocabulary_:
-                        feature_index = tfidf_vectorizer.vocabulary_[token]
+                    if token in self.vectorizer.vocabulary_:
+                        feature_index = self.vectorizer.vocabulary_[token]
                         tfidf_value = doc_tfidf[0, feature_index]
                     else:
                         tfidf_value = self.tfidf_threshold
@@ -81,3 +78,53 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             logits_list.append(token_logits)
             # Return a tensor of shape (batch_size, seq_length, num_labels).
         return torch.stack(logits_list, dim=0)
+
+
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Upload the entity extractor model to the Alliance ML API")
+    parser.add_argument("-m", "--mod-abbreviation", required=True,
+                        help="The MOD abbreviation (e.g., FB, WB, SGD, etc.)")
+    parser.add_argument("-t", "--topic", required=True, help="The topic of the model")
+    args = parser.parse_args()
+
+    tfidf_vectorizer_model_file_path = (f"/data/agr_entity_extractor/tfidf_vectorization_"
+                                        f"{args.mod_abbreviation}_notopic.pkl")
+    download_abc_model(mod_abbreviation=args.mod_abbreviation, topic=None,
+                       output_path=tfidf_vectorizer_model_file_path, task_type="tfidf_vectorization")
+
+    tfidf_vectorizer = pickle.load(open(tfidf_vectorizer_model_file_path, "rb"))
+
+    entity_extraction_model_file_path = (f"/data/agr_entity_extractor/biocuration_entity_extraction_"
+                                         f"{args.mod_abbreviation}_{args.topic.replace(':', '_')}.pkl")
+
+    # Initialize the model
+    config = AllianceStringMatchingEntityExtractorConfig()
+    model = AllianceStringMatchingEntityExtractor(
+        config=config,
+        entity_type=args.entity_type,
+        min_matches=args.min_matches,
+        tfidf_threshold=args.tfidf_threshold,
+        tokenizer=tfidf_vectorizer.tokenizer_,
+        vectorizer=tfidf_vectorizer,
+        entities_to_extract=args.entities
+    )
+
+    # Serialize the model
+    with open(entity_extraction_model_file_path, "wb") as file:
+        pickle.dump(model, file)
+
+    stats = {
+        "model_name": "Alliance String Matching Entity Extractor",
+        "average_precision": None,
+        "average_recall": None,
+        "average_f1": None,
+        "best_params": None,
+    }
+    upload_ml_model(task_type="biocuration_entity_extraction", mod_abbreviation=args.mod_abbreviation,
+                    model_path=entity_extraction_model_file_path, stats=stats, topic=args.topic, file_extension="pkl")
+
+
+if __name__ == "__main__":
+    main()
