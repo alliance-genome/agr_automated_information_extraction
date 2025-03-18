@@ -13,7 +13,7 @@ httpx==0.23.0
 idna==3.7
 joblib==1.4.2
 lxml==4.9.4
-nltk==3.8.1
+nltk>=3.9
 numpy==1.26.4
 # nvidia-nccl-cu12==2.22.3
 pybind11==2.13.1
