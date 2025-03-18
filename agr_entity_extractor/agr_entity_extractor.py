@@ -82,6 +82,7 @@ def main():
     mod_topic_jobs = load_all_jobs("entity_extraction_job")
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         process_entity_extraction_jobs(mod_id, topic, jobs)
+    logger.info("Finished processing all entity extraction jobs.")
 
 
 if __name__ == '__main__':

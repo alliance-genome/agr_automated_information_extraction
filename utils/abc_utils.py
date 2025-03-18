@@ -287,8 +287,11 @@ def get_pmids_from_reference_curies(curies: List[str]):
         with urllib.request.urlopen(request) as response:
             resp = response.read().decode("utf8")
             resp_obj = json.loads(resp)
-            curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
+            try:
+                curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
                                  if xref["curie"].startswith("PMID")][0]
+            except IndexError:
+                curie_pmid[curie] = None
     return curie_pmid
 
 

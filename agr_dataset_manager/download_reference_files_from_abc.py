@@ -78,11 +78,12 @@ def convert_tei_to_txt(tei_directory):
 
 def rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict: dict, dir_to_convert: str, file_extension: str = "pdf"):
     for curie, pmid in curie_to_pmid_dict.items():
-        curie_file = os.path.join(dir_to_convert, f"{curie.replace(':', '_')}.{file_extension}")
-        pmid_file = os.path.join(dir_to_convert, f"{pmid.replace(':', '_')}.{file_extension}")
-        if os.path.exists(curie_file):
-            os.rename(curie_file, pmid_file)
-            logger.info(f"Renamed {curie_file} to {pmid_file}")
+        if pmid is not None:
+            curie_file = os.path.join(dir_to_convert, f"{curie.replace(':', '_')}.{file_extension}")
+            pmid_file = os.path.join(dir_to_convert, f"{pmid.replace(':', '_')}.{file_extension}")
+            if os.path.exists(curie_file):
+                os.rename(curie_file, pmid_file)
+                logger.info(f"Renamed {curie_file} to {pmid_file}")
 
 
 def main():
