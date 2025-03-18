@@ -1,11 +1,12 @@
 version: '3'
 services:
-  agr_document_classifier:
+  agr_automated_information_extraction:
     build: .
     volumes:
       - ${TRAINING_DIR}:/data/agr_document_classifier/training
       - ${CLASSIFICATION_DIR}:/data/agr_document_classifier/to_classify
       - ${CLASSIFIERS_PATH}:/data/agr_document_classifier
+      - ${ENTITY_EXTRACTION_DIR}:/data/agr_entity_extraction/to_extract
     environment:
       - GROBID_API_URL=${GROBID_API_URL}
       - TMP_PATH=${TMP_PATH}

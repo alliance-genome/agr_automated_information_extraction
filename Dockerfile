@@ -8,6 +8,7 @@ ADD utils/abc_utils.py .
 ADD agr_document_classifier/agr_document_classifier.py .
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
+ADD agr_entity_extractor/agr_entity_extractor.py .
 ADD Makefile .
 ADD agr_document_classifier/models.py .
 ADD crontab /etc/cron.d/agr_document_classifier_crontab
