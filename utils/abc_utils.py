@@ -93,8 +93,8 @@ def get_curie_from_reference_id(reference_id):
         logger.error(e)
 
 
-def get_tet_source_id(mod_abbreviation: str, pipeline_name: str):
-    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/{pipeline_name}/{mod_abbreviation}'
+def get_tet_source_id(mod_abbreviation: str, source_method: str, source_description: str):
+    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/{source_method}/{mod_abbreviation}'
            f'/{mod_abbreviation}')
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
@@ -112,10 +112,9 @@ def get_tet_source_id(mod_abbreviation: str, pipeline_name: str):
             headers = generate_headers(token)
             create_data = json.dumps({
                 "source_evidence_assertion": "ECO:0008004",
-                "source_method": "abc_document_classifier",
+                "source_method": source_method,
                 "validation_type": None,
-                "description": "Alliance document classification pipeline using machine learning to identify papers of "
-                               "interest for curation data types",
+                "description": source_description,
                 "data_provider": mod_abbreviation,
                 "secondary_data_provider_abbreviation": mod_abbreviation
             }).encode('utf-8')
@@ -558,7 +557,7 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
             entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
             if entity_name:
                 all_curated_entity_names.append(entity_name)
-                entity_name_curie_mappings[entity_name] = result['curie']
+                entity_name_curie_mappings[entity_name] = result['primaryExternalId']
         current_page += 1
     return all_curated_entity_names, entity_name_curie_mappings
 
@@ -622,7 +621,7 @@ def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
     while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset):
         for job in all_jobs:
             reference_id = job["reference_id"]
-            topic = job["topic"]
+            topic = job["topic_id"]
             mod_id = job["mod_id"]
             if (mod_id, topic, reference_id) not in jobs_already_added:
                 mod_datatype_jobs[(mod_id, topic)].append(job)

@@ -354,7 +354,10 @@ def parse_arguments():
 
 def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, pipeline_name="abc_document_classifier")
+    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
+                                      source_description="Alliance document classification pipeline using machine "
+                                                         "learning to identify papers of interest for curation data "
+                                                         "types")
     classifier_file_path = (f"/data/agr_document_classifier/biocuration_topic_classification_{mod_abbr}_"
                             f"{topic.replace(':', '_')}_classifier.joblib")
     try:
