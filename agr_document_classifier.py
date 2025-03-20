@@ -481,8 +481,8 @@ def download_training_set(args, training_data_dir):
     training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train)
     reference_ids_positive = [agrkbid for agrkbid, positive in training_set["data_training"].items() if positive]
     reference_ids_negative = [agrkbid for agrkbid, positive in training_set["data_training"].items() if not positive]
-    shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
-    shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
+    #shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
+    #shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
     dir_path_positive = os.path.join(training_data_dir, "positive")
     if not os.path.exists(dir_path_positive):  # Check if the directory exists
         os.makedirs(dir_path_positive)  # Create only if it does not exist

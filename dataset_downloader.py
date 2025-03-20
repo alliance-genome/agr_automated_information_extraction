@@ -63,7 +63,7 @@ def download_tei_files_from_abc_or_convert_pdf(reference_ids_positive, reference
         else:
             logger.info(f"Downloading PDF for reference {agrkb_id} as {category}")
             pdf_file_path = os.path.join(category_dir, f"{file_name}.pdf")
-            #download_main_pdf(agrkb_id, mod_abbreviation, file_name, category_dir)
+            download_main_pdf(agrkb_id, mod_abbreviation, file_name, category_dir)
             if not os.path.exists(pdf_file_path):
                 logger.error(f"Cannot find {file_name}.pdf {pdf_file_path}")
                 continue
