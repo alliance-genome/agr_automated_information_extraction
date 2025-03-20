@@ -1,35 +1,17 @@
 import argparse
 import logging
 import os
-import pickle
 import shutil
 
 import dill
 from sklearn.feature_extraction.text import TfidfVectorizer
-from transformers import AutoTokenizer
 
+from agr_entity_extractor.models import CustomTokenizer
 from utils.abc_utils import get_all_ref_curies, download_tei_files_for_references, get_all_curated_entities, \
-    upload_ml_model, download_abc_model
+    upload_ml_model
 from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 logger = logging.getLogger(__name__)
-
-
-class CustomTokenizer:
-    def __init__(self, model_name, additional_tokens=None):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        if additional_tokens:
-            self.tokenizer.add_tokens(additional_tokens)
-        self.max_length = self.tokenizer.model_max_length
-
-    def __call__(self, text):
-        # Split the text into smaller chunks
-        tokens = []
-        for i in range(0, len(text), self.max_length):
-            chunk = text[i:i + self.max_length]
-            chunk_tokens = self.tokenizer.tokenize(chunk)
-            tokens.extend(chunk_tokens)
-        return tokens
 
 
 def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir: bool = False,
@@ -87,16 +69,14 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
 
 def save_vectorizer_to_file(vectorizer, output_path="tfidf_vectorizer.pkl"):
     """Save the fitted TFIDF vectorizer to a file."""
-    import pickle
     with open(output_path, "wb") as file:
-        pickle.dump(vectorizer, file)
+        dill.dump(vectorizer, file)
 
 
 def load_vectorizer_from_file(input_path="tfidf_vectorizer.pkl"):
     """Load a saved TFIDF vectorizer from a file."""
-    import pickle
     with open(input_path, "rb") as file:
-        return pickle.load(file)
+        return dill.load(file)
 
 
 def main():
@@ -120,6 +100,8 @@ def main():
                         help="If set, uploads the vectorizer to the Alliance API")
     parser.add_argument("-c", "--continue-download", action="store_true",
                         help="If set, the script will skip the download of TEI files that are already present.")
+    parser.add_argument("--update-custom-tokenizer", action="store_true",
+                        help="Update the custom tokenizer")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -136,6 +118,14 @@ def main():
         save_vectorizer_to_file(vectorizer, args.output_path)
         logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
 
+    if args.update_custom_tokenizer:
+        curated_genes, _ = get_all_curated_entities(mod_abbreviation=args.mod_abbreviation, entity_type_str="gene")
+        custom_tokenizer = CustomTokenizer(model_name="dmis-lab/biobert-base-cased-v1.2",
+                                           additional_tokens=curated_genes)
+        vectorizer = load_vectorizer_from_file(args.output_path)
+        vectorizer.tokenizer = custom_tokenizer
+        save_vectorizer_to_file(vectorizer, args.output_path)
+        logger.info(f"TFIDF vectorizer updated with custom tokenizer and saved to {args.output_path}.")
     if args.upload_to_alliance:
         stats = {
             "model_name": "TFIDF vectorizer",
@@ -145,7 +135,7 @@ def main():
             "best_params": None,
         }
         upload_ml_model(task_type="tfidf_vectorization", mod_abbreviation=args.mod_abbreviation, topic=None,
-                        model_path=args.output_path, stats=stats, dataset_id=None, file_extension="pkl")
+                        model_path=args.output_path, stats=stats, dataset_id=None, file_extension="dpkl")
         logger.info(f"TFIDF vectorizer uploaded to the Alliance API for {args.mod_abbreviation}.")
 
 

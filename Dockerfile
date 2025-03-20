@@ -5,10 +5,10 @@ RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /usr/src/app
 ADD ./requirements.txt .
 ADD utils/abc_utils.py .
-ADD agr_document_classifier/agr_document_classifier.py .
+ADD agr_document_classifier/agr_document_classification_pipeline.py .
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
-ADD agr_entity_extractor/agr_entity_extractor.py .
+ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
 ADD Makefile .
 ADD utils/ ./utils
 ADD agr_dataset_manager/ ./agr_dataset_manager

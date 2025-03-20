@@ -6,10 +6,11 @@ import sys
 
 import dill
 import requests
+from transformers import pipeline
 
+from agr_entity_extractor.models import convert_tokens_to_list_of_words
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
-    download_tei_files_for_references, set_job_started, set_job_success, get_all_curated_entities, \
-    send_entity_tag_to_abc
+    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc
 from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
@@ -35,12 +36,6 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))
-    entity_type_str = ""
-    if topic == "ATP:0000005":
-        entity_type_str = "gene"
-    curated_entities, entity_name_curie_mapping = get_all_curated_entities(mod_abbreviation=mod_abbr,
-                                                                           entity_type_str=entity_type_str)
-    entity_extraction_model.set_entity_list(curated_entities)
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
@@ -58,12 +53,28 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             job = reference_curie_job_map[curie]
             tei_obj = AllianceTEI()
             tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
-
-            extracted_entities = entity_extraction_model.transform(tei_obj.get_fulltext())
+            nlp_pipeline = pipeline("ner", model=entity_extraction_model,
+                                    tokenizer=entity_extraction_model.tokenizer)
+            results = nlp_pipeline(tei_obj.get_fulltext())
+            entities_in_fulltext = [result['word'] for result in results if result['entity'] == "LABEL_1"]
+            tokenized_title = entity_extraction_model.tokenizer(tei_obj.get_title())
+            tokenized_title_str = convert_tokens_to_list_of_words(tokenized_title)
+            entities_in_title = []
+            for entity in entity_extraction_model.entities_to_extract:
+                if entity in tokenized_title_str:
+                    entities_in_title.append(entity)
+            tokenized_abstract = entity_extraction_model.tokenizer(tei_obj.get_abstract())
+            tokenized_abstract_str = convert_tokens_to_list_of_words(tokenized_abstract)
+            entities_in_abstract = []
+            for entity in entity_extraction_model.entities_to_extract:
+                if entity in tokenized_abstract_str:
+                    entities_in_abstract.append(entity)
+            all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
             logger.info("Sending extracted entities as tags to ABC.")
-            for entity in extracted_entities:
+            for entity in all_entities:
                 send_entity_tag_to_abc(reference_curie=curie, mod_abbreviation=mod_abbr, topic=topic,
-                                       entity=entity_name_curie_mapping[entity], tet_source_id=tet_source_id)
+                                       entity=entity_extraction_model.name_to_curie_mapping[entity],
+                                       tet_source_id=tet_source_id)
             set_job_started(job)
             set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
