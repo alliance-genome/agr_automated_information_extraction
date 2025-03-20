@@ -377,7 +377,7 @@ def parse_arguments():
 
 
 def load_jobs_to_classify():
-    mod_datatype_jobs = defaultdict(list)
+    mod_topic_jobs = defaultdict(list)
     limit = 1000
     offset = 0
     jobs_already_added = set()
@@ -386,22 +386,22 @@ def load_jobs_to_classify():
     while all_jobs := get_jobs_to_classify(limit, offset):
         for job in all_jobs:
             reference_id = job["reference_id"]
-            datatype = job["job_name"].replace("_classification_job", "")
+            # datatype = job["job_name"].replace("_classification_job", "")
             mod_id = job["mod_id"]
-            if (mod_id, datatype, reference_id) not in jobs_already_added:
-                mod_datatype_jobs[(mod_id, datatype)].append(job)
-                jobs_already_added.add((mod_id, datatype, reference_id))
+            topic = job["topic_id"]
+            if (mod_id, topic, reference_id) not in jobs_already_added:
+                mod_topic_jobs[(mod_id, topic)].append(job)
+                jobs_already_added.add((mod_id, topic, reference_id))
         offset += limit
 
     logger.info("Finished loading jobs to classify from ABC ...")
-    return mod_datatype_jobs
+    return mod_topic_jobs
 
 
-def process_classification_jobs(mod_id, datatype, jobs, embedding_model):
+def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    datatype = datatype.replace(" ", "_")
+    datatype = topic.replace(":", "_")
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr)
-    topic = job_category_topic_map[datatype]
     classifier_file_path = f"/data/agr_document_classifier/{mod_abbr}_{datatype}_classifier.joblib"
     try:
         load_classifier(mod_abbr, topic, classifier_file_path)
@@ -535,11 +535,11 @@ def train_mode(args):
 
 
 def classify_mode(args):
-    mod_datatype_jobs = load_jobs_to_classify()
+    mod_topic_jobs = load_jobs_to_classify()
     embedding_model = load_embedding_model(args.embedding_model_path)
 
-    for (mod_id, datatype), jobs in mod_datatype_jobs.items():
-        process_classification_jobs(mod_id, datatype, jobs, embedding_model)
+    for (mod_id, topic), jobs in mod_topic_jobs.items():
+        process_classification_jobs(mod_id, topic, jobs, embedding_model)
 
 
 def main():

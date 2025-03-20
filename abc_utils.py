@@ -7,7 +7,6 @@ from typing import List
 from urllib.error import HTTPError
 
 import requests
-from cachetools import TTLCache
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "literature-rest.alliancegenome.org")
@@ -15,16 +14,6 @@ blue_api_base_url = os.environ.get('ABC_API_SERVER', "literature-rest.alliancege
 logger = logging.getLogger(__name__)
 
 cache = {}
-
-job_category_topic_map = {
-    "catalytic_activity": "ATP:0000061",
-    "disease": "ATP:0000152",
-    "expression": "ATP:0000010",
-    "interaction": "ATP:0000068",
-    "physical_interaction": "ATP:0000069",
-    "RNAi": "ATP:0000082",
-    "antibody": "ATP:0000096"
-}
 
 
 def get_mod_species_map():
