@@ -9,3 +9,4 @@ training_sets/*
 stats.txt
 .env.test
 /tmp/
+/alliance_tei_corpus/

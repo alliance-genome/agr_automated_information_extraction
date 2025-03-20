@@ -1,8 +1,11 @@
-# AGR Document Classifier
+# AGR Automated Information Extraction Models and Pipelines
 
-Classify documents into biocuration topics using machine learning models.
+This is the main Alliance repository for automated information extraction pipelines and models.
 
-Trained models are uploaded to the ABC repository. When used to classify new documents, the classifier related to the specified MOD abbreviation and topic (data type) is fetched from the ABC. 
+- Classify Alliance references into biocuration topics using machine learning models.
+- Extract entities from references
+
+The repository contains code to train models and upload them to the ABC. When used to classify new documents, the classifier related to the specified MOD abbreviation and topic (data type) is fetched from the ABC. 
 Documents for training and classification are fetched from the ABC repository in TEI format. 
 
 ## Table of Contents
@@ -17,8 +20,8 @@ Documents for training and classification are fetched from the ABC repository in
 
 1. Clone the repository:
     ```sh
-    git clone https://github.com/yourusername/agr_document_classifier.git
-    cd agr_document_classifier
+    git clone https://github.com/yourusername/agr_automated_information_extraction.git
+    cd agr_automated_information_extraction
     ```
 
 2. Create and configure the `.env` file:

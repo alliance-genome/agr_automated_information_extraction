@@ -3,14 +3,16 @@ import json
 import logging
 import os
 import urllib.request
-from typing import List
+from collections import defaultdict
+from typing import List, Tuple, Dict
 from urllib.error import HTTPError
 
+import psycopg2
 import requests
-from cachetools import TTLCache
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
-blue_api_base_url = os.environ.get('ABC_API_SERVER', "literature-rest.alliancegenome.org")
+blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
+curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +30,7 @@ job_category_topic_map = {
 
 
 def get_mod_species_map():
-    url = f'https://{blue_api_base_url}/mod/taxons/default'
+    url = f'{blue_api_base_url}/mod/taxons/default'
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -42,7 +44,7 @@ def get_mod_species_map():
 
 
 def get_mod_id_from_abbreviation(mod_abbreviation):
-    url = f'https://{blue_api_base_url}/mod/{mod_abbreviation}'
+    url = f'{blue_api_base_url}/mod/{mod_abbreviation}'
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -78,7 +80,7 @@ def get_cached_mod_abbreviation_from_id(mod_id):
 
 
 def get_curie_from_reference_id(reference_id):
-    url = f'https://{blue_api_base_url}/reference/{reference_id}'
+    url = f'{blue_api_base_url}/reference/{reference_id}'
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -91,8 +93,8 @@ def get_curie_from_reference_id(reference_id):
         logger.error(e)
 
 
-def get_tet_source_id(mod_abbreviation: str):
-    url = (f'https://{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/abc_document_classifier/{mod_abbreviation}'
+def get_tet_source_id(mod_abbreviation: str, source_method: str, source_description: str):
+    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/{source_method}/{mod_abbreviation}'
            f'/{mod_abbreviation}')
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
@@ -105,15 +107,14 @@ def get_tet_source_id(mod_abbreviation: str):
     except HTTPError as e:
         if e.code == 404:
             # Create a new source if not exists
-            create_url = f'https://{blue_api_base_url}/topic_entity_tag/source'
+            create_url = f'{blue_api_base_url}/topic_entity_tag/source'
             token = get_authentication_token()
             headers = generate_headers(token)
             create_data = json.dumps({
                 "source_evidence_assertion": "ECO:0008004",
-                "source_method": "abc_document_classifier",
+                "source_method": source_method,
                 "validation_type": None,
-                "description": "Alliance document classification pipeline using machine learning to identify papers of "
-                               "interest for curation data types",
+                "description": source_description,
                 "data_provider": mod_abbreviation,
                 "secondary_data_provider_abbreviation": mod_abbreviation
             }).encode('utf-8')
@@ -133,7 +134,7 @@ def get_tet_source_id(mod_abbreviation: str):
 
 def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, negated: bool,
                                    confidence_level: str, tet_source_id):
-    url = f'https://{blue_api_base_url}/topic_entity_tag/'
+    url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
         "created_by": "default_user",
@@ -163,8 +164,40 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
         return False
 
 
-def get_jobs_to_classify(limit: int = 1000, offset: int = 0):
-    jobs_url = f'https://{blue_api_base_url}/workflow_tag/jobs/classification_job?limit={limit}&offset={offset}'
+def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
+    url = f'{blue_api_base_url}/topic_entity_tag/'
+    token = get_authentication_token()
+    tet_data = json.dumps({
+        "created_by": "default_user",
+        "updated_by": "default_user",
+        "topic": topic,
+        "entity": entity,
+        "species": get_cached_mod_species_map()[mod_abbreviation],
+        "topic_entity_tag_source_id": tet_source_id,
+        "negated": negated,
+        "confidence_level": confidence_level,
+        "reference_curie": reference_curie,
+        "force_insertion": True
+    }).encode('utf-8')
+    headers = generate_headers(token)
+    try:
+        create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
+        create_request.add_header("Content-type", "application/json")
+        create_request.add_header("Accept", "application/json")
+        with urllib.request.urlopen(create_request) as create_response:
+            if create_response.getcode() == 201:
+                logger.debug("TET created")
+                return True
+            else:
+                logger.error(f"Failed to create TET: {str(tet_data)}")
+                return False
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error occurred during TET upload: {e}")
+        return False
+
+
+def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0):
+    jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
     request = urllib.request.Request(url=jobs_url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -178,7 +211,7 @@ def get_jobs_to_classify(limit: int = 1000, offset: int = 0):
 
 
 def set_job_started(job):
-    url = f'https://{blue_api_base_url}/workflow_tag/job/started/{job["reference_workflow_tag_id"]}'
+    url = f'{blue_api_base_url}/workflow_tag/job/started/{job["reference_workflow_tag_id"]}'
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -191,7 +224,7 @@ def set_job_started(job):
 
 
 def set_job_success(job):
-    url = f'https://{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
+    url = f'{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -204,7 +237,7 @@ def set_job_success(job):
 
 
 def set_job_failure(job):
-    url = f'https://{blue_api_base_url}/workflow_tag/job/failed/{job["reference_workflow_tag_id"]}'
+    url = f'{blue_api_base_url}/workflow_tag/job/failed/{job["reference_workflow_tag_id"]}'
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -217,7 +250,7 @@ def set_job_failure(job):
 
 
 def get_file_from_abc_reffile_obj(referencefile_json_obj):
-    file_download_api = (f"https://{blue_api_base_url}/reference/referencefile/download_file/"
+    file_download_api = (f"{blue_api_base_url}/reference/referencefile/download_file/"
                          f"{referencefile_json_obj['referencefile_id']}")
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -230,7 +263,7 @@ def get_file_from_abc_reffile_obj(referencefile_json_obj):
 
 
 def get_curie_from_xref(xref):
-    ref_by_xref_api = f'https://{blue_api_base_url}/reference/by_cross_reference/{xref}'
+    ref_by_xref_api = f'{blue_api_base_url}/reference/by_cross_reference/{xref}'
     request = urllib.request.Request(url=ref_by_xref_api)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -243,8 +276,26 @@ def get_curie_from_xref(xref):
         logger.error(e)
 
 
+def get_pmids_from_reference_curies(curies: List[str]):
+    curie_pmid = {}
+    for curie in curies:
+        ref_data_api = f'{blue_api_base_url}/reference/{curie}'
+        request = urllib.request.Request(url=ref_data_api)
+        request.add_header("Content-type", "application/json")
+        request.add_header("Accept", "application/json")
+        with urllib.request.urlopen(request) as response:
+            resp = response.read().decode("utf8")
+            resp_obj = json.loads(resp)
+            try:
+                curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
+                                 if xref["curie"].startswith("PMID")][0]
+            except IndexError:
+                curie_pmid[curie] = None
+    return curie_pmid
+
+
 def get_link_title_abstract_and_tpc(curie):
-    ref_data_api = f'https://{blue_api_base_url}/reference/{curie}'
+    ref_data_api = f'{blue_api_base_url}/reference/{curie}'
     request = urllib.request.Request(url=ref_data_api)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -259,7 +310,7 @@ def get_link_title_abstract_and_tpc(curie):
 
 
 def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
-    all_reffiles_for_pap_api = f'https://{blue_api_base_url}/reference/referencefile/show_all/{agr_curie}'
+    all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{agr_curie}'
     request = urllib.request.Request(url=all_reffiles_for_pap_api)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -291,10 +342,10 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
         logger.error(e)
 
 
-def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation, progress_interval=0.0):
+def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
     for idx, reference_curie in enumerate(reference_curies, start=1):
-        all_reffiles_for_pap_api = f'https://{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
+        all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
         request = urllib.request.Request(url=all_reffiles_for_pap_api)
         request.add_header("Content-type", "application/json")
         request.add_header("Accept", "application/json")
@@ -323,8 +374,9 @@ def convert_pdf_with_grobid(file_content):
     return response
 
 
-def download_classification_model(mod_abbreviation: str, topic: str, output_path: str):
-    download_url = f"https://{blue_api_base_url}/ml_model/download/biocuration_topic_classification/{mod_abbreviation}/{topic}"
+def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str,  topic: str = None):
+    download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
+            topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -340,15 +392,15 @@ def download_classification_model(mod_abbreviation: str, topic: str, output_path
         response.raise_for_status()
 
 
-def upload_classification_model(mod_abbreviation: str, topic: str, model_path, stats: dict, dataset_id: int,
-                                file_extension: str):
-    upload_url = f"https://{blue_api_base_url}/ml_model/upload"
+def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
+                    topic: str = None, file_extension: str = ""):
+    upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)
 
     # Prepare the metadata payload
     metadata = {
-        "task_type": "biocuration_topic_classification",
+        "task_type": task_type,
         "mod_abbreviation": mod_abbreviation,
         "topic": topic,
         "version_num": None,
@@ -357,12 +409,14 @@ def upload_classification_model(mod_abbreviation: str, topic: str, model_path, s
         "precision": stats["average_precision"],
         "recall": stats["average_recall"],
         "f1_score": stats["average_f1"],
-        "parameters": str(stats["best_params"]),
+        "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
         "dataset_id": dataset_id
     }
 
     model_dir = os.path.dirname(model_path)
-    metadata_filename = f"{mod_abbreviation}_{topic.replace(':', '_')}_metadata.json"
+    if topic is None:
+        topic = "notopic"
+    metadata_filename = f"{task_type}_{mod_abbreviation}_{topic.replace(':', '_')}_metadata.json"
     metadata_path = os.path.join(model_dir, metadata_filename)
     with open(metadata_path, "w") as metadata_file:
         json.dump(metadata, metadata_file, indent=4)
@@ -392,7 +446,7 @@ def upload_classification_model(mod_abbreviation: str, topic: str, model_path, s
 
 # Function to create a dataset
 def create_dataset(title: str, description: str, mod_abbreviation: str, topic: str, dataset_type: str) -> (int, int):
-    create_dataset_url = f"https://{blue_api_base_url}/datasets/"
+    create_dataset_url = f"{blue_api_base_url}/datasets/"
     token = get_authentication_token()
     headers = generate_headers(token)
     payload = {
@@ -416,7 +470,7 @@ def create_dataset(title: str, description: str, mod_abbreviation: str, topic: s
 # Function to add an entry to the dataset
 def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, version: int, reference_curie: str,
                          classification_value: str):
-    add_entry_url = f"https://{blue_api_base_url}/datasets/data_entry/"
+    add_entry_url = f"{blue_api_base_url}/datasets/data_entry/"
     token = get_authentication_token()
     headers = generate_headers(token)
     payload = {
@@ -437,7 +491,7 @@ def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, v
 
 def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False):
     endpoint = "metadata" if metadata_only else "download"
-    response = requests.get(f"https://{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/")
+    response = requests.get(f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/")
     if response.status_code == 200:
         dataset = response.json()
         logger.info(f"Dataset {endpoint} downloaded successfully.")
@@ -445,3 +499,134 @@ def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: 
     else:
         logger.error(f"Failed to download dataset {response.text}")
         response.raise_for_status()
+
+
+def get_entity_name(entity_type, a_team_api_search_result_obj, mod_abbreviation: str = None):
+    if entity_type == 'gene':
+        gene_name = a_team_api_search_result_obj['geneSymbol']['formatText']
+        if mod_abbreviation and mod_abbreviation == 'WB':
+            return gene_name.lower()
+        return gene_name
+    elif entity_type == 'protein':
+        # currently just for WB
+        gene_name = a_team_api_search_result_obj['geneSymbol']['formatText']
+        return gene_name.upper()
+    elif entity_type == 'allele':
+        return a_team_api_search_result_obj['alleleSymbol']['formatText']
+    elif entity_type == 'fish':
+        if a_team_api_search_result_obj['subtype']['name'] != 'fish':
+            return None
+        return a_team_api_search_result_obj['name']
+
+
+def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
+    all_curated_entity_names = []
+    entity_name_curie_mappings = {}
+    params = {
+        "searchFilters": {
+            "dataProviderFilter": {
+                "dataProvider.abbreviation": {
+                    "queryString": mod_abbreviation,
+                    "tokenOperator": "OR"
+                }
+            }
+        },
+        "sortOrders": [],
+        "aggregations": [],
+        "nonNullFieldsTable": []
+    }
+    current_page = 0
+    while True:
+        logger.info(f"Fetching page {current_page} of entities from A-team API")
+        url = f"{curation_api_base_url}{entity_type_str}/search?limit=2000&page={current_page}"
+        request_data_encoded = json.dumps(params).encode('utf-8')
+        request = urllib.request.Request(url, data=request_data_encoded)
+        request.add_header("Authorization", f"Bearer {get_authentication_token()}")
+        request.add_header("Content-type", "application/json")
+        request.add_header("Accept", "application/json")
+
+        with urllib.request.urlopen(request) as response:
+            resp_obj = json.loads(response.read().decode("utf8"))
+
+        if resp_obj['returnedRecords'] < 1:
+            break
+
+        for result in resp_obj['results']:
+            if result['obsolete'] or result['internal']:
+                continue
+            entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
+            if entity_name:
+                all_curated_entity_names.append(entity_name)
+                entity_name_curie_mappings[entity_name] = result['primaryExternalId']
+        current_page += 1
+    return all_curated_entity_names, entity_name_curie_mappings
+
+
+def get_all_ref_curies(mod_abbreviation: str):
+    db_params = {
+        "dbname": os.getenv("DB_NAME", "default_dbname"),
+        "user": os.getenv("DB_USER", "default_user"),
+        "password": os.getenv("DB_PASSWORD", "default_password"),
+        "host": os.getenv("DB_HOST", "default_host"),
+        "port": os.getenv("DB_PORT", "default_port")
+    }
+
+    curies = []
+    try:
+        # Connect to PostgreSQL
+        connection = psycopg2.connect(**db_params)
+        cursor = connection.cursor()
+
+        mod_query = f"SELECT mod_id FROM mod WHERE abbreviation = '{mod_abbreviation}'"
+        cursor.execute(mod_query)
+        mod_id = cursor.fetchone()[0]
+        # Query to fetch CURIEs
+        query = f"SELECT curie FROM reference WHERE reference_id IN (SELECT reference_id FROM mod_corpus_association WHERE mod_id = {mod_id} AND corpus is true)"
+        cursor.execute(query)
+
+        # Fetch the result
+        curies = [row[0] for row in cursor.fetchall()]
+
+        # Close cursor and connection
+        cursor.close()
+        connection.close()
+    except Exception as e:
+        logger.error(f"Error while fetching CURIEs from database: {e}")
+
+    return curies
+
+
+def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
+    """
+    Loads and processes all jobs with a specified label from an external source, organizing
+    them by module ID and topic.
+
+    This function retrieves jobs in batches from an external source, identified by a
+    specific `job_label`. It processes each job, ensuring duplicates (based on their
+    module ID, topic, and reference ID) are not added multiple times. The jobs are
+    grouped by `(module ID, topic)` and returned in a dictionary for further usage.
+
+    :param job_label: The label used to filter and load jobs from the external database.
+    :type job_label: str
+    :return: A dictionary where keys are tuples of `(module ID, topic)` and the values
+        are lists of job dictionaries filtered and grouped accordingly.
+    :rtype: Dict[Tuple[str, str], List[dict]]
+    """
+    mod_datatype_jobs = defaultdict(list)
+    limit = 1000
+    offset = 0
+    jobs_already_added = set()
+    logger.info("Loading jobs from ABC ...")
+
+    while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset):
+        for job in all_jobs:
+            reference_id = job["reference_id"]
+            topic = job["topic_id"]
+            mod_id = job["mod_id"]
+            if (mod_id, topic, reference_id) not in jobs_already_added:
+                mod_datatype_jobs[(mod_id, topic)].append(job)
+                jobs_already_added.add((mod_id, topic, reference_id))
+        offset += limit
+
+    logger.info("Finished loading jobs to classify from ABC ...")
+    return mod_datatype_jobs

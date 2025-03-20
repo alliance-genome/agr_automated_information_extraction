@@ -34,3 +34,8 @@ xgboost==2.1.0
 git+https://github.com/alliance-genome/agr_fastapi_okta@v1.2#egg=fastapi_okta
 requests
 cachetools
+transformers~=4.45.2
+torch~=2.6.0
+pytest~=8.3.4
+psycopg2-binary
+dill

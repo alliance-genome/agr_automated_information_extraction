@@ -5,8 +5,8 @@ import os
 
 from lxml import etree
 
-from abc_utils import (get_curie_from_xref, download_main_pdf, convert_pdf_with_grobid,
-                       download_tei_files_for_references)
+from utils.abc_utils import (get_curie_from_xref, download_main_pdf, convert_pdf_with_grobid,
+                             download_tei_files_for_references)
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,10 @@ def download_tei_files_from_abc_or_convert_pdf(reference_ids_positive, reference
                                                mod_abbreviation):
     logger.info(f"Positive tei files download started. Number of files to download: {len(reference_ids_positive)}")
     output_dir_positive = os.path.join(output_dir, "positive")
-    download_tei_files_for_references(reference_ids_positive, output_dir_positive, mod_abbreviation, 0.0)
+    download_tei_files_for_references(reference_ids_positive, output_dir_positive, mod_abbreviation)
     logger.info(f"Negative tei files download started. Number of files to download: {len(reference_ids_negative)}")
     output_dir_negative = os.path.join(output_dir, "negative")
-    download_tei_files_for_references(reference_ids_negative, output_dir_negative, mod_abbreviation, 0.0)
+    download_tei_files_for_references(reference_ids_negative, output_dir_negative, mod_abbreviation)
 
     # Count the TEI files in the positive and negative directories
     downloaded_reference_ids_positive = [name[:-4].replace("_", ":") for name in os.listdir(
