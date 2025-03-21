@@ -588,11 +588,11 @@ def get_all_ref_curies(mod_abbreviation: str):
         mod_id = cursor.fetchone()[0]
         # Query to fetch CURIEs
         query = f"""
-            SELECT curie 
+            SELECT curie
                 FROM reference
                 WHERE reference_id IN (
-                    SELECT reference_id 
-                    FROM mod_corpus_association 
+                    SELECT reference_id
+                    FROM mod_corpus_association
                     WHERE mod_id = {mod_id} AND corpus is true)"""
         cursor.execute(query)
 
