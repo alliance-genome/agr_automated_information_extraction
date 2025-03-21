@@ -41,7 +41,7 @@ nvidia-curand-cu11==10.2.10.91
 nvidia-cusolver-cu11==11.4.0.1
 nvidia-cusparse-cu11==11.7.4.91
 nvidia-nccl-cu11==2.14.3
-nvidia-nccl-cu12==2.22.3
+nvidia-nccl-cu12
 nvidia-nvtx-cu11==11.7.91
 packaging==24.2
 pluggy==1.5.0
@@ -59,7 +59,7 @@ rfc3986==1.5.0
 rsa==4.9
 safetensors==0.5.3
 scikit-learn==1.5.1
-scipy==1.10.1
+scipy
 sent2vec @ git+https://github.com/epfml/sent2vec.git@9efbc2dd69f6c737c3a752c9dc5fbb4843d578b6
 six==1.16.0
 smart-open==7.0.4
@@ -68,14 +68,15 @@ soupsieve==2.5
 starlette==0.46.0
 sympy==1.13.3
 threadpoolctl==3.5.0
-tokenizers==0.20.3
-torch>=2.2.0
+tokenizers
+torch
 tqdm==4.66.4
 transformers==4.48.0
-triton==2.0.0
+triton
 typing_extensions==4.12.2
 urllib3==2.3.0
 wrapt==1.16.0
 xgboost==2.1.0
 psycopg2-binary~=2.9.10
 dill
+pandas
