@@ -33,8 +33,12 @@ def process_tei_files(base_folder, all_mods, embedding_model):
 
                 # Extract fulltext using AllianceTEI
                 tei_parser = AllianceTEI()
-                tei_parser.load_from_file(file_path)
-                fulltext = tei_parser.get_fulltext()
+                try:
+                    tei_parser.load_from_file(file_path)
+                    fulltext = tei_parser.get_fulltext()
+                except Exception as e:
+                    print(f"Error processing file {filename}: {e}")
+                    continue
 
                 if not fulltext:
                     print(f"Skipping file {filename} due to missing content.")

@@ -59,7 +59,7 @@ rfc3986==1.5.0
 rsa==4.9
 safetensors==0.5.3
 scikit-learn==1.5.1
-scipy
+scipy==1.12.0
 sent2vec @ git+https://github.com/epfml/sent2vec.git@9efbc2dd69f6c737c3a752c9dc5fbb4843d578b6
 six==1.16.0
 smart-open==7.0.4
