@@ -325,9 +325,9 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
             resp_obj = json.loads(resp)
             main_pdf_ref_file = None
             main_pdf_referencefiles = [ref_file for ref_file in resp_obj if
-                                       ref_file["file_class"] == "main" and
-                                       ref_file["file_publication_status"] == "final" and
-                                       ref_file["file_extension"] == "pdf"]
+                                       (ref_file["file_class"] == "main" and
+                                        ref_file["file_publication_status"] == "final" and
+                                        ref_file["file_extension"] == "pdf")]
             for ref_file in main_pdf_referencefiles:
                 if any(ref_file_mod["mod_abbreviation"] == mod_abbreviation for ref_file_mod in
                        ref_file["referencefile_mods"]):
