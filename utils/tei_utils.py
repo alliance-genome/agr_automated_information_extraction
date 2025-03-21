@@ -57,7 +57,7 @@ def get_sentences_from_tei_section(section):
                         section.paragraphs[-1][0].text in ['\n', ' ']
                 ):
                     sentences.append(re.sub('<[^<]+>', '', sentence.text))
-            except Exception as e:
+            except Exception:
                 num_errors += 1
     sentences = [sentence if sentence.endswith(".") else f"{sentence}." for sentence in sentences]
     return sentences, num_errors

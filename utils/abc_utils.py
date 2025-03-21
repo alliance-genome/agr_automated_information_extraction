@@ -167,6 +167,11 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
 def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
+    # TODO: pass negated and confidence_level
+    # Remove after fixing
+    negated = False
+    confidence_level = "Needs Confidence"
+    # End of TODO
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
@@ -288,7 +293,7 @@ def get_pmids_from_reference_curies(curies: List[str]):
             resp_obj = json.loads(resp)
             try:
                 curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
-                                 if xref["curie"].startswith("PMID")][0]
+                                     if xref["curie"].startswith("PMID")][0]
             except IndexError:
                 curie_pmid[curie] = None
     return curie_pmid
@@ -344,7 +349,7 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
 
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
-    for idx, reference_curie in enumerate(reference_curies, start=1):
+    for _, reference_curie in enumerate(reference_curies, start=1):
         all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
         request = urllib.request.Request(url=all_reffiles_for_pap_api)
         request.add_header("Content-type", "application/json")
