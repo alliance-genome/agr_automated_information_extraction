@@ -451,8 +451,8 @@ def download_training_set(args, training_data_dir):
 
 def upload_pre_existing_model(args, training_set):
     logger.info("Skipping training. Uploading pre-existing model and stats file to ABC")
-    stats = json.load(open(f"/data/agr_document_classifier/training/{args.mod_train}_" +
-        f"{args.datatype_train.replace(':', '_')}_metadata.json"))
+    stats = json.load(open(f"/data/agr_document_classifier/training/{args.mod_train}_"
+                           + f"{args.datatype_train.replace(':', '_')}_metadata.json"))
     stats["best_params"] = stats["parameters"]
     stats["model_name"] = stats["model_type"]
     stats["average_precision"] = stats["precision"]
