@@ -219,7 +219,7 @@ def set_job_started(job):
         urllib.request.urlopen(request)
         return True
     except HTTPError as e:
-        logger.error(e)
+        logger.error(f"Error setting job started: {str(job)}: {str(e)}")
         return False
 
 
@@ -232,7 +232,7 @@ def set_job_success(job):
         urllib.request.urlopen(request)
         return True
     except HTTPError as e:
-        logger.error(e)
+        logger.error(f"Error setting job success: {str(job)}: {str(e)}")
         return False
 
 
@@ -245,7 +245,7 @@ def set_job_failure(job):
         urllib.request.urlopen(request)
         return True
     except HTTPError as e:
-        logger.error(e)
+        logger.error(f"Error setting job failed: {str(job)}: {str(e)}")
         return False
 
 
