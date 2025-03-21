@@ -23,72 +23,114 @@ def convert_tokens_to_list_of_words(tokens):
     return words
 
 
+DEFAULT_MAX_LENGTH = 512  # Fallback maximum length if none is provided
+
+
 class CustomTokenizer:
-    def __init__(self, model_name, additional_tokens=None):
+    def __init__(self, model_name, additional_tokens=None, model_max_length=None):
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         if additional_tokens:
             self.tokenizer.add_tokens(additional_tokens)
-        self.model_max_length = self.tokenizer.model_max_length
+        # Allow an override; otherwise, prefer the tokenizer’s model_max_length or a default value
+        self.model_max_length = DEFAULT_MAX_LENGTH
         self.is_fast = self.tokenizer.is_fast
 
     def __call__(self, text, *args, **kwargs):
-        padding = kwargs.get("padding", True)  # Default to padding
-        truncation = kwargs.get("truncation", True)  # Default to truncation
-        return_tensors = kwargs.get("return_tensors", None)  # Handle if tensors are requested
+        # If the input is already a list, process each element.
+        if not kwargs:
+            tokens = []
+            for start in range(0, len(text), self.model_max_length):
+                chunk = text[start: start + self.model_max_length]
+                chunk_tokens = self.tokenizer.tokenize(chunk)
+                tokens.extend(chunk_tokens)
+            return tokens
+        if isinstance(text, list):
+            return self._batch_encode(text, *args, **kwargs)
+        else:
+            return self._encode(text, *args, **kwargs)
+
+    def _batch_encode(self, texts, *args, **kwargs):
+        # Process each text individually and then aggregate the outputs.
+        batch = [self._encode(t, *args, **kwargs) for t in texts]
+        result = {}
+        # (Assumes that each output dict has the same keys.)
+        for key in batch[0]:
+            result[key] = [item[key] for item in batch]
+        return result
+
+    def _encode(self, text, *args, **kwargs):
+        # Extract some common kwargs; note that we "pop" them so they do not remain in kwargs.
+        padding = kwargs.pop("padding", True)
+        truncation = kwargs.pop("truncation", True)
+        return_tensors = kwargs.pop("return_tensors", None)
+        return_special_tokens_mask = kwargs.pop("return_special_tokens_mask", False)
 
         tokens = []
         overflow_mapping = []
 
-        # Split the text into smaller chunks and keep track of overflow mapping
-        for i in range(0, len(text), self.model_max_length):
-            chunk = text[i:i + self.model_max_length]
-
-            # Tokenize the chunk
+        # Process long text: split the input into chunks (here we use a simple character‐based split)
+        for start in range(0, len(text), self.model_max_length):
+            chunk = text[start: start + self.model_max_length]
             chunk_tokens = self.tokenizer.tokenize(chunk)
             tokens.extend(chunk_tokens)
+            overflow_mapping.extend(
+                [start] * len(chunk_tokens))  # map tokens back to the start char index of their chunk
 
-            # Handle the mapping in case of overflow
-            overflow_mapping.extend([i] * len(chunk_tokens))  # Map tokens to chunk index
-
-        # Convert tokens to input IDs
+        # Convert tokens into numerical IDs.
         input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
 
-        # Add padding and truncation if requested
+        # Apply truncation if the token list is too long.
         if truncation and len(input_ids) > self.model_max_length:
             input_ids = input_ids[:self.model_max_length]
-            overflow_mapping = overflow_mapping[:self.model_max_length]  # Trim mapping as well
+            overflow_mapping = overflow_mapping[:self.model_max_length]
 
-        if padding:
-            # Pad input IDs if length is less than the maximum
+        # Apply padding if needed.
+        if padding and len(input_ids) < self.model_max_length:
             padding_length = self.model_max_length - len(input_ids)
-            input_ids.extend([self.tokenizer.pad_token_id] * padding_length)  # Add padding tokens
-            overflow_mapping.extend([-1] * padding_length)  # Add padding mapping
+            pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+            input_ids.extend([pad_id] * padding_length)
+            overflow_mapping.extend([-1] * padding_length)
 
-        # Create the attention mask (1 for tokens, 0 for padding)
-        attention_mask = [1 if id != self.tokenizer.pad_token_id else 0 for id in input_ids]
+        # Build attention mask (1 for tokens, 0 for padding)
+        attention_mask = [1 if token_id != self.tokenizer.pad_token_id else 0 for token_id in input_ids]
 
-        # Create token type IDs (useful for sentence pairs; all 0 for single sentences)
+        # Create token type IDs (all zeros, assuming a single sequence)
         token_type_ids = [0] * len(input_ids)
 
-        # Prepare the result dictionary
-        result = {
-            "input_ids": input_ids,  # Numeric representation of tokens
-            "attention_mask": attention_mask,  # Masking padding
-            "token_type_ids": token_type_ids,  # Segmentation between sentence pairs
-            "overflow_to_sample_mapping": overflow_mapping,  # Overflow mapping
-        }
+        # Optionally compute the special tokens mask.
+        special_tokens_mask = None
+        if return_special_tokens_mask:
+            # If available, use the tokenizer’s cls and sep tokens; also treat pad (or 0) as special.
+            cls_id = getattr(self.tokenizer, "cls_token_id", None)
+            sep_id = getattr(self.tokenizer, "sep_token_id", None)
+            special_ids = {cls_id, sep_id, self.tokenizer.pad_token_id, 0}
+            special_tokens_mask = [1 if token_id in special_ids else 0 for token_id in input_ids]
 
-        # Handle `return_tensors` argument (convert to tensors if requested)
-        if return_tensors == "pt":  # PyTorch tensors
+        result = {
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "token_type_ids": token_type_ids,
+            "overflow_to_sample_mapping": overflow_mapping,
+        }
+        if special_tokens_mask is not None:
+            result["special_tokens_mask"] = special_tokens_mask
+
+        # Convert lists into tensors if requested.
+        if return_tensors == "pt":
             import torch
-            result["input_ids"] = torch.tensor([result["input_ids"]])
-            result["attention_mask"] = torch.tensor([result["attention_mask"]])
-            result["token_type_ids"] = torch.tensor([result["token_type_ids"]])
-        elif return_tensors == "tf":  # TensorFlow tensors
+            converted = {}
+            # For standard keys we convert to a tensor with a batch dimension.
+            for key in result.keys():
+                converted[key] = torch.tensor([result[key]])
+            # Other keys (like overflow mapping) are left as lists.
+            # You can extend this conversion as needed.
+            return converted
+        elif return_tensors == "tf":
             import tensorflow as tf
-            result["input_ids"] = tf.constant([result["input_ids"]])
-            result["attention_mask"] = tf.constant([result["attention_mask"]])
-            result["token_type_ids"] = tf.constant([result["token_type_ids"]])
+            converted = {}
+            for key in result.keys():
+                converted[key] = tf.constant([result[key]])
+            return converted
 
         return result
 
@@ -97,7 +139,12 @@ class CustomTokenizer:
 
     def add_tokens(self, tokens):
         self.tokenizer.add_tokens(tokens)
-        self.model_max_length = self.tokenizer.model_max_length
+        self.model_max_length = getattr(self.tokenizer, "model_max_length", self.model_max_length)
+
+    def __getattr__(self, name):
+        # Delegate attribute access to the underlying tokenizer so that methods
+        # expected by the Hugging Face pipeline are available.
+        return getattr(self.tokenizer, name)
 
 
 class AllianceStringMatchingEntityExtractorConfig(PretrainedConfig):
@@ -172,7 +219,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             # Initialize token-level logits: shape (num_tokens, num_labels).
             token_logits = torch.zeros(len(tokens), self.config.num_labels, device=input_ids.device)
             # Get the TF-IDF values for the document.
-            doc_tfidf = self.vectorizer.transform([tokens])
+            doc_tfidf = self.vectorizer.transform(tokens)
             # For each token in the document...
             for i, token in enumerate(tokens):
                 if token in self.entities_to_extract:
