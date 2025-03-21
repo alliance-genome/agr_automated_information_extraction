@@ -1,7 +1,7 @@
 import numpy as np
 from scipy.stats import loguniform, expon, randint, uniform
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.linear_model import LogisticRegression, SGDClassifier, Perceptron
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
 from sklearn.svm import SVC

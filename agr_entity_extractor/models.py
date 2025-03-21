@@ -114,7 +114,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
     config_class = AllianceStringMatchingEntityExtractorConfig
 
     def __init__(self, config, min_matches, tfidf_threshold,
-                 tokenizer, vectorizer, entities_to_extract, load_entities_dynamically_fnc = None,
+                 tokenizer, vectorizer, entities_to_extract, load_entities_dynamically_fnc=None,
                  match_uppercase: bool = False):
         super().__init__(config)
         self.config = config
