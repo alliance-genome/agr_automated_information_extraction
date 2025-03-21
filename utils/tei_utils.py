@@ -51,11 +51,11 @@ def get_sentences_from_tei_section(section):
             paragraph = [paragraph]
         for sentence in paragraph:
             try:
-                if (not sentence.text.isdigit() and not (
-                    len(section.paragraphs) == 3 and
-                    section.paragraphs[0][0].text in ['\n', ' '] and
-                    section.paragraphs[-1][0].text in ['\n', ' ']
-                )):
+                if not sentence.text.isdigit() and not (
+                    len(section.paragraphs) == 3
+                    and section.paragraphs[0][0].text in ['\n', ' ']
+                    and section.paragraphs[-1][0].text in ['\n', ' ']
+                ):
                     sentences.append(re.sub('<[^<]+>', '', sentence.text))
             except Exception:
                 num_errors += 1

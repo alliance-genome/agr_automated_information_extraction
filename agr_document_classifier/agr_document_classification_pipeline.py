@@ -288,7 +288,7 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
-    for idx, (file_path, fulltext, _, _) in enumerate(documents, start=1):
+    for _, (file_path, fulltext, _, _) in enumerate(documents, start=1):
         doc_embedding = get_document_embedding(embedding_model, fulltext, word_to_index=word_to_index)
         X.append(doc_embedding)
         files_loaded.append(file_path)
