@@ -382,7 +382,7 @@ def convert_pdf_with_grobid(file_content):
 
 def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
-            topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
+        topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -587,12 +587,13 @@ def get_all_ref_curies(mod_abbreviation: str):
         cursor.execute(mod_query)
         mod_id = cursor.fetchone()[0]
         # Query to fetch CURIEs
-        query = f"""SELECT curie 
-                    FROM reference
-                    WHERE reference_id IN (
-                      SELECT reference_id 
-                      FROM mod_corpus_association 
-                      WHERE mod_id = {mod_id} AND corpus is true)"""
+        query = f"""
+            SELECT curie 
+                FROM reference
+                WHERE reference_id IN (
+                    SELECT reference_id 
+                    FROM mod_corpus_association 
+                    WHERE mod_id = {mod_id} AND corpus is true)"""
         cursor.execute(query)
 
         # Fetch the result
