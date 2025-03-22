@@ -3,8 +3,8 @@ import logging
 import dill
 
 from agr_entity_extractor.models import AllianceStringMatchingEntityExtractorConfig, \
-    AllianceStringMatchingEntityExtractor
-from utils.abc_utils import upload_ml_model, download_abc_model
+    AllianceStringMatchingEntityExtractor, CustomTokenizer
+from utils.abc_utils import upload_ml_model, download_abc_model, get_all_curated_entities
 
 logger = logging.getLogger(__name__)
 
@@ -31,15 +31,23 @@ def main():
     entity_extraction_model_file_path = (f"/data/agr_entity_extraction/biocuration_entity_extraction_"
                                          f"{args.mod_abbreviation}_{args.topic.replace(':', '_')}.dpkl")
 
+    def load_entities_dynamically_fnc():
+        entity_str = "gene" if args.topic == "ATP:0000005" else "allele"
+        return get_all_curated_entities(mod_abbreviation=args.mod_abbreviation, entity_type_str=entity_str)
+
+    entities_to_extract, _ = load_entities_dynamically_fnc()
+    custom_tokenizer = CustomTokenizer(tokens=entities_to_extract)
+
     # Initialize the model
     config = AllianceStringMatchingEntityExtractorConfig()
     model = AllianceStringMatchingEntityExtractor(
         config=config,
         min_matches=args.min_matches,
         tfidf_threshold=args.tfidf_threshold,
-        tokenizer=tfidf_vectorizer.tokenizer,
+        tokenizer=custom_tokenizer,
         vectorizer=tfidf_vectorizer,
-        entities_to_extract=None
+        entities_to_extract=entities_to_extract,
+        load_entities_dynamically_fnc=load_entities_dynamically_fnc
     )
 
     # Serialize the model

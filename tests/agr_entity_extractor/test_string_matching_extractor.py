@@ -8,7 +8,7 @@ from agr_entity_extractor.models import AllianceStringMatchingEntityExtractor, C
 def extractor():
     c_elegans_genes = ["lin-12", "ced-3"]
     config = PretrainedConfig(num_labels=2)
-    custom_tokenizer = CustomTokenizer(curated_entities=c_elegans_genes)
+    custom_tokenizer = CustomTokenizer(tokens=c_elegans_genes)
     tfidf_vectorizer = TfidfVectorizer(tokenizer=lambda doc: custom_tokenizer.tokenize(doc))
     tfidf_vectorizer.fit(["dummy document with lin-12 and ced-3", "ced-3 is very popular", "ced-3 many times"])
     # Wrap the tokenizer with the custom pre-tokenizer

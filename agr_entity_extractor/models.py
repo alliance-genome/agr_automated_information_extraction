@@ -26,26 +26,39 @@ def convert_tokens_to_list_of_words(tokens):
 
 
 class CustomTokenizer(PreTrainedTokenizer):
-    def __init__(self, curated_entities, **kwargs):
+    def __init__(self, tokens, **kwargs):
         # Build your regex pattern (similar to before)
-        escaped_entities = [re.escape(entity) for entity in sorted(curated_entities, key=len, reverse=True)]
+        escaped_entities = [re.escape(entity) for entity in sorted(tokens, key=len, reverse=True)]
         pattern_entities = "|".join(escaped_entities)
         fallback_pattern = r"\b\w+(?:[-']\w+)*\b"
         self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})", flags=re.IGNORECASE)
-        self.curated_entities = curated_entities
+        self.tokens = tokens
         self.unk_token = "[UNK]"
         # Create an initial vocabulary: add unk token first,
         # then add curated entities. (IDs: unk -> 0, curated entities start at 1)
         self.vocab = {self.unk_token: 0}
-        for idx, token in enumerate(sorted(curated_entities), start=1):
-            self.vocab[token] = idx
+        self.update_vocab(tokens)
         # Set explicit unknown token id.
         self.unk_token_id = self.vocab[self.unk_token]
         # Some parts of the pipeline might look for `unknown_token_id`
         self.unknown_token_id = self.unk_token_id
         # Create a reverse mapping for converting IDs back to tokens.
         self.id_to_token = {id_: token for token, id_ in self.vocab.items()}
+        self.model_max_length = int(1e30)
         super().__init__(**kwargs)
+
+    def update_vocab(self, tokens):
+        self.vocab = {self.unk_token: 0}
+        for idx, token in enumerate(sorted(tokens), start=1):
+            self.vocab[token] = idx
+        # Set explicit unknown token id.
+        self.unk_token_id = self.vocab[self.unk_token]
+        # Some parts of the pipeline might look for `unknown_token_id`
+        self.unknown_token_id = self.unk_token_id
+
+    def add_tokens(self, new_tokens):
+        self.tokens = list(set(self.tokens + new_tokens))
+        self.update_vocab(new_tokens)
 
     def _tokenize(self, text, *args, **kwargs):
         # Use the simple tokenizer logic.
