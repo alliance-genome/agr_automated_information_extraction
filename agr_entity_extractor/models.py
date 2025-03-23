@@ -26,17 +26,14 @@ def convert_tokens_to_list_of_words(tokens):
 
 
 class CustomTokenizer(PreTrainedTokenizer):
-    def __init__(self, tokens, **kwargs):
+    def __init__(self, tokens, match_uppercase_entities: bool = False, **kwargs):
         # Build your regex pattern (similar to before)
-        escaped_entities = [re.escape(entity) for entity in sorted(tokens, key=len, reverse=True)]
-        pattern_entities = "|".join(escaped_entities)
-        fallback_pattern = r"\b\w+(?:[-']\w+)*\b"
-        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})", flags=re.IGNORECASE)
+        self.pattern = None
         self.tokens = tokens
+        self.match_uppercase_entities = match_uppercase_entities
         self.unk_token = "[UNK]"
-        # Create an initial vocabulary: add unk token first,
-        # then add curated entities. (IDs: unk -> 0, curated entities start at 1)
         self.vocab = {self.unk_token: 0}
+        self.add_tokens(tokens)
         self.update_vocab(tokens)
         # Set explicit unknown token id.
         self.unk_token_id = self.vocab[self.unk_token]
@@ -58,10 +55,19 @@ class CustomTokenizer(PreTrainedTokenizer):
 
     def add_tokens(self, new_tokens):
         self.tokens = list(set(self.tokens + new_tokens))
+        if self.match_uppercase_entities:
+            self.tokens = [token.upper() for token in self.tokens]
+        escaped_entities = [re.escape(entity) for entity in sorted(self.tokens, key=len, reverse=True)]
+        pattern_entities = "|".join(escaped_entities)
+        fallback_pattern = r"\b\w+(?:[-']\w+)*\b"
+        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})", flags=re.IGNORECASE)
+        self.tokens = list(set(self.tokens + new_tokens))
         self.update_vocab(new_tokens)
 
     def _tokenize(self, text, *args, **kwargs):
         # Use the simple tokenizer logic.
+        if self.match_uppercase_entities:
+            text = text.upper()
         tokens = []
         for match in re.finditer(self.pattern, text):
             token = match.group(1) or match.group(2)
@@ -150,7 +156,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
     def update_entities_to_extract(self, entities_to_extract):
         self.entities_to_extract = set(entities_to_extract)
         self.tokenizer.add_tokens(entities_to_extract)
-        self.vectorizer.tokenizer.add_tokens(entities_to_extract)
+        self.alliance_entities_loaded = False
 
     def set_tfidf_threshold(self, tfidf_threshold):
         self.tfidf_threshold = tfidf_threshold

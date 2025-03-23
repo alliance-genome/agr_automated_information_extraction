@@ -14,8 +14,8 @@ from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 logger = logging.getLogger(__name__)
 
 
-def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir: bool = False,
-                                 continue_download: bool = False,):
+def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, match_uppercase: bool = False,
+                                 wipe_download_dir: bool = False, continue_download: bool = False):
     download_dir = os.getenv("AGR_CORPUS_DOWNLOAD_DIR", "/tmp/alliance_corpus")
     if wipe_download_dir and not continue_download:
         logger.info(f"Wiping download directory: {download_dir}")
@@ -54,7 +54,7 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, wipe_download_dir
     curated_genes, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
     # curated_alleles, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     logger.info("Loading and add curated genes to it.")
-    custom_tokenizer = CustomTokenizer(tokens=curated_genes)
+    custom_tokenizer = CustomTokenizer(tokens=curated_genes, match_uppercase_entities=True)
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=lambda doc: custom_tokenizer.tokenize(doc))
     text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
     logger.info(f"Fitting TFIDF vectorizer on text files.")
@@ -91,6 +91,7 @@ def main():
         default="tfidf_vectorizer.pkl",
         help="Output file path to save the vectorizer (default: tfidf_vectorizer.pkl)."
     )
+    parser.add_argument("--match-uppercase", action="store_true")
     parser.add_argument("--wipe-download-dir", action="store_true",
                         help="If set, wipes the download directory before processing")
     parser.add_argument("--log-level", default="INFO",
