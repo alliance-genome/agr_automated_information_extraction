@@ -1,7 +1,9 @@
+import re
 from collections import defaultdict
+from typing import Dict
 
 import torch
-from transformers import PreTrainedModel, PretrainedConfig, AutoTokenizer
+from transformers import PreTrainedModel, PretrainedConfig, PreTrainedTokenizer
 
 
 def convert_tokens_to_list_of_words(tokens):
@@ -23,81 +25,102 @@ def convert_tokens_to_list_of_words(tokens):
     return words
 
 
-class CustomTokenizer:
-    def __init__(self, model_name, additional_tokens=None):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        if additional_tokens:
-            self.tokenizer.add_tokens(additional_tokens)
-        self.model_max_length = self.tokenizer.model_max_length
-        self.is_fast = self.tokenizer.is_fast
+class CustomTokenizer(PreTrainedTokenizer):
+    def __init__(self, tokens, match_uppercase_entities: bool = False, **kwargs):
+        # Build your regex pattern (similar to before)
+        self.pattern = None
+        self.tokens = tokens
+        self.match_uppercase_entities = match_uppercase_entities
+        self.unk_token = "[UNK]"
+        self.vocab = {self.unk_token: 0}
+        self.add_tokens(tokens)
+        self.update_vocab(tokens)
+        # Set explicit unknown token id.
+        self.unk_token_id = self.vocab[self.unk_token]
+        # Some parts of the pipeline might look for `unknown_token_id`
+        self.unknown_token_id = self.unk_token_id
+        # Create a reverse mapping for converting IDs back to tokens.
+        self.id_to_token = {id_: token for token, id_ in self.vocab.items()}
+        self.model_max_length = int(1e30)
+        super().__init__(**kwargs)
+
+    def update_vocab(self, tokens):
+        self.vocab = {self.unk_token: 0}
+        for idx, token in enumerate(sorted(tokens), start=1):
+            self.vocab[token] = idx
+        # Set explicit unknown token id.
+        self.unk_token_id = self.vocab[self.unk_token]
+        # Some parts of the pipeline might look for `unknown_token_id`
+        self.unknown_token_id = self.unk_token_id
+
+    def add_tokens(self, new_tokens):
+        self.tokens = list(set(self.tokens + new_tokens))
+        if self.match_uppercase_entities:
+            self.tokens = [token.upper() for token in self.tokens]
+        escaped_entities = [re.escape(entity) for entity in sorted(self.tokens, key=len, reverse=True)]
+        pattern_entities = "|".join(escaped_entities)
+        fallback_pattern = r"\b\w+(?:[-']\w+)*\b"
+        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})", flags=re.IGNORECASE)
+        self.tokens = list(set(self.tokens + new_tokens))
+        self.update_vocab(new_tokens)
+
+    def _tokenize(self, text, *args, **kwargs):
+        # Use the simple tokenizer logic.
+        if self.match_uppercase_entities:
+            text = text.upper()
+        tokens = []
+        for match in re.finditer(self.pattern, text):
+            token = match.group(1) or match.group(2)
+            tokens.append(token)
+        return tokens
 
     def __call__(self, text, *args, **kwargs):
-        padding = kwargs.get("padding", True)  # Default to padding
-        truncation = kwargs.get("truncation", True)  # Default to truncation
-        return_tensors = kwargs.get("return_tensors", None)  # Handle if tensors are requested
+        tokens = self._tokenize(text)
+        # Convert tokens to numeric IDs using our simple vocab
+        input_ids = [self.vocab.get(token, self.unknown_token_id) for token in tokens]
 
-        tokens = []
-        overflow_mapping = []
+        # Build the output dictionary. Here we include "tokens" just for reference.
+        output = {"input_ids": input_ids}
 
-        # Split the text into smaller chunks and keep track of overflow mapping
-        for i in range(0, len(text), self.model_max_length):
-            chunk = text[i:i + self.model_max_length]
+        # If the caller requests a special tokens mask, generate one.
+        if kwargs.get("return_special_tokens_mask", False):
+            # In this simple setup, none of our tokens are "special"
+            special_tokens_mask = [0] * len(input_ids)
+            output["special_tokens_mask"] = special_tokens_mask
 
-            # Tokenize the chunk
-            chunk_tokens = self.tokenizer.tokenize(chunk)
-            tokens.extend(chunk_tokens)
-
-            # Handle the mapping in case of overflow
-            overflow_mapping.extend([i] * len(chunk_tokens))  # Map tokens to chunk index
-
-        # Convert tokens to input IDs
-        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
-
-        # Add padding and truncation if requested
-        if truncation and len(input_ids) > self.model_max_length:
-            input_ids = input_ids[:self.model_max_length]
-            overflow_mapping = overflow_mapping[:self.model_max_length]  # Trim mapping as well
-
-        if padding:
-            # Pad input IDs if length is less than the maximum
-            padding_length = self.model_max_length - len(input_ids)
-            input_ids.extend([self.tokenizer.pad_token_id] * padding_length)  # Add padding tokens
-            overflow_mapping.extend([-1] * padding_length)  # Add padding mapping
-
-        # Create the attention mask (1 for tokens, 0 for padding)
-        attention_mask = [1 if id != self.tokenizer.pad_token_id else 0 for id in input_ids]
-
-        # Create token type IDs (useful for sentence pairs; all 0 for single sentences)
-        token_type_ids = [0] * len(input_ids)
-
-        # Prepare the result dictionary
-        result = {
-            "input_ids": input_ids,  # Numeric representation of tokens
-            "attention_mask": attention_mask,  # Masking padding
-            "token_type_ids": token_type_ids,  # Segmentation between sentence pairs
-            "overflow_to_sample_mapping": overflow_mapping,  # Overflow mapping
-        }
-
-        # Handle `return_tensors` argument (convert to tensors if requested)
-        if return_tensors == "pt":  # PyTorch tensors
-            import torch
-            result["input_ids"] = torch.tensor([result["input_ids"]])
-            result["attention_mask"] = torch.tensor([result["attention_mask"]])
-            result["token_type_ids"] = torch.tensor([result["token_type_ids"]])
-        elif return_tensors == "tf":  # TensorFlow tensors
+        return_tensors = kwargs.get("return_tensors", None)
+        if return_tensors == "pt":
+            output["input_ids"] = torch.tensor([input_ids])
+            if "special_tokens_mask" in output:
+                output["special_tokens_mask"] = torch.tensor([output["special_tokens_mask"]])
+            output["attention_mask"] = torch.ones_like(output["input_ids"])
+        elif return_tensors == "tf":
             import tensorflow as tf
-            result["input_ids"] = tf.constant([result["input_ids"]])
-            result["attention_mask"] = tf.constant([result["attention_mask"]])
-            result["token_type_ids"] = tf.constant([result["token_type_ids"]])
+            output["input_ids"] = tf.convert_to_tensor([input_ids])
+            if "special_tokens_mask" in output:
+                output["special_tokens_mask"] = tf.convert_to_tensor([output["special_tokens_mask"]])
+            output["attention_mask"] = tf.ones_like(output["input_ids"])
+        else:
+            # Wrap in a list to simulate a batch dimension.
+            output["input_ids"] = [input_ids]
+            if "special_tokens_mask" in output:
+                output["special_tokens_mask"] = [output["special_tokens_mask"]]
 
-        return result
+        return output
 
-    def convert_ids_to_tokens(self, seq):
-        return self.tokenizer.convert_ids_to_tokens(seq)
+    def get_vocab(self) -> Dict[str, int]:
+        # This implementation returns the vocabulary dictionary.
+        return self.vocab
 
-    def add_tokens(self, tokens):
-        self.tokenizer.add_tokens(tokens)
-        self.model_max_length = self.tokenizer.model_max_length
+    def convert_tokens_to_ids(self, tokens):
+        """Converts tokens or a list of tokens to their corresponding IDs."""
+        if isinstance(tokens, str):
+            return self.vocab.get(tokens, self.unk_token_id)
+        return [self.vocab.get(token, self.unk_token_id) for token in tokens]
+
+    def _convert_id_to_token(self, index: int) -> str:
+        """Converts a token ID back to the corresponding token string."""
+        return self.id_to_token.get(index, self.unk_token)
 
 
 class AllianceStringMatchingEntityExtractorConfig(PretrainedConfig):
@@ -133,7 +156,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
     def update_entities_to_extract(self, entities_to_extract):
         self.entities_to_extract = set(entities_to_extract)
         self.tokenizer.add_tokens(entities_to_extract)
-        self.vectorizer.tokenizer.add_tokens(entities_to_extract)
+        self.alliance_entities_loaded = False
 
     def set_tfidf_threshold(self, tfidf_threshold):
         self.tfidf_threshold = tfidf_threshold
@@ -172,7 +195,8 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             # Initialize token-level logits: shape (num_tokens, num_labels).
             token_logits = torch.zeros(len(tokens), self.config.num_labels, device=input_ids.device)
             # Get the TF-IDF values for the document.
-            doc_tfidf = self.vectorizer.transform([tokens])
+            document_text = " ".join(tokens)
+            doc_tfidf = self.vectorizer.transform([document_text])
             # For each token in the document...
             for i, token in enumerate(tokens):
                 if token in self.entities_to_extract:

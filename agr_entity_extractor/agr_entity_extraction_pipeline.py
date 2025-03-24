@@ -51,8 +51,14 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
         for file in os.listdir("/data/agr_entity_extraction/to_extract"):
             curie = file.split(".")[0].replace("_", ":")
             job = reference_curie_job_map[curie]
-            tei_obj = AllianceTEI()
-            tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
+            try:
+                tei_obj = AllianceTEI()
+                tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
+            except Exception as e:
+                logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
+                continue
+            entity_extraction_model.load_entities_dynamically_fnc()
+            entity_extraction_model.alliance_entities_loaded = True
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                     tokenizer=entity_extraction_model.tokenizer)
             results = nlp_pipeline(tei_obj.get_fulltext())
