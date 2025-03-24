@@ -52,12 +52,12 @@ def get_sentences_from_tei_section(section):
         for sentence in paragraph:
             try:
                 if not sentence.text.isdigit() and not (
-                        len(section.paragraphs) == 3 and
-                        section.paragraphs[0][0].text in ['\n', ' '] and
-                        section.paragraphs[-1][0].text in ['\n', ' ']
+                    len(section.paragraphs) == 3
+                    and section.paragraphs[0][0].text in ['\n', ' ']
+                    and section.paragraphs[-1][0].text in ['\n', ' ']
                 ):
                     sentences.append(re.sub('<[^<]+>', '', sentence.text))
-            except Exception as e:
+            except Exception:
                 num_errors += 1
     sentences = [sentence if sentence.endswith(".") else f"{sentence}." for sentence in sentences]
     return sentences, num_errors
@@ -87,4 +87,3 @@ def convert_all_tei_files_in_dir_to_txt(dir_path):
     file_paths = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(".tei")]
     with ThreadPoolExecutor() as executor:
         executor.map(process_file, file_paths)
-

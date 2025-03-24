@@ -167,6 +167,11 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
 def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
+    # TODO: pass negated and confidence_level
+    # Remove after fixing
+    negated = False
+    confidence_level = "Needs Confidence"
+    # End of TODO
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
@@ -219,7 +224,7 @@ def set_job_started(job):
         urllib.request.urlopen(request)
         return True
     except HTTPError as e:
-        logger.error(e)
+        logger.error(f"Error setting job started: {str(job)}: {str(e)}")
         return False
 
 
@@ -232,7 +237,7 @@ def set_job_success(job):
         urllib.request.urlopen(request)
         return True
     except HTTPError as e:
-        logger.error(e)
+        logger.error(f"Error setting job success: {str(job)}: {str(e)}")
         return False
 
 
@@ -245,7 +250,7 @@ def set_job_failure(job):
         urllib.request.urlopen(request)
         return True
     except HTTPError as e:
-        logger.error(e)
+        logger.error(f"Error setting job failed: {str(job)}: {str(e)}")
         return False
 
 
@@ -288,7 +293,7 @@ def get_pmids_from_reference_curies(curies: List[str]):
             resp_obj = json.loads(resp)
             try:
                 curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
-                                 if xref["curie"].startswith("PMID")][0]
+                                     if xref["curie"].startswith("PMID")][0]
             except IndexError:
                 curie_pmid[curie] = None
     return curie_pmid
@@ -320,9 +325,9 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
             resp_obj = json.loads(resp)
             main_pdf_ref_file = None
             main_pdf_referencefiles = [ref_file for ref_file in resp_obj if
-                                       ref_file["file_class"] == "main" and
-                                       ref_file["file_publication_status"] == "final" and
-                                       ref_file["file_extension"] == "pdf"]
+                                       ref_file["file_class"] == "main"
+                                       and ref_file["file_publication_status"] == "final"
+                                       and ref_file["file_extension"] == "pdf"]
             for ref_file in main_pdf_referencefiles:
                 if any(ref_file_mod["mod_abbreviation"] == mod_abbreviation for ref_file_mod in
                        ref_file["referencefile_mods"]):
@@ -344,7 +349,7 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
 
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
-    for idx, reference_curie in enumerate(reference_curies, start=1):
+    for _, reference_curie in enumerate(reference_curies, start=1):
         all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
         request = urllib.request.Request(url=all_reffiles_for_pap_api)
         request.add_header("Content-type", "application/json")
@@ -359,7 +364,8 @@ def download_tei_files_for_references(reference_curies: List[str], output_dir: s
                             ref_file["referencefile_mods"]):
                         file_content = get_file_from_abc_reffile_obj(ref_file)
                         if file_content:
-                            with open(os.path.join(output_dir, reference_curie.replace(":", "_") + ".tei"), "wb") as out_file:
+                            filename = os.path.join(output_dir, reference_curie.replace(":", "_") + ".tei")
+                            with open(filename, "wb") as out_file:
                                 out_file.write(file_content)
         except HTTPError as e:
             logger.error(e)
@@ -374,9 +380,9 @@ def convert_pdf_with_grobid(file_content):
     return response
 
 
-def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str,  topic: str = None):
+def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
-            topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
+        topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -581,7 +587,13 @@ def get_all_ref_curies(mod_abbreviation: str):
         cursor.execute(mod_query)
         mod_id = cursor.fetchone()[0]
         # Query to fetch CURIEs
-        query = f"SELECT curie FROM reference WHERE reference_id IN (SELECT reference_id FROM mod_corpus_association WHERE mod_id = {mod_id} AND corpus is true)"
+        query = f"""
+            SELECT curie
+                FROM reference
+                WHERE reference_id IN (
+                    SELECT reference_id
+                    FROM mod_corpus_association
+                    WHERE mod_id = {mod_id} AND corpus is true)"""
         cursor.execute(query)
 
         # Fetch the result

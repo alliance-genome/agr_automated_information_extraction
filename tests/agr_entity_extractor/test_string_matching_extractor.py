@@ -1,5 +1,5 @@
 import pytest
-from transformers import pipeline, PretrainedConfig, AutoTokenizer, PreTrainedTokenizerFast
+from transformers import pipeline, PretrainedConfig, AutoTokenizer
 from agr_entity_extractor.models import AllianceStringMatchingEntityExtractor
 
 
