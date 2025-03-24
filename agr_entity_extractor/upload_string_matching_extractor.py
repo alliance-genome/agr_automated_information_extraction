@@ -39,10 +39,11 @@ def main():
     entity_extraction_model_file_path = (f"/data/agr_entity_extraction/biocuration_entity_extraction_"
                                          f"{args.mod_abbreviation}_{args.topic.replace(':', '_')}.dpkl")
 
-    load_entities_dynamically_fnc = lambda: get_all_curated_entities(
-        mod_abbreviation=args.mod_abbreviation,
-        entity_type_str="gene" if args.topic == "ATP:0000005" else "allele"
-    )
+    def load_entities_dynamically_fnc():
+        return get_all_curated_entities(
+            mod_abbreviation=args.mod_abbreviation,
+            entity_type_str="gene" if args.topic == "ATP:0000005" else "allele"
+        )
 
     entities_to_extract, _ = load_entities_dynamically_fnc()
     custom_tokenizer = CustomTokenizer(tokens=entities_to_extract)

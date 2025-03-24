@@ -146,7 +146,7 @@ def main():
 
     # Process TEI files and generate embeddings
     print(f"Processing TEI files in folder: {input_folder}")
-    process_tei_files(input_folder, mods, embedding_model, args.output_file)
+    process_tei_files(input_folder, mods, embedding_model, output_file)
 
 
 # Entry point

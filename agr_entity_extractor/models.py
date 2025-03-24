@@ -3,7 +3,7 @@ from collections import defaultdict
 from typing import Dict
 
 import torch
-from transformers import PreTrainedModel, PretrainedConfig, AutoTokenizer, PreTrainedTokenizer
+from transformers import PreTrainedModel, PretrainedConfig, PreTrainedTokenizer
 
 
 def convert_tokens_to_list_of_words(tokens):
