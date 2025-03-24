@@ -58,6 +58,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
                 continue
             entity_extraction_model.load_entities_dynamically_fnc()
+            entity_extraction_model.alliance_entities_loaded = True
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                     tokenizer=entity_extraction_model.tokenizer)
             results = nlp_pipeline(tei_obj.get_fulltext())

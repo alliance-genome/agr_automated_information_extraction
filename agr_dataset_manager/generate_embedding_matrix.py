@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 from collections import defaultdict
 
@@ -10,9 +11,12 @@ from utils.embedding import get_document_embedding, load_embedding_model
 from utils.tei_utils import AllianceTEI
 
 
-def process_tei_files(base_folder, all_mods, embedding_model):
-    data = []
+logger = logging.getLogger(__name__)
+
+
+def process_tei_files(base_folder, all_mods, embedding_model, output_file):
     embeddings = defaultdict(lambda: defaultdict(list))
+    processed_files = 0
 
     if isinstance(embedding_model, KeyedVectors):
         word_to_index = embedding_model.key_to_index
@@ -22,7 +26,7 @@ def process_tei_files(base_folder, all_mods, embedding_model):
     for mod in all_mods:
         mod_folder = os.path.join(base_folder, mod)
         if not os.path.isdir(mod_folder):
-            print(f"Warning: MOD folder {mod} does not exist.")
+            logger.warning(f"Warning: MOD folder {mod} does not exist.")
             continue
 
         # Process each file in the MOD folder
@@ -37,11 +41,11 @@ def process_tei_files(base_folder, all_mods, embedding_model):
                     tei_parser.load_from_file(file_path)
                     fulltext = tei_parser.get_fulltext()
                 except Exception as e:
-                    print(f"Error processing file {filename}: {e}")
+                    logger.error(f"Error processing file {filename}: {e}")
                     continue
 
                 if not fulltext:
-                    print(f"Skipping file {filename} due to missing content.")
+                    logger.warning(f"Skipping file {filename} due to missing content.")
                     continue
 
                 # Generate average embedding
@@ -49,7 +53,18 @@ def process_tei_files(base_folder, all_mods, embedding_model):
                                                        word_to_index=word_to_index)
 
                 embeddings[curie][tuple(avg_embedding)].append(mod)
+                processed_files += 1
+                if processed_files % 1000 == 0:
+                    logger.info(f"Processed {processed_files} files...")
+                    partial_aggregation = aggregate_by_avg_embedding(embeddings, all_mods)
+                    save_to_csv(partial_aggregation, output_file)
 
+    final_aggregation = aggregate_by_avg_embedding(embeddings, all_mods)
+    save_to_csv(final_aggregation, output_file)
+
+
+def aggregate_by_avg_embedding(embeddings, all_mods):
+    data = []
     for curie, avg_embedding_mods in embeddings.items():
         for avg_embedding, mods in avg_embedding_mods.items():
             entry = {"CURIE": curie}
@@ -58,6 +73,19 @@ def process_tei_files(base_folder, all_mods, embedding_model):
             entry["Average_Embedding"] = np.array(avg_embedding)
             data.append(entry)
     return data
+
+
+def save_to_csv(aggregated_embedding_data, output_file):
+    embedding_dim = len(aggregated_embedding_data[0]["Average_Embedding"])
+    embedding_columns = [f"Embedding_{i}" for i in range(embedding_dim)]
+
+    df = pd.DataFrame(aggregated_embedding_data)
+    df[embedding_columns] = pd.DataFrame(df["Average_Embedding"].tolist(), index=df.index)
+    df = df.drop(columns=["Average_Embedding"])
+
+    # Save the DataFrame to a CSV file
+    logger.info(f"Saving embeddings matrix to {output_file}...")
+    df.to_csv(output_file, index=False)
 
 
 # Main function
@@ -88,6 +116,14 @@ def main():
         type=str,
         help="Path to the word embedding model"
     )
+    parser.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR",
+                                                                "CRITICAL"],
+                        help="Set the logging level (default: INFO)")
+    args = parser.parse_args()
+
+    # Set up logging
+    logging.basicConfig(level=args.log_level,
+                        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     args = parser.parse_args()
 
     input_folder = args.input_folder
@@ -98,23 +134,7 @@ def main():
 
     # Process TEI files and generate embeddings
     print(f"Processing TEI files in folder: {input_folder}")
-    embedding_data = process_tei_files(input_folder, mods, embedding_model)
-
-    # Create DataFrame and expand embeddings into separate columns
-    if embedding_data:
-        embedding_dim = len(embedding_data[0]["Average_Embedding"])
-        embedding_columns = [f"Embedding_{i}" for i in range(embedding_dim)]
-
-        df = pd.DataFrame(embedding_data)
-        df[embedding_columns] = pd.DataFrame(df["Average_Embedding"].tolist(), index=df.index)
-        df = df.drop(columns=["Average_Embedding"])
-
-        # Save the DataFrame to a CSV file
-        print(f"Saving embeddings matrix to {output_file}...")
-        df.to_csv(output_file, index=False)
-        print("Done!")
-    else:
-        print("No embeddings were generated. Ensure valid TEI files are in the specified folder.")
+    process_tei_files(input_folder, mods, embedding_model, args.output_file)
 
 
 # Entry point
