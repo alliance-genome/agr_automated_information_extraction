@@ -35,6 +35,7 @@ def process_tei_files(base_folder, all_mods, embedding_model, output_file):
                 file_path = os.path.join(mod_folder, filename)
                 curie = filename.replace(".tei", "").replace("_", ":")
 
+                logger.debug(f"Processing file {filename} for {mod}...")
                 # Extract fulltext using AllianceTEI
                 tei_parser = AllianceTEI()
                 try:
@@ -48,12 +49,14 @@ def process_tei_files(base_folder, all_mods, embedding_model, output_file):
                     logger.warning(f"Skipping file {filename} due to missing content.")
                     continue
 
+                logger.debug(f"Extracted fulltext for {curie}: {fulltext}, now generating embeddings...")
                 # Generate average embedding
                 avg_embedding = get_document_embedding(model=embedding_model, document=fulltext,
                                                        word_to_index=word_to_index)
 
                 embeddings[curie][tuple(avg_embedding)].append(mod)
                 processed_files += 1
+                logger.debug(f"Processed {processed_files} files...")
                 if processed_files % 1000 == 0:
                     logger.info(f"Processed {processed_files} files...")
                     partial_aggregation = aggregate_by_avg_embedding(embeddings, all_mods)
