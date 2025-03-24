@@ -1,6 +1,7 @@
 import argparse
 import logging
 import os
+import random
 from collections import defaultdict
 
 import numpy as np
@@ -16,54 +17,62 @@ logger = logging.getLogger(__name__)
 
 def process_tei_files(base_folder, all_mods, embedding_model, output_file):
     embeddings = defaultdict(lambda: defaultdict(list))
-    processed_files = 0
+    processed_curies = 0
 
     if isinstance(embedding_model, KeyedVectors):
         word_to_index = embedding_model.key_to_index
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
+    all_files = defaultdict(list)
     for mod in all_mods:
         mod_folder = os.path.join(base_folder, mod)
         if not os.path.isdir(mod_folder):
             logger.warning(f"Warning: MOD folder {mod} does not exist.")
             continue
-
-        # Process each file in the MOD folder
         for filename in os.listdir(mod_folder):
-            if filename.endswith(".tei"):
-                file_path = os.path.join(mod_folder, filename)
-                curie = filename.replace(".tei", "").replace("_", ":")
+            curie = filename.replace(".tei", "").replace("_", ":")
+            file_path = os.path.join(mod_folder, filename)
+            all_files[curie].append((file_path, mod))
+    curies_to_process = list(all_files.keys())
+    random.shuffle(curies_to_process)
 
-                logger.debug(f"Processing file {filename} for {mod}...")
-                # Extract fulltext using AllianceTEI
-                tei_parser = AllianceTEI()
-                try:
-                    tei_parser.load_from_file(file_path)
-                    fulltext = tei_parser.get_fulltext()
-                except Exception as e:
-                    logger.error(f"Error processing file {filename}: {e}")
-                    continue
+    for curie in curies_to_process:
+        for file_path, mod in all_files[curie]:
+            filename = os.path.basename(file_path)
+            curie = filename.replace(".tei", "").replace("_", ":")
 
-                if not fulltext:
-                    logger.warning(f"Skipping file {filename} due to missing content.")
-                    continue
+            logger.debug(f"Processing file {filename} for {mod}...")
+            # Extract fulltext using AllianceTEI
+            tei_parser = AllianceTEI()
+            try:
+                tei_parser.load_from_file(file_path)
+                fulltext = tei_parser.get_fulltext()
+            except Exception as e:
+                logger.error(f"Error processing file {filename}: {e}")
+                continue
 
-                logger.debug(f"Extracted fulltext for {curie}: {fulltext}, now generating embeddings...")
-                # Generate average embedding
-                avg_embedding = get_document_embedding(model=embedding_model, document=fulltext,
-                                                       word_to_index=word_to_index)
+            if not fulltext:
+                logger.warning(f"Skipping file {filename} due to missing content.")
+                continue
 
-                embeddings[curie][tuple(avg_embedding)].append(mod)
-                processed_files += 1
-                logger.debug(f"Processed {processed_files} files...")
-                if processed_files % 1000 == 0:
-                    logger.info(f"Processed {processed_files} files...")
-                    partial_aggregation = aggregate_by_avg_embedding(embeddings, all_mods)
-                    save_to_csv(partial_aggregation, output_file)
+            logger.debug(f"Extracted fulltext for {curie}, now generating embeddings...")
+            # Generate average embedding
+            avg_embedding = get_document_embedding(model=embedding_model, document=fulltext,
+                                                   word_to_index=word_to_index)
+
+            embeddings[curie][tuple(avg_embedding)].append(mod)
+
+        processed_curies += 1
+        logger.debug(f"Processed {processed_curies} curies so far...")
+        if processed_curies % 1000 == 0:
+            partial_aggregation = aggregate_by_avg_embedding(embeddings, all_mods)
+            save_to_csv(partial_aggregation, output_file)
+            logger.info(f"Saved partial matrix {output_file}.")
 
     final_aggregation = aggregate_by_avg_embedding(embeddings, all_mods)
     save_to_csv(final_aggregation, output_file)
+    logger.info(f"Saved final matrix {output_file}.")
 
 
 def aggregate_by_avg_embedding(embeddings, all_mods):
