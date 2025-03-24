@@ -68,7 +68,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     for label in ["positive", "negative"]:
         documents = list(get_documents(os.path.join(training_data_dir, label)))
 
-        for idx, (_, fulltext, title, abstract) in enumerate(documents, start=1):
+        for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
             text = ""
             if not sections_to_use:
                 text = fulltext
@@ -194,7 +194,7 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
                     file_stream = fin
                 try:
                     article: Article = TEI.parse(file_stream, figures=True)
-                except Exception as e:
+                except Exception:
                     num_errors += 1
                     continue
                 sentences = []
@@ -231,7 +231,7 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
-    for idx, (file_path, fulltext, title, abstract) in enumerate(documents, start=1):
+    for _, (file_path, fulltext, _, _) in enumerate(documents, start=1):
         doc_embedding = get_document_embedding(embedding_model, fulltext, word_to_index=word_to_index)
         X.append(doc_embedding)
         files_loaded.append(file_path)
@@ -394,8 +394,8 @@ def download_training_set(args, training_data_dir):
 
 def upload_pre_existing_model(args, training_set):
     logger.info("Skipping training. Uploading pre-existing model and stats file to ABC")
-    stats = json.load(open(f"/data/agr_document_classifier/training/{args.mod_train}_" +
-                           f"{args.datatype_train.replace(':', '_')}_metadata.json"))
+    stats = json.load(open(f"/data/agr_document_classifier/training/{args.mod_train}_"
+                           + f"{args.datatype_train.replace(':', '_')}_metadata.json"))
     stats["best_params"] = stats["parameters"]
     stats["model_name"] = stats["model_type"]
     stats["average_precision"] = stats["precision"]

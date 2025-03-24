@@ -57,12 +57,12 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, match_uppercase: 
     custom_tokenizer = CustomTokenizer(tokens=curated_genes, match_uppercase_entities=True)
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=lambda doc: custom_tokenizer.tokenize(doc))
     text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
-    logger.info(f"Fitting TFIDF vectorizer on text files.")
+    logger.info("Fitting TFIDF vectorizer on text files.")
     tfidf_vectorizer.fit(text_files)
     string_vectorizer = TfidfVectorizer(vocabulary=tfidf_vectorizer.vocabulary_, tokenizer=custom_tokenizer)
     dummy_corpus = ["dummy document"]
     string_vectorizer.fit(dummy_corpus)
-    logger.info(f"TFIDF vectorizer fitted.")
+    logger.info("TFIDF vectorizer fitted.")
     return string_vectorizer
 
 
@@ -140,4 +140,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

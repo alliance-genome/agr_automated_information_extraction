@@ -1,6 +1,6 @@
 import pytest
 from sklearn.feature_extraction.text import TfidfVectorizer
-from transformers import pipeline, PretrainedConfig, AutoTokenizer, PreTrainedTokenizerFast
+from transformers import pipeline, PretrainedConfig
 from agr_entity_extractor.models import AllianceStringMatchingEntityExtractor, CustomTokenizer
 
 
