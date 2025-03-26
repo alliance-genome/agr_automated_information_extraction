@@ -458,9 +458,9 @@ def classify_mode(args):
         subject = "Failed processing of classification jobs"
         message = "<h>The following jobs failed to process:</h>\n\n"
         for fp in failed_processes:
-            message += f"{fp['topic']}: {fp['mod_abbreviation']}\n"
-            message += f"{fp['exception']}\n"
-            message += f"{fp['trace']}\n\n"
+            message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
+            message += f"Exception: {fp['exception']}<br>\n"
+            message += f"Stacktrace: {fp['trace']}<br>\n\n"
         send_report(subject, message)
         exit(-1)
 
