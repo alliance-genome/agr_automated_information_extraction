@@ -446,7 +446,7 @@ def classify_mode(args):
         try:
             process_classification_jobs(mod_id, topic, jobs, embedding_model)
         except Exception as e:
-            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_abbr}.")
+            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
             failed = {'topic': topic,
                       'mod_abbreviation': mod_id,
                       'exception': str(e),
