@@ -9,6 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Tuple, List
+import traceback
 
 import joblib
 import nltk
@@ -32,9 +33,12 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     upload_ml_model, download_abc_model, set_job_failure, load_all_jobs
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
+from agr_literature_service.lit_processing.utils.report_utils import send_report
 
 nltk.download('stopwords')
 nltk.download('punkt')
+
+logger = logging.getLogger(__name__)
 
 
 def configure_logging(log_level):
@@ -315,12 +319,30 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     classifier_model = joblib.load(classifier_file_path)
+    failed_processes = []
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
+        try:
+            process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
+        except Exception as e:
+            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_abbr}.")
+            failed = {'topic': topic,
+                      'mod_abbreviation': mod_abbr,
+                      'exception': str(e),
+                      'trace': str(traceback.TracebackException.from_exception(e))}
+            failed_processes.append(failed)
+    if failed_processes:
+        subject = "Failed processing of classification jobs"
+        message = "The following jobs failed to process:\n\n"
+        for fp in failed_processes:
+            message += f"{fp['topic']}: {fp['mod_abbreviation']}\n"
+            message += f"{fp['exception']}\n"
+            message += f"{fp['trace']}\n\n"
+        send_report(subject, message)
+        pass
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model):
