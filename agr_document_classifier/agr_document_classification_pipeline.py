@@ -210,7 +210,7 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
                         break
                 documents.append((file_path, " ".join(sentences), article.title, abstract))
         if num_errors > 0:
-            logger.warning(f"Couldn't read {str(num_errors)} sentence(s) from {str(file_path)}")
+            logger.debug(f"Couldn't read {str(num_errors)} sentence(s) from {str(file_path)}")
     return documents
 
 
