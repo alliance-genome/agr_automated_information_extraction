@@ -450,17 +450,22 @@ def classify_mode(args):
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
             failed = {'topic': topic,
                       'mod_abbreviation': mod_id,
-                      'exception': str(e),
-                      'trace': str(traceback.TracebackException.from_exception(e))}
+                      'exception': str(e)}
+            traceback.print_tb(e.__traceback__)  # Prints to standard error
+            formatted_traceback = traceback.format_tb(e.__traceback__)
+            failed['trace'] = ""
+            # print("Formatted traceback:")
+            for line in formatted_traceback:
+                failed['trace'] += f"{line}<br>"
             failed_processes.append(failed)
 
     if failed_processes:
         subject = "Failed processing of classification jobs"
-        message = "<h>The following jobs failed to process:</h>\n\n"
+        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
         for fp in failed_processes:
             message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
             message += f"Exception: {fp['exception']}<br>\n"
-            message += f"Stacktrace: {fp['trace']}<br>\n\n"
+            message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
         send_report(subject, message)
         exit(-1)
 
