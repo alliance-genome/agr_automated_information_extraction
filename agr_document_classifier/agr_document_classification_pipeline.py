@@ -9,6 +9,7 @@ import shutil
 import sys
 from pathlib import Path
 from typing import Tuple, List
+import traceback
 
 import joblib
 import nltk
@@ -32,9 +33,12 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     upload_ml_model, download_abc_model, set_job_failure, load_all_jobs
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
+from agr_literature_service.lit_processing.utils.report_utils import send_report
 
 nltk.download('stopwords')
 nltk.download('punkt')
+
+logger = logging.getLogger(__name__)
 
 
 def configure_logging(log_level):
@@ -440,9 +444,30 @@ def train_mode(args):
 def classify_mode(args):
     mod_topic_jobs = load_all_jobs("classification_job")
     embedding_model = load_embedding_model(args.embedding_model_path)
-
+    failed_processes = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
-        process_classification_jobs(mod_id, topic, jobs, embedding_model)
+        try:
+            process_classification_jobs(mod_id, topic, jobs, embedding_model)
+        except Exception as e:
+            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
+            failed = {'topic': topic,
+                      'mod_abbreviation': mod_id,
+                      'exception': str(e)}
+            formatted_traceback = traceback.format_tb(e.__traceback__)
+            failed['trace'] = ""
+            for line in formatted_traceback:
+                failed['trace'] += f"{line}<br>"
+            failed_processes.append(failed)
+
+    if failed_processes:
+        subject = "Failed processing of classification jobs"
+        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
+        for fp in failed_processes:
+            message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
+            message += f"Exception: {fp['exception']}<br>\n"
+            message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
+        send_report(subject, message)
+        exit(-1)
 
 
 def main():
