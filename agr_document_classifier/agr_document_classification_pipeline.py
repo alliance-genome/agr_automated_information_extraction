@@ -444,6 +444,7 @@ def classify_mode(args):
     failed_processes = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
+            print(1/0)
             process_classification_jobs(mod_id, topic, jobs, embedding_model)
         except Exception as e:
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
@@ -455,13 +456,13 @@ def classify_mode(args):
 
     if failed_processes:
         subject = "Failed processing of classification jobs"
-        message = "The following jobs failed to process:\n\n"
+        message = "<h>The following jobs failed to process:</h>\n\n"
         for fp in failed_processes:
             message += f"{fp['topic']}: {fp['mod_abbreviation']}\n"
             message += f"{fp['exception']}\n"
             message += f"{fp['trace']}\n\n"
         send_report(subject, message)
-
+        exit(-1)
 
 def main():
     args = parse_arguments()
