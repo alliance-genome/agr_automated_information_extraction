@@ -444,17 +444,14 @@ def classify_mode(args):
     failed_processes = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            print(1/0)
             process_classification_jobs(mod_id, topic, jobs, embedding_model)
         except Exception as e:
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
             failed = {'topic': topic,
                       'mod_abbreviation': mod_id,
                       'exception': str(e)}
-            traceback.print_tb(e.__traceback__)  # Prints to standard error
             formatted_traceback = traceback.format_tb(e.__traceback__)
             failed['trace'] = ""
-            # print("Formatted traceback:")
             for line in formatted_traceback:
                 failed['trace'] += f"{line}<br>"
             failed_processes.append(failed)
@@ -468,6 +465,7 @@ def classify_mode(args):
             message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
         send_report(subject, message)
         exit(-1)
+
 
 def main():
     args = parse_arguments()
