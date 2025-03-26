@@ -240,7 +240,10 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     del embedding_model
     X = np.array(X)
     classifications = classifier_model.predict(X)
-    confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
+    try:
+        confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
+    except AttributeError:
+        confidence_scores = [1 / (1 + np.exp(-decision_value)) for decision_value in classifier_model.decision_function(X)]
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
 
