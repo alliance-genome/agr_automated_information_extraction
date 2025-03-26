@@ -62,7 +62,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                     tokenizer=entity_extraction_model.tokenizer)
             results = nlp_pipeline(tei_obj.get_fulltext())
-            entities_in_fulltext = [result['word'] for result in results if result['entity'] == "LABEL_1"]
+            entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
             tokenized_title = entity_extraction_model.tokenizer(tei_obj.get_title())
             tokenized_title_str = convert_tokens_to_list_of_words(tokenized_title)
             entities_in_title = []

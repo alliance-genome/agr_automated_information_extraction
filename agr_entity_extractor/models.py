@@ -188,7 +188,8 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
         global_token_counts = defaultdict(int)
         for tokens in batch_tokens:
             for token in tokens:
-                if token in self.entities_to_extract:
+                if (token in self.entities_to_extract or self.match_uppercase and token.upper() in
+                        self.entities_to_extract):
                     global_token_counts[token] += 1
 
         for tokens in batch_tokens:
@@ -199,7 +200,8 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             doc_tfidf = self.vectorizer.transform([document_text])
             # For each token in the document...
             for i, token in enumerate(tokens):
-                if token in self.entities_to_extract:
+                if (token in self.entities_to_extract or self.match_uppercase and token.upper() in
+                        self.entities_to_extract):
                     # Use the in-document frequency (count) for this token.
                     token_count = global_token_counts[token]
                     # Get the tf-idf score for this token, if it exists in the fitted vocabulary.

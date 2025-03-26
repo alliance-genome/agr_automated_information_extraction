@@ -15,7 +15,7 @@ def upload_dataset_from_csv(csv_file: str, title: str, description: str, mod_abb
         csv_reader = csv.DictReader(file, delimiter=',')  # Change delimiter to comma
         for row in csv_reader:
             agrkb_id = row.get('AGRKBID')
-            positive = "positive" if int(row.get('Positive/Negative')) == 1 else "negative"
+            classification = row.get('Classification')
             if not agrkb_id:
                 xref = row.get('XREF')
                 agrkb_id = get_curie_from_xref(xref)
@@ -23,7 +23,7 @@ def upload_dataset_from_csv(csv_file: str, title: str, description: str, mod_abb
                     logger.warning(f"Skipping invalid row: {row}")
                     continue
             add_entry_to_dataset(mod_abbreviation=mod_abbreviation, topic=topic, dataset_type="document",
-                                 version=version, reference_curie=agrkb_id, classification_value=positive)
+                                 version=version, reference_curie=agrkb_id, classification_value=classification)
 
 
 if __name__ == "__main__":
