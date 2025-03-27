@@ -21,6 +21,7 @@ def main():
     parser.add_argument("-t", "--topic", required=True, help="The topic of the model")
     parser.add_argument("--log-level", default="INFO",
                         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"])
+    parser.add_argument("--match-uppercase", action="store_true")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -46,7 +47,7 @@ def main():
         )
 
     entities_to_extract, _ = load_entities_dynamically_fnc()
-    custom_tokenizer = CustomTokenizer(tokens=entities_to_extract)
+    custom_tokenizer = CustomTokenizer(tokens=entities_to_extract, match_uppercase_entities=args.match_uppercase)
 
     # Initialize the model
     config = AllianceStringMatchingEntityExtractorConfig()
@@ -57,7 +58,8 @@ def main():
         tokenizer=custom_tokenizer,
         vectorizer=tfidf_vectorizer,
         entities_to_extract=entities_to_extract,
-        load_entities_dynamically_fnc=load_entities_dynamically_fnc
+        load_entities_dynamically_fnc=load_entities_dynamically_fnc,
+        match_uppercase=args.match_uppercase
     )
 
     # Serialize the model
