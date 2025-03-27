@@ -367,6 +367,8 @@ def download_tei_files_for_references(reference_curies: List[str], output_dir: s
                             filename = os.path.join(output_dir, reference_curie.replace(":", "_") + ".tei")
                             with open(filename, "wb") as out_file:
                                 out_file.write(file_content)
+                        else:
+                            logger.error(f"No TEI file found for {reference_curie}")
         except HTTPError as e:
             logger.error(e)
     logger.info("Finished downloading TEI files")
