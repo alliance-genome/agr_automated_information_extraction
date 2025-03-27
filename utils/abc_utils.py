@@ -347,6 +347,22 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
         logger.error(e)
 
 
+def download_bib_data_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
+    logger.info("Started retrieving bib data")
+    for _, reference_curie in enumerate(reference_curies, start=1):
+        bib_url = f"{blue_api_base_url}/get_bib_info/{reference_curie}?mod_abbreviation={mod_abbreviation}"
+        token = get_authentication_token()
+        headers = generate_headers(token)
+        try:
+            response = requests.request("GET", bib_url, headers=headers)
+            content = response.text()
+            if content:
+                with open(os.path.join(output_dir, reference_curie + ".txt"), "w") as out_file:
+                    out_file.write(content)
+        except requests.exceptions.RequestException as e:
+            logger.info(f"Error occurred for accessing/retrieving bib data from {bib_url}: error={e}")
+
+
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
     for _, reference_curie in enumerate(reference_curies, start=1):
