@@ -25,7 +25,7 @@ from nltk.tokenize import word_tokenize
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
-from agr_dataset_manager.dataset_downloader import download_abstracts_from_abc
+from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
@@ -37,6 +37,7 @@ from agr_literature_service.lit_processing.utils.report_utils import send_report
 
 nltk.download('stopwords')
 nltk.download('punkt')
+root_data_path = "/data/agr_document_classifier/"
 
 logger = logging.getLogger(__name__)
 
@@ -68,10 +69,11 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
     # For each document in your training data, extract embeddings and labels
-    logger.info("Loading training set")
-    for label in ["positive", "negative"]:
+    logger.info("Loading prioritization sets")
+    label_mapping = {"priority_1": 0, "priority_2": 1, "priority_3": 2}
+    for label in ["priority_1", "priority_2", "priority_3"]:
         documents = list(get_documents(os.path.join(training_data_dir, label)))
-
+        logger.info(f"Loading {len(documents)} documents for {label}")
         for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
             text = ""
             if not sections_to_use:
@@ -92,11 +94,11 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                                                         normalize_embeddings=normalize_embeddings,
                                                         word_to_index=word_to_index)
                 X.append(text_embedding)
-                y.append(int(label == "positive"))
+                y.append(label_mapping[label])
 
     del embedding_model
     logger.info("Finished loading training set.")
-    logger.info(f"Dataset size: {str(len(X))}")
+    logger.info(f"Dataset size: {len(X)}")
 
     # Convert lists to numpy arrays
     X = np.array(X)
@@ -164,7 +166,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
-    model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
+    model_path = f"{root_data_path}training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
     upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
                     model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
@@ -183,6 +185,7 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
     for file_path in glob.glob(os.path.join(input_docs_dir, "*")):
         num_errors = 0
         file_obj = Path(file_path)
+        # Process TEI or PDF files as before
         if file_path.endswith(".tei") or file_path.endswith(".pdf"):
             with file_obj.open("rb") as fin:
                 if file_path.endswith(".pdf"):
@@ -191,7 +194,8 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
                     logger.info("Started pdf to TEI conversion")
                     form = ProcessForm(
                         segment_sentences="1",
-                        input_=File(file_name=file_obj.name, payload=fin, mime_type="application/pdf"))
+                        input_=File(file_name=file_obj.name, payload=fin, mime_type="application/pdf")
+                    )
                     r = process_fulltext_document.sync_detailed(client=client, multipart_data=form)
                     file_stream = r.content
                 else:
@@ -213,8 +217,27 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
                         abstract = " ".join(abs_sentences)
                         break
                 documents.append((file_path, " ".join(sentences), article.title, abstract))
+        # process plain text files with metadata in key|value format
+        elif file_path.endswith(".txt"):
+            try:
+                with file_obj.open("r", encoding="utf-8") as fin:
+                    content = fin.read()
+                data = {}
+                for line in content.splitlines():
+                    if '|' in line:
+                        key, value = line.split('|', 1)
+                        data[key.strip()] = value.strip()
+                title = data.get("title", "")
+                abstract = data.get("abstract", "")
+                # For fulltext, we combine title and abstract. Should we set it to ""?
+                fulltext = f"{title} {abstract}".strip()
+                documents.append((file_path, fulltext, title, abstract))
+            except Exception as e:
+                num_errors += 1
+                logger.error(f"Error parsing txt file {file_path}: {e}")
+                continue
         if num_errors > 0:
-            logger.debug(f"Couldn't read {str(num_errors)} sentence(s) from {str(file_path)}")
+            logger.debug(f"Encountered {num_errors} error(s) while processing {file_path}")
     return documents
 
 
@@ -244,10 +267,17 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     del embedding_model
     X = np.array(X)
     classifications = classifier_model.predict(X)
+
+    # For multi-class, use the probability corresponding to the predicted class
     try:
-        confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
+        predicted_probas = classifier_model.predict_proba(X)
+        # zip() function takes the two lists, classifications and predicted_probas,
+        # and pairs up their corresponding elements to iterate over both lists simultaneously
+        confidence_scores = [probas[pred] for pred, probas in zip(classifications, predicted_probas)]
     except AttributeError:
-        confidence_scores = [1 / (1 + np.exp(-decision_value)) for decision_value in classifier_model.decision_function(X)]
+        # fallback if classifier doesn't support predict_proba
+        confidence_scores = [1 / (1 + np.exp(-decision_value))
+                             for decision_value in classifier_model.decision_function(X)]
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
 
@@ -307,7 +337,7 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
                                       source_description="Alliance document classification pipeline using machine "
                                                          "learning to identify papers of interest for curation data "
                                                          "types")
-    classifier_file_path = (f"/data/agr_document_classifier/biocuration_topic_classification_{mod_abbr}_"
+    classifier_file_path = (f"{root_data_path}biocuration_topic_classification_{mod_abbr}_"
                             f"{topic.replace(':', '_')}_classifier.joblib")
     try:
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
@@ -334,20 +364,20 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                      "/data/agr_document_classifier/to_classify", mod_abbr)
+                                      f"{root_data_path}to_classify", mod_abbr)
     files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
         embedding_model=embedding_model,
         classifier_model=classifier_model,
-        input_docs_dir="/data/agr_document_classifier/to_classify")
+        input_docs_dir=f"{root_data_path}to_classify")
     send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id)
 
 
 def prepare_classification_directory():
-    os.makedirs("/data/agr_document_classifier/to_classify", exist_ok=True)
+    os.makedirs(f"{root_data_path}to_classify", exist_ok=True)
     logger.info("Cleaning up existing files in the to_classify directory")
-    for file in os.listdir("/data/agr_document_classifier/to_classify"):
-        os.remove(os.path.join("/data/agr_document_classifier/to_classify", file))
+    for file in os.listdir(f"{root_data_path}to_classify"):
+        os.remove(os.path.join(f"{root_data_path}to_classify", file))
 
 
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
@@ -373,40 +403,59 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 
 
 def get_confidence_level(classification, conf_score):
-    if classification == 0:
-        return "NEG"
-    elif conf_score < 0.5:
-        return "Low"
+    """
+    This function now produces a label that indicates both the priority level and
+    the confidence (e.g., "priority_2-High").
+    """
+    mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
+    base_label = mapping.get(classification, "unknown")
+    if conf_score < 0.5:
+        return f"{base_label}-Low"
     elif conf_score < 0.75:
-        return "Med"
+        return f"{base_label}-Med"
     else:
-        return "High"
+        return f"{base_label}-High"
 
 
 def download_training_set(args, training_data_dir):
     training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train)
-    reference_ids_priority_1 = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
-                                classification_value == "priority 1"]
-    reference_ids_priority_2 = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
-                                classification_value == "priority 2"]
-    reference_ids_priority_2 = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
-                                classification_value == "priority 3"]
+    reference_ids_priority_1 = [
+        agrkbid for agrkbid, classification_value in training_set["data_training"].items()
+        if classification_value == "priority 1"
+    ]
+    reference_ids_priority_2 = [
+        agrkbid for agrkbid, classification_value in training_set["data_training"].items()
+        if classification_value == "priority 2"
+    ]
+    reference_ids_priority_3 = [
+        agrkbid for agrkbid, classification_value in training_set["data_training"].items()
+        if classification_value == "priority 3"
+    ]
+
+    # Clean up any existing directories
     shutil.rmtree(os.path.join(training_data_dir, "priority_1"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "priority_2"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "priority_3"), ignore_errors=True)
+
+    # Create directories for each priority level
     os.makedirs(os.path.join(training_data_dir, "priority_1"), exist_ok=True)
     os.makedirs(os.path.join(training_data_dir, "priority_2"), exist_ok=True)
     os.makedirs(os.path.join(training_data_dir, "priority_3"), exist_ok=True)
-    download_abstracts_from_abc(reference_ids_priority_1, reference_ids_priority_2,
-                                reference_ids_priority_3,
-                                output_dir=training_data_dir,
-                                mod_abbreviation=args.mod_train)
+
+    # Download biblio data for each priority set
+    download_prioritized_bib_data(
+        reference_ids_priority_1,
+        reference_ids_priority_2,
+        reference_ids_priority_3,
+        output_dir=training_data_dir,
+        mod_abbreviation=args.mod_train
+    )
     return training_set
 
 
 def upload_pre_existing_model(args, training_set):
     logger.info("Skipping training. Uploading pre-existing model and stats file to ABC")
-    stats = json.load(open(f"/data/agr_document_classifier/training/{args.mod_train}_"
+    stats = json.load(open(f"{root_data_path}training/{args.mod_train}_"
                            + f"{args.datatype_train.replace(':', '_')}_metadata.json"))
     stats["best_params"] = stats["parameters"]
     stats["model_name"] = stats["model_type"]
@@ -415,7 +464,7 @@ def upload_pre_existing_model(args, training_set):
     stats["average_f1"] = stats["f1_score"]
     upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
-                    model_path=f"/data/agr_document_classifier/training/{args.mod_train}_"
+                    model_path=f"{root_data_path}training/{args.mod_train}_"
                                f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
@@ -433,7 +482,7 @@ def train_and_save_model(args, training_data_dir, training_set):
 
 
 def train_mode(args):
-    training_data_dir = "/data/agr_document_classifier/training"
+    training_data_dir = f"{root_data_path}training"
     if args.skip_training_set_download:
         logger.info("Skipping training set download")
         training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
