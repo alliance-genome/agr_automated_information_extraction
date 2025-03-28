@@ -49,8 +49,6 @@ def configure_logging(log_level):
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    global logger
-    logger = logging.getLogger(__name__)
 
 
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
@@ -235,7 +233,7 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
-    for _, (file_path, fulltext, _, _) in enumerate(documents, start=1):
+    for _, (file_path, fulltext, _, _) in enumerate(documents):
         doc_embedding = get_document_embedding(embedding_model, fulltext, word_to_index=word_to_index)
         X.append(doc_embedding)
         files_loaded.append(file_path)
@@ -366,7 +364,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                                                 negated=bool(classification == 0),
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
-            set_job_started(reference_curie_job_map[reference_curie])
+            # No need to set started and then immediately set to completed
+            # The transition table should have both needed and in progress going to completed
+            # set_job_started(reference_curie_job_map[reference_curie])
             set_job_success(reference_curie_job_map[reference_curie])
         os.remove(file_path)
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
