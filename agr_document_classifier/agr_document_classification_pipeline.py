@@ -38,7 +38,8 @@ from agr_literature_service.lit_processing.utils.report_utils import send_report
 nltk.download('stopwords')
 nltk.download('punkt')
 
-logger = None
+logger = logging.getLogger(__name__)
+
 
 def configure_logging(log_level):
     # Configure logging based on the log_level argument
@@ -48,9 +49,6 @@ def configure_logging(log_level):
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    global logger
-    logger = logging.getLogger(__name__)
-
 
 
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
