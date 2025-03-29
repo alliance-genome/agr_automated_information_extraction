@@ -25,6 +25,9 @@ from nltk.tokenize import word_tokenize
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
+from sklearn.linear_model import LogisticRegression
+from sklearn.ensemble import RandomForestClassifier
+
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
@@ -37,11 +40,14 @@ from agr_literature_service.lit_processing.utils.report_utils import send_report
 
 nltk.download('stopwords')
 nltk.download('punkt')
+nltk.download('punkt_tab')
+
 root_data_path = "/data/agr_document_classifier/"
 
 logger = logging.getLogger(__name__)
 
 
+"""
 def configure_logging(log_level):
     # Configure logging based on the log_level argument
     logging.basicConfig(
@@ -52,7 +58,174 @@ def configure_logging(log_level):
     )
     global logger
     logger = logging.getLogger(__name__)
+"""
 
+
+def configure_logging(log_level):
+    logger = logging.getLogger(__name__)
+    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    file_handler = logging.FileHandler("training_debug.log", mode="w")
+    file_handler.setFormatter(formatter)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+
+    logger.handlers = []  # Clear any existing handlers
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+
+
+# resource-efficient version of the train_classifier:
+def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
+                     standardize_embeddings: bool = False, normalize_embeddings: bool = False,
+                     sections_to_use: List[str] = None):
+    embedding_model = load_embedding_model(model_path=embedding_model_path)
+
+    X = []
+    y = []
+
+    # Precompute word_to_index
+    if isinstance(embedding_model, KeyedVectors):
+        word_to_index = embedding_model.key_to_index
+    else:
+        word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
+
+    logger.info("Loading prioritization sets")
+    label_mapping = {"priority_1": 0, "priority_2": 1, "priority_3": 2}
+    for label in ["priority_1", "priority_2", "priority_3"]:
+        documents = list(get_documents(os.path.join(training_data_dir, label)))
+        logger.info(f"Loading {len(documents)} documents for {label}")
+        for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
+            text = ""
+            if not sections_to_use:
+                text = fulltext
+            else:
+                if "title" in sections_to_use:
+                    text = title
+                if "fulltext" in sections_to_use:
+                    text += " " + fulltext
+                if "abstract" in sections_to_use:
+                    text += " " + abstract
+            if text:
+                text = remove_stopwords(text)
+                text = text.lower()
+                text_embedding = get_document_embedding(
+                    embedding_model,
+                    text,
+                    weighted_average_word_embedding=weighted_average_word_embedding,
+                    standardize_embeddings=standardize_embeddings,
+                    normalize_embeddings=normalize_embeddings,
+                    word_to_index=word_to_index
+                )
+                X.append(text_embedding)
+                y.append(label_mapping[label])
+
+    del embedding_model
+    logger.info("Finished loading training set.")
+    logger.info(f"Dataset size: {len(X)}")
+
+    X = np.array(X)
+    y = np.array(y)
+
+    best_score = 0
+    best_classifier = None
+    best_params = None
+    best_classifier_name = ""
+    best_results = {}
+    best_index = 0
+
+    stratified_k_folds = StratifiedKFold(n_splits=3)
+
+    scoring = {
+        'precision': make_scorer(precision_score, average='weighted', zero_division=0),
+        'recall': make_scorer(recall_score, average='weighted', zero_division=0),
+        'f1': make_scorer(f1_score, average='weighted', zero_division=0)
+    }
+
+    POSSIBLE_CLASSIFIERS = {
+        'LogisticRegression': {
+            'model': LogisticRegression(max_iter=1000),
+            'params': {
+                'C': [0.01, 0.1, 1.0],
+                'penalty': ['l2'],
+                'solver': ['saga']
+            }
+        },
+        'RandomForestClassifier': {
+            'model': RandomForestClassifier(),
+            'params': {
+                'n_estimators': [10, 25, 50],
+                'max_depth': [5, 10, None],
+                'min_samples_split': [2, 5],
+                'min_samples_leaf': [1, 2]
+            }
+        }
+    }
+
+    logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
+    for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
+        logger.info(f"Evaluating model {classifier_name}.")
+        try:
+            random_search = RandomizedSearchCV(
+                estimator=classifier_info['model'],
+                n_iter=10,  # reduced from 100
+                param_distributions=classifier_info['params'],
+                cv=stratified_k_folds,
+                scoring=scoring,
+                refit='f1',
+                verbose=1,
+                n_jobs=1  # conservative setting
+            )
+            random_search.fit(X, y)
+
+            logger.info(f"Finished training model and fitting best hyperparameters for {classifier_name}. F1 score: "
+                        f"{str(random_search.best_score_)}")
+
+            if random_search.best_score_ > best_score:
+                best_score = random_search.best_score_
+                best_classifier = random_search.best_estimator_
+                best_params = random_search.best_params_
+                best_classifier_name = classifier_name
+                best_results = random_search.cv_results_
+                best_index = random_search.best_index_
+        except Exception as e:
+            logger.exception(f"Model {classifier_name} failed during training: {str(e)}")
+
+    if not best_classifier:
+        raise RuntimeError("No classifier successfully trained.")
+
+    logger.info(f"Selected model {best_classifier_name}.")
+
+    average_precision = best_results['mean_test_precision'][best_index]
+    average_recall = best_results['mean_test_recall'][best_index]
+    average_f1 = best_results['mean_test_f1'][best_index]
+
+    std_precision = best_results['std_test_precision'][best_index]
+    std_recall = best_results['std_test_recall'][best_index]
+    std_f1 = best_results['std_test_f1'][best_index]
+
+    stats = {
+        "model_name": best_classifier_name,
+        "average_precision": round(float(average_precision), 3),
+        "average_recall": round(float(average_recall), 3),
+        "average_f1": round(float(average_f1), 3),
+        "std_precision": round(float(std_precision), 3),
+        "std_recall": round(float(std_recall), 3),
+        "std_f1": round(float(std_f1), 3),
+        "best_params": best_params
+    }
+
+    return best_classifier, stats
+
+
+""""
+# this function requires resource - it got killed in the middle
 
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
@@ -114,9 +287,9 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     stratified_k_folds = StratifiedKFold(n_splits=5)
 
     scoring = {
-        'precision': make_scorer(precision_score),
-        'recall': make_scorer(recall_score),
-        'f1': make_scorer(f1_score)
+        'precision': make_scorer(precision_score, average='weighted'),
+        'recall': make_scorer(recall_score, average='weighted'),
+        'f1': make_scorer(f1_score, average='weighted')
     }
 
     logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
@@ -163,6 +336,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 
     # Return the trained model and performance metrics
     return best_classifier, stats
+"""
 
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
@@ -527,6 +701,9 @@ def classify_mode(args):
 def main():
     args = parse_arguments()
     configure_logging(args.log_level)
+
+    logger = logging.getLogger(__name__)
+    logger.info(">>> Logging is working")
 
     if args.mode == "classify":
         classify_mode(args)
