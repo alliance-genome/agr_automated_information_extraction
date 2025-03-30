@@ -83,8 +83,8 @@ def download_tei_files_from_abc_or_convert_pdf(reference_ids_positive, reference
             os.remove(pdf_file_path)
 
 
-def download_abstracts_from_abc(reference_ids_priority_1, reference_ids_priority_2,
-                                reference_ids_priority_3, output_dir, mod_abbreviation):
+def download_prioritized_bib_data(reference_ids_priority_1, reference_ids_priority_2,
+                                  reference_ids_priority_3, output_dir, mod_abbreviation):
 
     logger.info(f"Retrieving biblio info for priority_1 papers: Number of references to retrieve: {len(reference_ids_priority_1)}")
     output_dir_priority_1 = os.path.join(output_dir, "priority_1")
