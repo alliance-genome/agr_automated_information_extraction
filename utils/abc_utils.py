@@ -12,6 +12,8 @@ import requests
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
+if blue_api_base_url.startswith('literature'):
+    blue_api_base_url = f"https://{blue_api_base_url}"
 curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
 
 logger = logging.getLogger(__name__)
@@ -350,17 +352,21 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
 def download_bib_data_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started retrieving bib data")
     for _, reference_curie in enumerate(reference_curies, start=1):
-        bib_url = f"{blue_api_base_url}/get_bib_info/{reference_curie}?mod_abbreviation={mod_abbreviation}"
+        bib_url = f"{blue_api_base_url}/reference/get_bib_info/{reference_curie}?mod_abbreviation={mod_abbreviation}&return_format=txt"
         token = get_authentication_token()
         headers = generate_headers(token)
         try:
             response = requests.request("GET", bib_url, headers=headers)
-            content = response.text()
-            if content:
+            if response.status_code == 200:
+                content = response.text.strip('"').replace('\\n', '\n')
                 with open(os.path.join(output_dir, reference_curie + ".txt"), "w") as out_file:
                     out_file.write(content)
+            else:
+                logger.info(f"Bib data not found for {bib_url}: status code {response.status_code}")
+                print(f"Bib data not found for {bib_url}: status code {response.status_code}")
         except requests.exceptions.RequestException as e:
             logger.info(f"Error occurred for accessing/retrieving bib data from {bib_url}: error={e}")
+            print(f"Error occurred for accessing/retrieving bib data from {bib_url}: error={e}")
 
 
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
