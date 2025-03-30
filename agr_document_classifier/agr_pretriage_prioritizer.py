@@ -7,6 +7,8 @@ import os
 import os.path
 import shutil
 import sys
+import csv
+
 from pathlib import Path
 from typing import Tuple, List
 import traceback
@@ -29,9 +31,9 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
-from models import POSSIBLE_CLASSIFIERS
+# from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
-    get_cached_mod_abbreviation_from_id, \
+    get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
     upload_ml_model, download_abc_model, set_job_failure, load_all_jobs
 from utils.embedding import load_embedding_model, get_document_embedding
@@ -455,6 +457,45 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
 
+def classify_from_csv_file(csv_path: str, mod_abbr: str, topic: str, embedding_model_path: str):
+    output_dir = f"{root_data_path}csv_to_classify"
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Read reference IDs from the CSV file
+    reference_curies = []
+    with open(csv_path, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            reference_curies.append(row['id'])
+
+    logger.info(f"Read {len(reference_curies)} reference IDs from {csv_path}")
+
+    # Download bibliographic data and write to txt
+    download_bib_data_for_references(reference_curies, output_dir=output_dir, mod_abbreviation=mod_abbr)
+
+    # Load classifier and embeddings
+    classifier_model_path = f"{root_data_path}training/{mod_abbr}_{topic.replace(':', '_')}_classifier.joblib"
+    classifier_model = joblib.load(classifier_model_path)
+    embedding_model = load_embedding_model(model_path=embedding_model_path)
+
+    files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
+        input_docs_dir=output_dir,
+        embedding_model=embedding_model,
+        classifier_model=classifier_model
+    )
+
+    label_mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
+    results_file = os.path.join(output_dir, "classification_results.csv")
+    with open(results_file, mode='w', newline='', encoding='utf-8') as outcsv:
+        writer = csv.writer(outcsv)
+        writer.writerow(['ReferenceID', 'Classification', 'ConfidenceScore', 'ValidEmbedding'])
+        for path, label, score, valid in zip(files_loaded, classifications, conf_scores, valid_embeddings):
+            reference_id = Path(path).stem.replace('_', ':')
+            writer.writerow([reference_id, label_mapping.get(label, 'unknown'), round(score, 4), valid])
+
+    logger.info(f"Classification complete. Results saved to {results_file}")
+
+
 def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, version_num, file_extension,
                     dataset_id):
     model_data = {
@@ -502,6 +543,8 @@ def parse_arguments():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
+    parser.add_argument("--csv_file", type=str, required=False, help="Path to CSV file for flat classification input")
+
     return parser.parse_args()
 
 
@@ -706,7 +749,15 @@ def main():
     logger.info(">>> Logging is working")
 
     if args.mode == "classify":
-        classify_mode(args)
+        if hasattr(args, 'csv_file') and args.csv_file:
+            classify_from_csv_file(
+                csv_path=args.csv_file,
+                mod_abbr=args.mod_train,
+                topic=args.datatype_train,
+                embedding_model_path=args.embedding_model_path
+            )
+        else:
+            classify_mode(args)
     else:
         train_mode(args)
 
