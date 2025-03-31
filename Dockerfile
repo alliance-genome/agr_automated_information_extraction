@@ -9,6 +9,7 @@ ADD agr_document_classifier/agr_document_classification_pipeline.py .
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
+ADD agr_entity_extractor/fit_and_upload_tfidf_vectorizer.py .
 ADD Makefile .
 ADD utils/ ./utils
 ADD agr_dataset_manager/ ./agr_dataset_manager
