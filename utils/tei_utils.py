@@ -86,4 +86,4 @@ def convert_all_tei_files_in_dir_to_txt(dir_path):
                     text_file.write(article_text)
         except Exception as e:
             logger.error(f"Error parsing TEI file {tei_file}: {e}")
-        #os.remove(tei_file)
+        # os.remove(tei_file)
