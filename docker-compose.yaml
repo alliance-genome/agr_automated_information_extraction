@@ -7,7 +7,7 @@ services:
       - ${CLASSIFICATION_DIR}:/data/agr_document_classifier/to_classify
       - ${CLASSIFIERS_PATH}:/data/agr_document_classifier
       - ${ENTITY_EXTRACTION_DIR}:/data/agr_entity_extraction/to_extract
-      - ${AGR_CORPUS_DOWNLOAD_DIR}=${AGR_CORPUS_DOWNLOAD_DIR}
+      - ${AGR_CORPUS_DOWNLOAD_DIR}:${AGR_CORPUS_DOWNLOAD_DIR}
     environment:
       - GROBID_API_URL=${GROBID_API_URL}
       - TMP_PATH=${TMP_PATH}
