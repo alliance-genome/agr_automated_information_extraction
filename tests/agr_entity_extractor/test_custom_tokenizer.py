@@ -1,4 +1,3 @@
-import pytest
 from agr_entity_extractor.models import CustomTokenizer
 
 
