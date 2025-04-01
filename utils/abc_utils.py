@@ -2,6 +2,7 @@ import io
 import json
 import logging
 import os
+import html
 import urllib.request
 from collections import defaultdict
 from typing import List, Tuple, Dict
@@ -349,8 +350,28 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
         logger.error(e)
 
 
+def download_bib_data_for_need_review_references(output_dir: str, mod_abbreviation):
+    logger.info("Started retrieving bib data")
+    os.makedirs(output_dir, exist_ok=True)
+    url = f"{blue_api_base_url}/sort/need_review?mod_abbreviation={mod_abbreviation}"
+    try:
+        response = requests.get(url)
+        if response.status_code == 200:
+            for x in response.json():
+                reference_curie = x['curie']
+                title = html.unescape(x['title'] or "")
+                abstract = html.unescape(x['abstract'] or "")
+                with open(os.path.join(output_dir, reference_curie + ".txt"), "w") as out_file:
+                    out_file.write(f"title|{title}\nabstract|{abstract}\n")
+        else:
+            logger.info(f"Bib data not found for {url}: status code {response.status_code}")
+    except requests.exceptions.RequestException as e:
+        logger.info(f"Error occurred for accessing/retrieving bib data from {url}: error={e}")
+        
+
 def download_bib_data_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started retrieving bib data")
+    os.makedirs(output_dir, exist_ok=True)
     for _, reference_curie in enumerate(reference_curies, start=1):
         bib_url = f"{blue_api_base_url}/reference/get_bib_info/{reference_curie}?mod_abbreviation={mod_abbreviation}&return_format=txt"
         token = get_authentication_token()
@@ -363,10 +384,8 @@ def download_bib_data_for_references(reference_curies: List[str], output_dir: st
                     out_file.write(content)
             else:
                 logger.info(f"Bib data not found for {bib_url}: status code {response.status_code}")
-                print(f"Bib data not found for {bib_url}: status code {response.status_code}")
         except requests.exceptions.RequestException as e:
             logger.info(f"Error occurred for accessing/retrieving bib data from {bib_url}: error={e}")
-            print(f"Error occurred for accessing/retrieving bib data from {bib_url}: error={e}")
 
 
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
@@ -434,13 +453,13 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "version_num": None,
         "file_extension": file_extension,
         "model_type": stats["model_name"],
-        "precision": stats["average_precision"],
-        "recall": stats["average_recall"],
-        "f1_score": stats["average_f1"],
-        "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
+        "precision": stats.get("average_precision") or stats.get("average_f1_macro"),
+        "recall": stats.get("average_recall"),
+        "f1_score": stats.get("average_f1") or stats.get("average_f1_macro"),
+        "parameters": str(stats["best_params"]) if stats.get("best_params") is not None else None,
         "dataset_id": dataset_id
     }
-
+    
     model_dir = os.path.dirname(model_path)
     if topic is None:
         topic = "notopic"
