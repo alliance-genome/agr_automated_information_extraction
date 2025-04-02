@@ -27,7 +27,16 @@ class AllianceTEI:
         if self.tei_obj is None:
             return None
         else:
-            return self.tei_obj.abstract
+            abstract = ""
+            for section in self.tei_obj.sections:
+                if section.name.lower() == "abstract":
+                    for paragraph in section.paragraphs:
+                        if isinstance(paragraph, TextWithRefs):
+                            paragraph = [paragraph]
+                        for sentence in paragraph:
+                            abstract += re.sub('<[^<]+>', '', sentence.text) + " "
+                    return abstract
+            return abstract
 
     def get_fulltext(self):
         if self.tei_obj is None:

@@ -61,28 +61,46 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             entity_extraction_model.alliance_entities_loaded = True
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                     tokenizer=entity_extraction_model.tokenizer)
-            results = nlp_pipeline(tei_obj.get_fulltext())
+            title = ""
+            abstract = ""
+            try:
+                fulltext = tei_obj.get_fulltext()
+            except Exception as e:
+                logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
+                continue
+            try:
+                abstract = tei_obj.get_abstract()
+            except Exception as e:
+                logger.warning(f"Error getting abstract for {curie}: {str(e)}. Ignoring field.")
+            try:
+                title = tei_obj.get_title()
+            except Exception as e:
+                logger.warning(f"Error getting title for {curie}: {str(e)}. Ignoring field.")
+            results = nlp_pipeline(fulltext)
             entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
-            tokenized_title = entity_extraction_model.tokenizer(tei_obj.get_title())
+            tokenized_title = entity_extraction_model.tokenizer(title)
             tokenized_title_str = convert_tokens_to_list_of_words(tokenized_title)
             entities_in_title = []
             for entity in entity_extraction_model.entities_to_extract:
-                if entity in tokenized_title_str:
+                if (entity in tokenized_title_str or entity_extraction_model.match_uppercase and entity in
+                        [token.upper() for token in tokenized_title_str]):
                     entities_in_title.append(entity)
-            tokenized_abstract = entity_extraction_model.tokenizer(tei_obj.get_abstract())
+            tokenized_abstract = entity_extraction_model.tokenizer(abstract)
             tokenized_abstract_str = convert_tokens_to_list_of_words(tokenized_abstract)
             entities_in_abstract = []
             for entity in entity_extraction_model.entities_to_extract:
-                if entity in tokenized_abstract_str:
+                if (entity in tokenized_abstract_str or entity_extraction_model.match_uppercase and entity in
+                        [token.upper() for token in tokenized_abstract_str]):
                     entities_in_abstract.append(entity)
             all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
-            logger.info("Sending extracted entities as tags to ABC.")
-            for entity in all_entities:
-                send_entity_tag_to_abc(reference_curie=curie, mod_abbreviation=mod_abbr, topic=topic,
-                                       entity=entity_extraction_model.name_to_curie_mapping[entity],
-                                       tet_source_id=tet_source_id)
-            set_job_started(job)
-            set_job_success(job)
+            #logger.info("Sending extracted entities as tags to ABC.")
+            #for entity in all_entities:
+            #    send_entity_tag_to_abc(reference_curie=curie, mod_abbreviation=mod_abbr, topic=topic,
+            #                           entity=entity_extraction_model.name_to_curie_mapping[entity],
+            #                           tet_source_id=tet_source_id)
+            #set_job_started(job)
+            #set_job_success(job)
+            pass
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
 
 

@@ -183,34 +183,41 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             self.alliance_entities_loaded = True
         batch_tokens = [self.tokenizer.convert_ids_to_tokens(seq) for seq in input_ids]
         logits_list = []
-        upper_entities_to_extract = []
         if self.match_uppercase:
-            upper_entities_to_extract = [entity.upper() for entity in self.entities_to_extract]
+            entities_to_extract = [entity.upper() for entity in self.entities_to_extract]
+        else:
+            entities_to_extract = self.entities_to_extract
 
         global_token_counts = defaultdict(int)
         for tokens in batch_tokens:
             for token in tokens:
-                if (token in self.entities_to_extract or self.match_uppercase and token.upper() in
-                        upper_entities_to_extract):
+                if self.match_uppercase:
+                    token = token.upper()
+                if token in entities_to_extract:
                     global_token_counts[token] += 1
+        total_num_tokens = len(global_token_counts)
 
         for tokens in batch_tokens:
             # Initialize token-level logits: shape (num_tokens, num_labels).
             token_logits = torch.zeros(len(tokens), self.config.num_labels, device=input_ids.device)
-            # Get the TF-IDF values for the document.
-            document_text = " ".join(tokens)
-            doc_tfidf = self.vectorizer.transform([document_text])
-            # For each token in the document...
+
             for i, token in enumerate(tokens):
-                if (token in self.entities_to_extract or self.match_uppercase and token.upper() in
-                        upper_entities_to_extract):
+                if token in entities_to_extract or self.match_uppercase and token.upper() in entities_to_extract:
                     # Use the in-document frequency (count) for this token.
                     token_count = global_token_counts[token]
                     # Get the tf-idf score for this token, if it exists in the fitted vocabulary.
-                    if token in self.vectorizer.vocabulary_:
-                        feature_index = self.vectorizer.vocabulary_[token]
-                        tfidf_value = doc_tfidf[0, feature_index]
+                    if (token in self.vectorizer.vocabulary_ or self.match_uppercase and token.lower() in
+                            self.vectorizer.vocabulary_):
+                        if token in self.vectorizer.vocabulary_:
+                            feature_index = self.vectorizer.vocabulary_[token]
+                        else:
+                            feature_index = self.vectorizer.vocabulary_[token.lower()]
+                        idf = self.vectorizer.idf_[feature_index]
+                        tf = token_count / total_num_tokens
+                        tfidf_value = tf * idf
                     else:
+                        tfidf_value = self.tfidf_threshold
+                    if tfidf_value == 0:
                         tfidf_value = self.tfidf_threshold
                     # Check if the token meets both the frequency and TF-IDF threshold criteria.
                     if token_count >= self.min_matches and (
