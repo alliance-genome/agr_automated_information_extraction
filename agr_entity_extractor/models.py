@@ -203,6 +203,8 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
 
             for i, token in enumerate(tokens):
                 if token in entities_to_extract or self.match_uppercase and token.upper() in entities_to_extract:
+                    if self.match_uppercase:
+                        token = token.upper()
                     # Use the in-document frequency (count) for this token.
                     token_count = global_token_counts[token]
                     # Get the tf-idf score for this token, if it exists in the fitted vocabulary.
