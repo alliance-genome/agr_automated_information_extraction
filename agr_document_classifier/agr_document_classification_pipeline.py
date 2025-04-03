@@ -321,6 +321,9 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     jobs_to_process = copy.deepcopy(jobs)
     classifier_model = joblib.load(classifier_file_path)
     while jobs_to_process:
+        if os.path.isfile('/data/agr_document_classifier/stop_classifier'):
+            logger.info("Stopping classifier due to time limit (stop file exists)")
+            return
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
@@ -442,6 +445,7 @@ def train_mode(args):
 
 
 def classify_mode(args):
+    logger.info("Classification started.")
     mod_topic_jobs = load_all_jobs("classification_job")
     embedding_model = load_embedding_model(args.embedding_model_path)
     failed_processes = []
@@ -458,6 +462,10 @@ def classify_mode(args):
             for line in formatted_traceback:
                 failed['trace'] += f"{line}<br>"
             failed_processes.append(failed)
+        if os.path.isfile('/data/agr_document_classifier/stop_classifier'):
+            logger.info("Stopping classifier due to time limit (stop file exists)")
+            os.remove('/data/agr_document_classifier/stop_classifier')
+            return
 
     if failed_processes:
         subject = "Failed processing of classification jobs"
