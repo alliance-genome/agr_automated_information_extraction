@@ -349,7 +349,7 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
 
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
-    for _, reference_curie in enumerate(reference_curies, start=1):
+    for reference_curie in reference_curies:
         all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
         request = urllib.request.Request(url=all_reffiles_for_pap_api)
         request.add_header("Content-type", "application/json")

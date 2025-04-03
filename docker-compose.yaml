@@ -7,6 +7,8 @@ services:
       - ${CLASSIFICATION_DIR}:/data/agr_document_classifier/to_classify
       - ${CLASSIFIERS_PATH}:/data/agr_document_classifier
       - ${ENTITY_EXTRACTION_DIR}:/data/agr_entity_extraction/to_extract
+      - ${AGR_CORPUS_DOWNLOAD_DIR}:${AGR_CORPUS_DOWNLOAD_DIR}
+      - ${ENTITY_EXTRACTION_PATH}:/data/agr_entity_extraction
     environment:
       - GROBID_API_URL=${GROBID_API_URL}
       - TMP_PATH=${TMP_PATH}
@@ -17,3 +19,4 @@ services:
       - OKTA_AUTH_SERVER_ID=${OKTA_AUTH_SERVER_ID}
       - OKTA_AUDIENCE=${OKTA_AUDIENCE}
       - CLASSIFICATION_BATCH_SIZE=${CLASSIFICATION_BATCH_SIZE}
+      - AGR_CORPUS_DOWNLOAD_DIR=${AGR_CORPUS_DOWNLOAD_DIR}

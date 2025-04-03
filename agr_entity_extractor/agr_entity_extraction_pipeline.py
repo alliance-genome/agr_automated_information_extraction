@@ -8,7 +8,6 @@ import dill
 import requests
 from transformers import pipeline
 
-from agr_entity_extractor.models import convert_tokens_to_list_of_words
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
     download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc
 from utils.tei_utils import AllianceTEI
@@ -61,20 +60,33 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             entity_extraction_model.alliance_entities_loaded = True
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                     tokenizer=entity_extraction_model.tokenizer)
-            results = nlp_pipeline(tei_obj.get_fulltext())
+            title = ""
+            abstract = ""
+            try:
+                fulltext = tei_obj.get_fulltext()
+            except Exception as e:
+                logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
+                continue
+            try:
+                abstract = tei_obj.get_abstract()
+            except Exception as e:
+                logger.warning(f"Error getting abstract for {curie}: {str(e)}. Ignoring field.")
+            try:
+                title = tei_obj.get_title()
+            except Exception as e:
+                logger.warning(f"Error getting title for {curie}: {str(e)}. Ignoring field.")
+            results = nlp_pipeline(fulltext)
             entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
-            tokenized_title = entity_extraction_model.tokenizer(tei_obj.get_title())
-            tokenized_title_str = convert_tokens_to_list_of_words(tokenized_title)
+            entities_to_extract = set(entity_extraction_model.entities_to_extract)
+            entities_to_extract_uppercase = set([entity.upper() for entity in entities_to_extract])
+            tokenized_title = entity_extraction_model.tokenizer.tokenize(title)
             entities_in_title = []
-            for entity in entity_extraction_model.entities_to_extract:
-                if entity in tokenized_title_str:
-                    entities_in_title.append(entity)
-            tokenized_abstract = entity_extraction_model.tokenizer(tei_obj.get_abstract())
-            tokenized_abstract_str = convert_tokens_to_list_of_words(tokenized_abstract)
+            entities_in_title.extend(set(tokenized_title) & entities_to_extract)
+            entities_in_title.extend(set([token.upper() for token in tokenized_title]) & entities_to_extract_uppercase)
+            tokenized_abstract = entity_extraction_model.tokenizer.tokenize(abstract)
             entities_in_abstract = []
-            for entity in entity_extraction_model.entities_to_extract:
-                if entity in tokenized_abstract_str:
-                    entities_in_abstract.append(entity)
+            entities_in_abstract.extend(set(tokenized_abstract) & entities_to_extract)
+            entities_in_abstract.extend(set([token.upper() for token in tokenized_abstract]) & entities_to_extract_uppercase)
             all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
             logger.info("Sending extracted entities as tags to ABC.")
             for entity in all_entities:
