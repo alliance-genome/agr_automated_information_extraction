@@ -87,11 +87,6 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             entities_in_abstract = []
             entities_in_abstract.extend(set(tokenized_abstract) & entities_to_extract)
             entities_in_abstract.extend(set([token.upper() for token in tokenized_abstract]) & entities_to_extract_uppercase)
-            entities_in_abstract = []
-            for entity in entity_extraction_model.entities_to_extract:
-                if (entity in tokenized_abstract or entity_extraction_model.match_uppercase and entity.upper() in
-                        [token.upper() for token in tokenized_abstract]):
-                    entities_in_abstract.append(entity)
             all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
             logger.info("Sending extracted entities as tags to ABC.")
             for entity in all_entities:
