@@ -8,7 +8,6 @@ import dill
 import requests
 from transformers import pipeline
 
-from agr_entity_extractor.models import convert_tokens_to_list_of_words
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
     download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc
 from utils.tei_utils import AllianceTEI
