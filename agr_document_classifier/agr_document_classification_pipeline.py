@@ -465,7 +465,7 @@ def classify_mode(args):
         if os.path.isfile('/data/agr_document_classifier/stop_classifier'):
             logger.info("Stopping classifier due to time limit (stop file exists)")
             os.remove('/data/agr_document_classifier/stop_classifier')
-            return
+            break
 
     if failed_processes:
         subject = "Failed processing of classification jobs"
