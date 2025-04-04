@@ -18,8 +18,9 @@ from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
-from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_documents
+from utils.abc_utils import get_training_set_from_abc, upload_ml_model
 from utils.embedding import load_embedding_model, get_document_embedding
+from utils.get_documents import get_documents
 
 nltk.download('stopwords')
 nltk.download('punkt')

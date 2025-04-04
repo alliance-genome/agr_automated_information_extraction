@@ -16,8 +16,8 @@ from gensim.models import KeyedVectors
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
-    download_abc_model, set_job_failure, load_all_jobs, \
-    get_documents
+    download_abc_model, set_job_failure, load_all_jobs
+from utils.get_documents import get_documents
 from utils.embedding import load_embedding_model, get_document_embedding
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
