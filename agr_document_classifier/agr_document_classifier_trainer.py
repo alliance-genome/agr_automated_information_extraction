@@ -208,6 +208,7 @@ def parse_arguments():
                         default='INFO', help="Set the logging level")
     return parser.parse_args()
 
+
 def download_training_set(args, training_data_dir):
     training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train)
     reference_ids_positive = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
