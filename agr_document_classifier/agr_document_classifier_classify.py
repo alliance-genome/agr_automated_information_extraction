@@ -36,7 +36,6 @@ def configure_logging(log_level):
     )
 
 
-
 def classify_documents(input_docs_dir: str, embedding_model_path: str = None, classifier_model_path: str = None,
                        embedding_model=None, classifier_model=None):
     if embedding_model is None:
@@ -205,7 +204,6 @@ def main():
     configure_logging(args.log_level)
 
     classify_mode(args)
-
 
 
 if __name__ == '__main__':
