@@ -168,11 +168,11 @@ def get_confidence_level(classification, conf_score):
 def classify_mode(args):
     logger.info("Classification started.")
     print("#############")
-    logger.debug(f"deb")
-    logger.info(f"info")
-    logger.warning(f"warning")
-    logger.error(f"error")
-    logger.critical(f"critical")
+    logger.debug("deb")
+    logger.info("info")
+    logger.warning("warning")
+    logger.error("error")
+    logger.critical("critical")
 
     mod_topic_jobs = load_all_jobs("classification_job")
     embedding_model = load_embedding_model(args.embedding_model_path)
