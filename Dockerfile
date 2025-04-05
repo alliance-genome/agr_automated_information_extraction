@@ -6,8 +6,8 @@ WORKDIR /usr/src/app
 ADD ./requirements.txt .
 ADD utils/abc_utils.py .
 ADD agr_document_classifier/agr_document_classification_pipeline.py .
-ADD agr_document_classifier/agr_document_classification_classify.py .
-ADD agr_document_classifier/agr_document_classification_trainer.py .
+ADD agr_document_classifier/agr_document_classifier_classify.py .
+ADD agr_document_classifier/agr_document_classifier_trainer.py .
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
