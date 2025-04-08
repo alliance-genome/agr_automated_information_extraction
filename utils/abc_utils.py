@@ -4,7 +4,7 @@ import logging
 import os
 import urllib.request
 from collections import defaultdict
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 from urllib.error import HTTPError
 
 import psycopg2
@@ -401,7 +401,8 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 
 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
-                    topic: str = None, file_extension: str = ""):
+                    topic: str = None, file_extension: str = "", production: Union[bool, None]=False,
+                    no_data: Union[bool, None]=True, species: Union[str, None]=None, novel_data: Union[bool, None]=False):
     upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -418,7 +419,11 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "recall": stats["average_recall"],
         "f1_score": stats["average_f1"],
         "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
-        "dataset_id": dataset_id
+        "dataset_id": dataset_id,
+        "production": production,
+        "no_data": no_data,
+        "novel_data": novel_data,
+        "species": species
     }
 
     model_dir = os.path.dirname(model_path)
