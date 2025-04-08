@@ -401,8 +401,8 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 
 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
-                    topic: str = None, file_extension: str = "", production: Union[bool, None]=False,
-                    no_data: Union[bool, None]=True, species: Union[str, None]=None, novel_data: Union[bool, None]=False):
+                    topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
+                    no_data: Union[bool, None] = True, species: Union[str, None] = None, novel_data: Union[bool, None] = False):
     upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)

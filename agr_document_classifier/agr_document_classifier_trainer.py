@@ -156,7 +156,7 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
     model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
     upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
-                    novel_data= novel_data, production=production,
+                    novel_data=novel_data, production=production,
                     no_data=no_data, species=species,
                     model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
@@ -293,7 +293,7 @@ def train_mode(args):
 def main():
     args = parse_arguments()
     if args.alternative_species:
-        if not re.search('^NCBITaxon:\d+$', args.alternative_species):
+        if not re.search(r'^NCBITaxon:\d+$', args.alternative_species):
             print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
             sys.exit(1)
     configure_logging(args.log_level)
