@@ -382,7 +382,8 @@ def convert_pdf_with_grobid(file_content):
     response = requests.post(grobid_api_url, files={'input': ("file", file_content)})
     return response
 
-def get_model_data(mod_abbreviation:str, task_type: str, topic:str):
+
+def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
     model_data = None
     get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}?{topic}"
     token = get_authentication_token()
