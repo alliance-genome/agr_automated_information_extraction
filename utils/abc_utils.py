@@ -133,7 +133,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
 
 
 def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, negated: bool,
-                                   confidence_level: str, tet_source_id):
+                                   novel_flag: bool, confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
@@ -143,6 +143,7 @@ def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, 
         "species": get_cached_mod_species_map()[mod_abbreviation],
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
+        "novel_data": novel_flag,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
@@ -381,8 +382,25 @@ def convert_pdf_with_grobid(file_content):
     response = requests.post(grobid_api_url, files={'input': ("file", file_content)})
     return response
 
+def get_model_data(mod_abbreviation:str, task_type: str, topic:str):
+    model_data = None
+    get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}?{topic}"
+    token = get_authentication_token()
+    headers = generate_headers(token)
+
+    # Make the request to download the model
+    response = requests.get(get_model_url, headers=headers)
+    if response.status_code == 200:
+        model_data = response.json()
+        logger.info("Model meta data downloaded successfully.")
+    else:
+        logger.error(f"Failed to download model meta data: {response.text}")
+        response.raise_for_status()
+    return model_data
+
 
 def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
+    # TODO: Question, How can there be NO topic?
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
         topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
