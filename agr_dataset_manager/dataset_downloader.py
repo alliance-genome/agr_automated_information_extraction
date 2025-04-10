@@ -6,7 +6,7 @@ import os
 from lxml import etree
 
 from utils.abc_utils import (get_curie_from_xref, download_main_pdf, convert_pdf_with_grobid,
-                             download_tei_files_for_references)
+                             download_tei_files_for_references, download_bib_data_for_references)
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,22 @@ def download_tei_files_from_abc_or_convert_pdf(reference_ids_positive, reference
             else:
                 logger.error(f"Failed to convert {file_name}.pdf to TEI. Status code: {response.status_code}")
             os.remove(pdf_file_path)
+
+
+def download_prioritized_bib_data(reference_ids_priority_1, reference_ids_priority_2,
+                                  reference_ids_priority_3, output_dir, mod_abbreviation):
+
+    logger.info(f"Retrieving biblio info for priority_1 papers: Number of references to retrieve: {len(reference_ids_priority_1)}")
+    output_dir_priority_1 = os.path.join(output_dir, "priority_1")
+    download_bib_data_for_references(reference_ids_priority_1, output_dir_priority_1, mod_abbreviation)
+
+    logger.info(f"Retrieving biblio info for priority_2 papers: Number of references to retrieve: {len(reference_ids_priority_2)}")
+    output_dir_priority_2 = os.path.join(output_dir, "priority_2")
+    download_bib_data_for_references(reference_ids_priority_2, output_dir_priority_2, mod_abbreviation)
+
+    logger.info(f"Retrieving biblio info for priority_3 papers: Number of references to retrieve: {len(reference_ids_priority_3)}")
+    output_dir_priority_3 = os.path.join(output_dir, "priority_3")
+    download_bib_data_for_references(reference_ids_priority_3, output_dir_priority_3, mod_abbreviation)
 
 
 def download_and_categorize_tei_files_from_csv(csv_file, output_dir, mod_abbreviation, start_agrkbid=None):
