@@ -367,7 +367,7 @@ def download_bib_data_for_need_review_references(output_dir: str, mod_abbreviati
             logger.info(f"Bib data not found for {url}: status code {response.status_code}")
     except requests.exceptions.RequestException as e:
         logger.info(f"Error occurred for accessing/retrieving bib data from {url}: error={e}")
-        
+
 
 def download_bib_data_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started retrieving bib data")
@@ -459,7 +459,7 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "parameters": str(stats["best_params"]) if stats.get("best_params") is not None else None,
         "dataset_id": dataset_id
     }
-    
+
     model_dir = os.path.dirname(model_path)
     if topic is None:
         topic = "notopic"
