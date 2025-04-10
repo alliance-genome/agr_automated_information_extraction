@@ -1,9 +1,12 @@
+import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
 
 from grobid_client.models import TextWithRefs
 from grobid_client.types import TEI
+
+
+logger = logging.getLogger(__name__)
 
 
 class AllianceTEI:
@@ -24,7 +27,16 @@ class AllianceTEI:
         if self.tei_obj is None:
             return None
         else:
-            return self.tei_obj.abstract
+            abstract = ""
+            for section in self.tei_obj.sections:
+                if section.name.lower() == "abstract":
+                    for paragraph in section.paragraphs:
+                        if isinstance(paragraph, TextWithRefs):
+                            paragraph = [paragraph]
+                        for sentence in paragraph:
+                            abstract += re.sub('<[^<]+>', '', sentence.text) + " "
+                    return abstract
+            return abstract
 
     def get_fulltext(self):
         if self.tei_obj is None:
@@ -73,7 +85,8 @@ def get_fulltext_from_tei(tei_object):
 
 
 def convert_all_tei_files_in_dir_to_txt(dir_path):
-    def process_file(tei_file):
+    file_paths = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(".tei")]
+    for tei_file in file_paths:
         try:
             with open(tei_file, "rb") as file_stream:
                 article = TEI.parse(file_stream, figures=True)
@@ -81,9 +94,5 @@ def convert_all_tei_files_in_dir_to_txt(dir_path):
                 with open(tei_file.replace(".tei", ".txt"), "w") as text_file:
                     text_file.write(article_text)
         except Exception as e:
-            print(f"Error parsing TEI file {tei_file}: {e}")
-        os.remove(tei_file)
-
-    file_paths = [os.path.join(dir_path, f) for f in os.listdir(dir_path) if f.endswith(".tei")]
-    with ThreadPoolExecutor() as executor:
-        executor.map(process_file, file_paths)
+            logger.error(f"Error parsing TEI file {tei_file}: {e}")
+        # os.remove(tei_file)

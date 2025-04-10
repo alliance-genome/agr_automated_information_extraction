@@ -34,7 +34,7 @@ class CustomTokenizer(PreTrainedTokenizer):
         self.unk_token = "[UNK]"
         self.vocab = {self.unk_token: 0}
         self.add_tokens(tokens)
-        self.update_vocab(tokens)
+        self.update_vocab(self.tokens)
         # Set explicit unknown token id.
         self.unk_token_id = self.vocab[self.unk_token]
         # Some parts of the pipeline might look for `unknown_token_id`
@@ -55,19 +55,18 @@ class CustomTokenizer(PreTrainedTokenizer):
 
     def add_tokens(self, new_tokens):
         self.tokens = list(set(self.tokens + new_tokens))
+        tokens_to_match = self.tokens
         if self.match_uppercase_entities:
-            self.tokens = [token.upper() for token in self.tokens]
-        escaped_entities = [re.escape(entity) for entity in sorted(self.tokens, key=len, reverse=True)]
+            tokens_to_match.extend([token.upper() for token in self.tokens])
+        tokens_to_match = list(set(tokens_to_match))
+        escaped_entities = [re.escape(entity) for entity in sorted(tokens_to_match, key=len, reverse=True)]
         pattern_entities = "|".join(escaped_entities)
         fallback_pattern = r"\b\w+(?:[-']\w+)*\b"
-        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})", flags=re.IGNORECASE)
-        self.tokens = list(set(self.tokens + new_tokens))
+        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})")
         self.update_vocab(new_tokens)
 
     def _tokenize(self, text, *args, **kwargs):
         # Use the simple tokenizer logic.
-        if self.match_uppercase_entities:
-            text = text.upper()
         tokens = []
         for match in re.finditer(self.pattern, text):
             token = match.group(1) or match.group(2)
@@ -184,35 +183,47 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             self.alliance_entities_loaded = True
         batch_tokens = [self.tokenizer.convert_ids_to_tokens(seq) for seq in input_ids]
         logits_list = []
+        if self.match_uppercase:
+            entities_to_extract = [entity.upper() for entity in self.entities_to_extract]
+        else:
+            entities_to_extract = self.entities_to_extract
 
         global_token_counts = defaultdict(int)
         for tokens in batch_tokens:
             for token in tokens:
-                if (token in self.entities_to_extract or self.match_uppercase and token.upper() in
-                        self.entities_to_extract):
+                if self.match_uppercase:
+                    token = token.upper()
+                if token in entities_to_extract:
                     global_token_counts[token] += 1
+        total_num_tokens = len(global_token_counts)
 
         for tokens in batch_tokens:
             # Initialize token-level logits: shape (num_tokens, num_labels).
             token_logits = torch.zeros(len(tokens), self.config.num_labels, device=input_ids.device)
-            # Get the TF-IDF values for the document.
-            document_text = " ".join(tokens)
-            doc_tfidf = self.vectorizer.transform([document_text])
-            # For each token in the document...
+
             for i, token in enumerate(tokens):
-                if (token in self.entities_to_extract or self.match_uppercase and token.upper() in
-                        self.entities_to_extract):
+                if token in entities_to_extract or self.match_uppercase and token.upper() in entities_to_extract:
+                    if self.match_uppercase:
+                        token = token.upper()
                     # Use the in-document frequency (count) for this token.
                     token_count = global_token_counts[token]
                     # Get the tf-idf score for this token, if it exists in the fitted vocabulary.
-                    if token in self.vectorizer.vocabulary_:
-                        feature_index = self.vectorizer.vocabulary_[token]
-                        tfidf_value = doc_tfidf[0, feature_index]
+                    if (token in self.vectorizer.vocabulary_ or self.match_uppercase and token.lower() in
+                            self.vectorizer.vocabulary_):
+                        if token in self.vectorizer.vocabulary_:
+                            feature_index = self.vectorizer.vocabulary_[token]
+                        else:
+                            feature_index = self.vectorizer.vocabulary_[token.lower()]
+                        idf = self.vectorizer.idf_[feature_index]
+                        tf = token_count / total_num_tokens
+                        tfidf_value = tf * idf
                     else:
+                        tfidf_value = self.tfidf_threshold
+                    if tfidf_value == 0:
                         tfidf_value = self.tfidf_threshold
                     # Check if the token meets both the frequency and TF-IDF threshold criteria.
                     if token_count >= self.min_matches and (
-                            self.tfidf_threshold <= 0 or tfidf_value > self.tfidf_threshold):
+                            self.tfidf_threshold <= 0 or tfidf_value >= self.tfidf_threshold):
                         token_logits[i, 1] = 1.0  # Label 1 for ENTITY detected.
             logits_list.append(token_logits)
             # Return a tensor of shape (batch_size, seq_length, num_labels).

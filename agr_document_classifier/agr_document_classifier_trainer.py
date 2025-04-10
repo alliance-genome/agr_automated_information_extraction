@@ -1,25 +1,16 @@
 import argparse
-import copy
-import glob
 import json
 import logging
 import os
 import os.path
 import shutil
 import sys
-from pathlib import Path
-from typing import Tuple, List
-import traceback
+from typing import List
 
 import joblib
 import nltk
 import numpy as np
-import requests.exceptions
 from gensim.models import KeyedVectors
-from grobid_client import Client
-from grobid_client.api.pdf import process_fulltext_document
-from grobid_client.models import Article, ProcessForm
-from grobid_client.types import TEI, File
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
@@ -27,13 +18,9 @@ from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
-from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
-    get_cached_mod_abbreviation_from_id, \
-    set_job_success, get_tet_source_id, set_job_started, get_training_set_from_abc, \
-    upload_ml_model, download_abc_model, set_job_failure, load_all_jobs
+from utils.abc_utils import get_training_set_from_abc, upload_ml_model
 from utils.embedding import load_embedding_model, get_document_embedding
-from utils.tei_utils import get_sentences_from_tei_section
-from agr_literature_service.lit_processing.utils.report_utils import send_report
+from utils.get_documents import get_documents
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -175,80 +162,6 @@ def remove_stopwords(text):
     return ' '.join(filtered_text)
 
 
-def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
-    documents = []
-    client = None
-    for file_path in glob.glob(os.path.join(input_docs_dir, "*")):
-        num_errors = 0
-        file_obj = Path(file_path)
-        if file_path.endswith(".tei") or file_path.endswith(".pdf"):
-            with file_obj.open("rb") as fin:
-                if file_path.endswith(".pdf"):
-                    if client is None:
-                        client = Client(base_url=os.environ.get("GROBID_API_URL"), timeout=1000, verify_ssl=False)
-                    logger.info("Started pdf to TEI conversion")
-                    form = ProcessForm(
-                        segment_sentences="1",
-                        input_=File(file_name=file_obj.name, payload=fin, mime_type="application/pdf"))
-                    r = process_fulltext_document.sync_detailed(client=client, multipart_data=form)
-                    file_stream = r.content
-                else:
-                    file_stream = fin
-                try:
-                    article: Article = TEI.parse(file_stream, figures=True)
-                except Exception:
-                    num_errors += 1
-                    continue
-                sentences = []
-                for section in article.sections:
-                    sec_sentences, sec_num_errors = get_sentences_from_tei_section(section)
-                    sentences.extend(sec_sentences)
-                    num_errors += sec_num_errors
-                abstract = ""
-                for section in article.sections:
-                    if section.name == "ABSTRACT":
-                        abs_sentences, num_errors = get_sentences_from_tei_section(section)
-                        abstract = " ".join(abs_sentences)
-                        break
-                documents.append((file_path, " ".join(sentences), article.title, abstract))
-        if num_errors > 0:
-            logger.debug(f"Couldn't read {str(num_errors)} sentence(s) from {str(file_path)}")
-    return documents
-
-
-def classify_documents(input_docs_dir: str, embedding_model_path: str = None, classifier_model_path: str = None,
-                       embedding_model=None, classifier_model=None):
-    if embedding_model is None:
-        embedding_model = load_embedding_model(model_path=embedding_model_path)
-    if classifier_model is None:
-        classifier_model = joblib.load(classifier_model_path)
-    X = []
-    files_loaded = []
-    valid_embeddings = []
-
-    documents = get_documents(input_docs_dir=input_docs_dir)
-
-    if isinstance(embedding_model, KeyedVectors):
-        word_to_index = embedding_model.key_to_index
-    else:
-        word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
-
-    for _, (file_path, fulltext, _, _) in enumerate(documents):
-        doc_embedding = get_document_embedding(embedding_model, fulltext, word_to_index=word_to_index)
-        X.append(doc_embedding)
-        files_loaded.append(file_path)
-        valid_embeddings.append(not np.all(doc_embedding == np.zeros_like(doc_embedding)))
-
-    del embedding_model
-    X = np.array(X)
-    classifications = classifier_model.predict(X)
-    try:
-        confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
-    except AttributeError:
-        confidence_scores = [1 / (1 + np.exp(-decision_value)) for decision_value in classifier_model.decision_function(X)]
-    return files_loaded, classifications, confidence_scores, valid_embeddings
-
-
 def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, version_num, file_extension,
                     dataset_id):
     model_data = {
@@ -269,9 +182,7 @@ def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, versio
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description='Classify documents or train document classifiers')
-    parser.add_argument("-m", "--mode", type=str, choices=['train', 'classify'], default="classify",
-                        help="Mode of operation: train or classify")
+    parser = argparse.ArgumentParser(description='Train document classifiers')
     parser.add_argument("-d", "--datatype_train", type=str, required=False, help="Datatype to train")
     parser.add_argument("-M", "--mod_train", type=str, required=False, help="MOD to train")
     parser.add_argument("-e", "--embedding_model_path", type=str, help="Path to the word embedding model")
@@ -297,93 +208,6 @@ def parse_arguments():
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
     return parser.parse_args()
-
-
-def process_classification_jobs(mod_id, topic, jobs, embedding_model):
-    mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
-                                      source_description="Alliance document classification pipeline using machine "
-                                                         "learning to identify papers of interest for curation data "
-                                                         "types")
-    classifier_file_path = (f"/data/agr_document_classifier/biocuration_topic_classification_{mod_abbr}_"
-                            f"{topic.replace(':', '_')}_classifier.joblib")
-    try:
-        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
-                           task_type="biocuration_topic_classification")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
-        else:
-            raise
-    classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
-    jobs_to_process = copy.deepcopy(jobs)
-    classifier_model = joblib.load(classifier_file_path)
-    while jobs_to_process:
-        if os.path.isfile('/data/agr_document_classifier/stop_classifier'):
-            logger.info("Stopping classifier due to time limit (stop file exists)")
-            return
-        job_batch = jobs_to_process[:classification_batch_size]
-        jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
-                    f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
-
-
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model):
-    reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
-    prepare_classification_directory()
-    download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                      "/data/agr_document_classifier/to_classify", mod_abbr)
-    files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
-        embedding_model=embedding_model,
-        classifier_model=classifier_model,
-        input_docs_dir="/data/agr_document_classifier/to_classify")
-    send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id)
-
-
-def prepare_classification_directory():
-    os.makedirs("/data/agr_document_classifier/to_classify", exist_ok=True)
-    logger.info("Cleaning up existing files in the to_classify directory")
-    for file in os.listdir("/data/agr_document_classifier/to_classify"):
-        os.remove(os.path.join("/data/agr_document_classifier/to_classify", file))
-
-
-def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id):
-    logger.info("Sending classification tags to ABC.")
-    for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
-                                                                      valid_embeddings):
-        reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
-        if not valid_embedding:
-            logger.warning(f"Invalid embedding for file: {file_path}. Setting job to failed.")
-            set_job_started(reference_curie_job_map[reference_curie])
-            set_job_failure(reference_curie_job_map[reference_curie])
-            continue
-        confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
-                                                negated=bool(classification == 0),
-                                                confidence_level=confidence_level, tet_source_id=tet_source_id)
-        if result:
-            # No need to set started and then immediately set to completed
-            # The transition table should have both needed and in progress going to completed
-            # set_job_started(reference_curie_job_map[reference_curie])
-            set_job_success(reference_curie_job_map[reference_curie])
-        os.remove(file_path)
-    logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
-
-
-def get_confidence_level(classification, conf_score):
-    if classification == 0:
-        return "NEG"
-    elif conf_score < 0.5:
-        return "Low"
-    elif conf_score < 0.75:
-        return "Med"
-    else:
-        return "High"
 
 
 def download_training_set(args, training_data_dir):
@@ -444,48 +268,11 @@ def train_mode(args):
         train_and_save_model(args, training_data_dir, training_set)
 
 
-def classify_mode(args):
-    logger.info("Classification started.")
-    mod_topic_jobs = load_all_jobs("classification_job")
-    embedding_model = load_embedding_model(args.embedding_model_path)
-    failed_processes = []
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
-        try:
-            process_classification_jobs(mod_id, topic, jobs, embedding_model)
-        except Exception as e:
-            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
-            failed = {'topic': topic,
-                      'mod_abbreviation': mod_id,
-                      'exception': str(e)}
-            formatted_traceback = traceback.format_tb(e.__traceback__)
-            failed['trace'] = ""
-            for line in formatted_traceback:
-                failed['trace'] += f"{line}<br>"
-            failed_processes.append(failed)
-        if os.path.isfile('/data/agr_document_classifier/stop_classifier'):
-            logger.info("Stopping classifier due to time limit (stop file exists)")
-            os.remove('/data/agr_document_classifier/stop_classifier')
-            break
-
-    if failed_processes:
-        subject = "Failed processing of classification jobs"
-        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
-        for fp in failed_processes:
-            message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
-            message += f"Exception: {fp['exception']}<br>\n"
-            message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
-        send_report(subject, message)
-        exit(-1)
-
-
 def main():
     args = parse_arguments()
     configure_logging(args.log_level)
 
-    if args.mode == "classify":
-        classify_mode(args)
-    else:
-        train_mode(args)
+    train_mode(args)
 
 
 if __name__ == '__main__':

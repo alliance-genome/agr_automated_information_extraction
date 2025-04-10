@@ -54,14 +54,16 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, match_uppercase: 
     curated_genes, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
     # curated_alleles, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     logger.info("Loading and add curated genes to it.")
-    custom_tokenizer = CustomTokenizer(tokens=curated_genes, match_uppercase_entities=True)
+    custom_tokenizer = CustomTokenizer(tokens=curated_genes, match_uppercase_entities=match_uppercase)
     tfidf_vectorizer = TfidfVectorizer(input='filename', tokenizer=lambda doc: custom_tokenizer.tokenize(doc))
-    text_files = (os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt"))
+    text_files = [os.path.join(download_dir, f) for f in os.listdir(download_dir) if f.endswith(".txt")]
     logger.info("Fitting TFIDF vectorizer on text files.")
     tfidf_vectorizer.fit(text_files)
     string_vectorizer = TfidfVectorizer(vocabulary=tfidf_vectorizer.vocabulary_, tokenizer=custom_tokenizer)
     dummy_corpus = ["dummy document"]
     string_vectorizer.fit(dummy_corpus)
+    string_vectorizer.idf_ = tfidf_vectorizer.idf_
+    string_vectorizer._tfidf = tfidf_vectorizer._tfidf
     logger.info("TFIDF vectorizer fitted.")
     return string_vectorizer
 
@@ -114,7 +116,8 @@ def main():
 
         vectorizer = fit_vectorizer_on_agr_corpus(mod_abbreviation=args.mod_abbreviation,
                                                   wipe_download_dir=args.wipe_download_dir,
-                                                  continue_download=args.continue_download)
+                                                  continue_download=args.continue_download,
+                                                  match_uppercase=args.match_uppercase)
         save_vectorizer_to_file(vectorizer, args.output_path)
         logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
 

@@ -390,7 +390,7 @@ def download_bib_data_for_references(reference_curies: List[str], output_dir: st
 
 def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
     logger.info("Started downloading TEI files")
-    for _, reference_curie in enumerate(reference_curies, start=1):
+    for reference_curie in reference_curies:
         all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
         request = urllib.request.Request(url=all_reffiles_for_pap_api)
         request.add_header("Content-type", "application/json")
@@ -408,6 +408,8 @@ def download_tei_files_for_references(reference_curies: List[str], output_dir: s
                             filename = os.path.join(output_dir, reference_curie.replace(":", "_") + ".tei")
                             with open(filename, "wb") as out_file:
                                 out_file.write(file_content)
+                        else:
+                            logger.error(f"No TEI file found for {reference_curie}")
         except HTTPError as e:
             logger.error(e)
     logger.info("Finished downloading TEI files")
