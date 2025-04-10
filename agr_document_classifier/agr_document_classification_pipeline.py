@@ -8,9 +8,10 @@ helptext = r"""
     agr_document_classifier_classify.py
     and
     agr_document_classifier_trainer.py
-    
+
     Please run one of these instead.
 """
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(formatter_class=argparse.RawDescriptionHelpFormatter, description=helptext)
@@ -27,7 +28,6 @@ def main():
         logger.error("Please use agr_document_classifier_classify.py. This has replaced this script.")
     else:
         logger.error("Please use agr_document_classifier_trainer.py. This has replaced this script.")
-
 
 
 if __name__ == '__main__':
