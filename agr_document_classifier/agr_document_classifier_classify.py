@@ -15,7 +15,8 @@ from gensim.models import KeyedVectors
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
-    download_abc_model, set_job_failure, load_all_jobs, get_model_data
+    download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
+    get_cached_mod_species_map
 from utils.get_documents import get_documents
 from utils.embedding import load_embedding_model, get_document_embedding
 
@@ -142,6 +143,9 @@ def prepare_classification_directory():
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id, model_meta_data):
     logger.info("Sending classification tags to ABC.")
+    species = get_cached_mod_species_map()[mod_abbr]
+    if species in model_meta_data and model_meta_data['species'].startswith("Taxon:"):
+        species = model_meta_data[species]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -152,7 +156,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             continue
         (confidence_level, novel_flag, no_data_flag) = get_confidence_level(classification, conf_score,
                                                                             model_meta_data['novel_data'], model_meta_data['no_data'])
-        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
+
+        result = send_classification_tag_to_abc(reference_curie, species, topic,
                                                 negated=no_data_flag,
                                                 novel_flag=novel_flag,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
