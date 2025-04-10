@@ -135,7 +135,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             raise
 
 
-def send_classification_tag_to_abc(reference_curie: str,  species: str, topic: str, negated: bool,
+def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
                                    novel_flag: bool, confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
