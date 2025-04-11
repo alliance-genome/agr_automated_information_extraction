@@ -144,7 +144,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                                 mod_abbr, topic, tet_source_id, model_meta_data):
     logger.info("Sending classification tags to ABC.")
     species = get_cached_mod_species_map()[mod_abbr]
-    if species in model_meta_data and model_meta_data['species'].startswith("Taxon:"):
+    if species in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
         species = model_meta_data[species]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
