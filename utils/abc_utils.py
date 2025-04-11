@@ -5,7 +5,7 @@ import os
 import html
 import urllib.request
 from collections import defaultdict
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 from urllib.error import HTTPError
 
 import psycopg2
@@ -135,17 +135,19 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             raise
 
 
-def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, negated: bool,
-                                   confidence_level: str, tet_source_id):
+def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
+                                   novel_flag: bool, confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
-        "species": get_cached_mod_species_map()[mod_abbreviation],
+        # "species": get_cached_mod_species_map()[mod_abbreviation],
+        "species": species,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
+        "novel_data": novel_flag,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
@@ -423,7 +425,25 @@ def convert_pdf_with_grobid(file_content):
     return response
 
 
+def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
+    model_data = None
+    get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}?{topic}"
+    token = get_authentication_token()
+    headers = generate_headers(token)
+
+    # Make the request to download the model
+    response = requests.get(get_model_url, headers=headers)
+    if response.status_code == 200:
+        model_data = response.json()
+        logger.info("Model meta data downloaded successfully.")
+    else:
+        logger.error(f"Failed to download model meta data: {response.text}")
+        response.raise_for_status()
+    return model_data
+
+
 def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
+    # TODO: Question, How can there be NO topic?
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
         topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
@@ -442,7 +462,8 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 
 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
-                    topic: str = None, file_extension: str = ""):
+                    topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
+                    no_data: Union[bool, None] = True, species: Union[str, None] = None, novel_data: Union[bool, None] = False):
     upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -455,11 +476,15 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "version_num": None,
         "file_extension": file_extension,
         "model_type": stats["model_name"],
-        "precision": stats.get("average_precision") or stats.get("average_f1_macro"),
-        "recall": stats.get("average_recall"),
-        "f1_score": stats.get("average_f1") or stats.get("average_f1_macro"),
-        "parameters": str(stats["best_params"]) if stats.get("best_params") is not None else None,
-        "dataset_id": dataset_id
+        "precision": stats["average_precision"],
+        "recall": stats["average_recall"],
+        "f1_score": stats["average_f1"],
+        "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
+        "dataset_id": dataset_id,
+        "production": production,
+        "no_data": no_data,
+        "novel_data": novel_data,
+        "species": species
     }
 
     model_dir = os.path.dirname(model_path)

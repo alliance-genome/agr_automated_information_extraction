@@ -12,11 +12,11 @@ import numpy as np
 import requests.exceptions
 from gensim.models import KeyedVectors
 
-
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
-    download_abc_model, set_job_failure, load_all_jobs
+    download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
+    get_cached_mod_species_map
 from utils.get_documents import get_documents
 from utils.embedding import load_embedding_model, get_document_embedding
 
@@ -97,6 +97,15 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
             return
         else:
             raise
+    try:
+        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_topic_classification", topic=topic)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            return
+        else:
+            raise
+
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     classifier_model = joblib.load(classifier_file_path)
@@ -108,10 +117,10 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data)
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model):
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_tei_files_for_references(list(reference_curie_job_map.keys()),
@@ -121,7 +130,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         classifier_model=classifier_model,
         input_docs_dir="/data/agr_document_classifier/to_classify")
     send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id)
+                                mod_abbr, topic, tet_source_id, model_meta_data)
 
 
 def prepare_classification_directory():
@@ -132,8 +141,11 @@ def prepare_classification_directory():
 
 
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id):
+                                mod_abbr, topic, tet_source_id, model_meta_data):
     logger.info("Sending classification tags to ABC.")
+    species = get_cached_mod_species_map()[mod_abbr]
+    if species in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
+        species = model_meta_data[species]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -142,9 +154,12 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             set_job_started(reference_curie_job_map[reference_curie])
             set_job_failure(reference_curie_job_map[reference_curie])
             continue
-        confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
-                                                negated=bool(classification == 0),
+        (confidence_level, novel_flag, no_data_flag) = get_confidence_level(classification, conf_score,
+                                                                            model_meta_data['novel_data'], model_meta_data['no_data'])
+
+        result = send_classification_tag_to_abc(reference_curie, species, topic,
+                                                negated=no_data_flag,
+                                                novel_flag=novel_flag,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             # No need to set started and then immediately set to completed
@@ -155,25 +170,30 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
 
 
-def get_confidence_level(classification, conf_score):
+def get_confidence_level(classification, conf_score, novel_data, no_data):
+    novel_flag = False
+    no_data_flag = False
+    confidence = "NEG"
     if classification == 0:
-        return "NEG"
+        if no_data:
+            no_data_flag = True
     elif conf_score < 0.5:
-        return "Low"
+        if novel_data:
+            novel_flag = True
+        confidence = "Low"
     elif conf_score < 0.75:
-        return "Med"
+        if novel_data:
+            novel_flag = True
+        confidence = "Med"
     else:
-        return "High"
+        if novel_data:
+            novel_flag = True
+        confidence = "High"
+    return confidence, novel_flag, no_data_flag
 
 
 def classify_mode(args):
     logger.info("Classification started.")
-    print("#############")
-    logger.debug("deb")
-    logger.info("info")
-    logger.warning("warning")
-    logger.error("error")
-    logger.critical("critical")
 
     mod_topic_jobs = load_all_jobs("classification_job")
     embedding_model = load_embedding_model(args.embedding_model_path)

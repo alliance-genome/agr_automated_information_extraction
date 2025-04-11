@@ -5,7 +5,7 @@ import os
 import os.path
 import shutil
 import sys
-from typing import List
+import re
 
 import joblib
 import nltk
@@ -21,6 +21,8 @@ from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.get_documents import get_documents
+from typing import List, Union
+
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -148,10 +150,14 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     return best_classifier, stats
 
 
-def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
+def save_classifier(classifier, mod_abbreviation: str, topic: str,
+                    novel_data: Union[bool, None], production: Union[bool, None], no_data: Union[bool, None], species: Union[str, None],
+                    stats: dict, dataset_id: int):
     model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
     upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
+                    novel_data=novel_data, production=production,
+                    no_data=no_data, species=species,
                     model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
 
@@ -207,6 +213,18 @@ def parse_arguments():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
+    parser.add_argument("-p", "--production", action="store_true",
+                        help="Whether to set production to true. (Default False)",
+                        required=False)
+    parser.add_argument("-f", "--do_not_flag_no_data", action="store_true",
+                        help="Whether to not set no_data flag to true if no result found. (Default False)",
+                        required=False)
+    parser.add_argument("-F", "--flag_novel", action="store_true",
+                        help="Whether to set novel_data to true on positive result. Default False",
+                        required=False)
+    parser.add_argument("-a", "--alternative_species", type=str,
+                        help="Use a non standard mod species taxon. Must include 'taxon:'",
+                        required=False)
     return parser.parse_args()
 
 
@@ -237,6 +255,8 @@ def upload_pre_existing_model(args, training_set):
     stats["average_f1"] = stats["f1_score"]
     upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
+                    novel_data=args.flag_novel, production=args.production,
+                    no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     model_path=f"/data/agr_document_classifier/training/{args.mod_train}_"
                                f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
@@ -251,6 +271,8 @@ def train_and_save_model(args, training_data_dir, training_set):
         sections_to_use=args.sections_to_use)
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                    novel_data=args.flag_novel, production=args.production,
+                    no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     stats=stats, dataset_id=training_set["dataset_id"])
 
 
@@ -270,6 +292,10 @@ def train_mode(args):
 
 def main():
     args = parse_arguments()
+    if args.alternative_species:
+        if not re.search(r'^NCBITaxon:\d+$', args.alternative_species):
+            print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
+            sys.exit(1)
     configure_logging(args.log_level)
 
     train_mode(args)
