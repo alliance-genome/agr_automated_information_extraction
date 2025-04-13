@@ -83,7 +83,6 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
 
             for file in os.listdir("/data/agr_entity_extraction/to_extract"):
                 curie = file.split(".")[0].replace("_", ":")
-                job = reference_curie_job_map[curie]
                 try:
                     tei_obj = AllianceTEI()
                     tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
