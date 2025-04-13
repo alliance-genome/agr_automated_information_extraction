@@ -6,6 +6,7 @@ import os.path
 import sys
 
 import traceback
+from argparse import Namespace
 
 import joblib
 import numpy as np
@@ -194,7 +195,7 @@ def get_confidence_level(classification, conf_score, novel_data, no_data):
     return confidence, novel_flag, no_data_flag
 
 
-def classify_mode(args):
+def classify_mode(args: Namespace):
     logger.info("Classification started.")
 
     mod_topic_jobs = load_all_jobs("classification_job", args)
@@ -230,7 +231,7 @@ def classify_mode(args):
 
 
 def main():
-    args = parse_arguments()
+    args: Namespace = parse_arguments()
     configure_logging(args.log_level)
     if args.stage:
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"

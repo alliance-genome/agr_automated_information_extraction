@@ -8,7 +8,7 @@ import urllib.request
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union
 from urllib.error import HTTPError
-
+from argparse import Namespace
 import psycopg2
 import requests
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
@@ -204,8 +204,14 @@ def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: s
         return False
 
 
-def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0):
+def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
+    if args and args.mod:
+        jobs_url += f'&mod={args.mod}'
+    if args and args.reference:
+        jobs_url += f'&reference={args.reference}'
+    if args and args.topic:
+        jobs_url += f'&topic={args.topic}'
     request = urllib.request.Request(url=jobs_url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -229,9 +235,9 @@ def set_job_started(job):
         try:
             urllib.request.urlopen(request)
             return True
-        except HTTPError as e:
+        except HTTPError:
             time.sleep(attempts)
-    logger.error(f"Error setting job started: {str(job)}: {str(e)}")
+    logger.error(f"Error setting job started after 3 attempts: {str(job)}")
     return False
 
 
@@ -264,9 +270,9 @@ def set_job_failure(job):
         try:
             urllib.request.urlopen(request)
             return True
-        except HTTPError as e:
+        except HTTPError:
             time.sleep(attempts)
-    logger.error(f"Error setting job failed: {str(job)}: {str(e)}")
+    logger.error(f"Error setting job failed: {str(job)}")
     return False
 
 
@@ -687,7 +693,7 @@ def get_all_ref_curies(mod_abbreviation: str):
     return curies
 
 
-def load_all_jobs(job_label: str, args: Dict) -> Dict[Tuple[str, str], List[dict]]:
+def load_all_jobs(job_label: str, args: Namespace) -> Dict[Tuple[str, str], List[dict]]:
     """
     Loads and processes all jobs with a specified label from an external source, organizing
     them by module ID and topic.
@@ -699,6 +705,7 @@ def load_all_jobs(job_label: str, args: Dict) -> Dict[Tuple[str, str], List[dict
 
     :param job_label: The label used to filter and load jobs from the external database.
     :type job_label: str
+    :param args: The arguments passed to the external source.
     :return: A dictionary where keys are tuples of `(module ID, topic)` and the values
         are lists of job dictionaries filtered and grouped accordingly.
     :rtype: Dict[Tuple[str, str], List[dict]]
