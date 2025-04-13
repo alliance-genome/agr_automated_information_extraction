@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import html
+import time
 import urllib.request
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union
@@ -12,6 +13,7 @@ import psycopg2
 import requests
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
+
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
     blue_api_base_url = f"https://{blue_api_base_url}"
@@ -20,16 +22,6 @@ curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.
 logger = logging.getLogger(__name__)
 
 cache = {}
-
-job_category_topic_map = {
-    "catalytic_activity": "ATP:0000061",
-    "disease": "ATP:0000152",
-    "expression": "ATP:0000010",
-    "interaction": "ATP:0000068",
-    "physical_interaction": "ATP:0000069",
-    "RNAi": "ATP:0000082",
-    "antibody": "ATP:0000096"
-}
 
 
 def get_mod_species_map():
@@ -153,20 +145,26 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "force_insertion": True
     }).encode('utf-8')
     headers = generate_headers(token)
-    try:
-        create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
-        create_request.add_header("Content-type", "application/json")
-        create_request.add_header("Accept", "application/json")
-        with urllib.request.urlopen(create_request) as create_response:
-            if create_response.getcode() == 201:
-                logger.debug("TET created")
-                return True
-            else:
-                logger.error(f"Failed to create TET: {str(tet_data)}")
-                return False
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error occurred during TET upload: {e}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
+            create_request.add_header("Content-type", "application/json")
+            create_request.add_header("Accept", "application/json")
+            with urllib.request.urlopen(create_request) as create_response:
+                if create_response.getcode() == 201:
+                    logger.debug("TET created")
+                else:
+                    logger.error(f"Failed to create TET (attempt {attempts}): {str(tet_data)}")
+        except requests.exceptions.RequestException as exc:
+            if attempts >= 3:
+                logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
+                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}")
+                logger.error(f"novel_flag: {novel_flag}, negated: {negated}, confidence: {confidence_level}, tet_source_id: {tet_source_id}")
+                raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
+            time.sleep(attempts)
+    return True
 
 
 def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
@@ -225,12 +223,16 @@ def set_job_started(job):
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
-    try:
-        urllib.request.urlopen(request)
-        return True
-    except HTTPError as e:
-        logger.error(f"Error setting job started: {str(job)}: {str(e)}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            return True
+        except HTTPError as e:
+            time.sleep(attempts)
+    logger.error(f"Error setting job started: {str(job)}: {str(e)}")
+    return False
 
 
 def set_job_success(job):
@@ -238,12 +240,17 @@ def set_job_success(job):
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
-    try:
-        urllib.request.urlopen(request)
-        return True
-    except HTTPError as e:
-        logger.error(f"Error setting job success: {str(job)}: {str(e)}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            return True
+        except HTTPError:
+            time.sleep(attempts)
+
+    logger.error(f"Error setting job success after 3 attempts: {str(job)}")
+    return False
 
 
 def set_job_failure(job):
@@ -251,12 +258,16 @@ def set_job_failure(job):
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
-    try:
-        urllib.request.urlopen(request)
-        return True
-    except HTTPError as e:
-        logger.error(f"Error setting job failed: {str(job)}: {str(e)}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            return True
+        except HTTPError as e:
+            time.sleep(attempts)
+    logger.error(f"Error setting job failed: {str(job)}: {str(e)}")
+    return False
 
 
 def get_file_from_abc_reffile_obj(referencefile_json_obj):
@@ -676,7 +687,7 @@ def get_all_ref_curies(mod_abbreviation: str):
     return curies
 
 
-def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
+def load_all_jobs(job_label: str, args: Dict) -> Dict[Tuple[str, str], List[dict]]:
     """
     Loads and processes all jobs with a specified label from an external source, organizing
     them by module ID and topic.
@@ -698,7 +709,7 @@ def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
     jobs_already_added = set()
     logger.info("Loading jobs from ABC ...")
 
-    while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset):
+    while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset, args=args):
         for job in all_jobs:
             reference_id = job["reference_id"]
             topic = job["topic_id"]

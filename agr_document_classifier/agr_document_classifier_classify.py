@@ -76,6 +76,11 @@ def parse_arguments():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
+    parser.add_argument("-f", "--reference_curie", type=str, help="Only run for this reference.", required=False)
+    parser.add_argument("-m", "--mod_abbreviation", type=str, help="Only run for this mod.", required=False)
+    parser.add_argument("-t", "--topic", type=str, help="Only run for this topic.", required=False)
+    parser.add_argument("-s", "--stage", action="store_true", help="Only run for on stage.", required=False)
+
     return parser.parse_args()
 
 
@@ -162,9 +167,6 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                                                 novel_flag=novel_flag,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
-            # No need to set started and then immediately set to completed
-            # The transition table should have both needed and in progress going to completed
-            # set_job_started(reference_curie_job_map[reference_curie])
             set_job_success(reference_curie_job_map[reference_curie])
         os.remove(file_path)
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
@@ -195,7 +197,7 @@ def get_confidence_level(classification, conf_score, novel_data, no_data):
 def classify_mode(args):
     logger.info("Classification started.")
 
-    mod_topic_jobs = load_all_jobs("classification_job")
+    mod_topic_jobs = load_all_jobs("classification_job", args)
     embedding_model = load_embedding_model(args.embedding_model_path)
     failed_processes = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
@@ -230,7 +232,8 @@ def classify_mode(args):
 def main():
     args = parse_arguments()
     configure_logging(args.log_level)
-
+    if args.stage:
+        os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
     classify_mode(args)
 
 
