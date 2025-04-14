@@ -187,23 +187,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 title = tei_obj.get_title()
             except Exception as e:
                 logger.warning(f"Error getting title for {curie}: {str(e)}. Ignoring field.")
-            results = nlp_pipeline(fulltext)
-            entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
-            entities_to_extract = set(entity_extraction_model.entities_to_extract)
-            entities_to_extract_uppercase = set([entity.upper() for entity in entities_to_extract])
-            tokenized_title = entity_extraction_model.tokenizer.tokenize(title)
-            entities_in_title = []
-            entities_in_title.extend(set(tokenized_title) & entities_to_extract)
-            entities_in_title.extend(set([token.upper() for token in tokenized_title]) & entities_to_extract_uppercase)
-            tokenized_abstract = entity_extraction_model.tokenizer.tokenize(abstract)
-            entities_in_abstract = []
-            entities_in_abstract.extend(set(tokenized_abstract) & entities_to_extract)
-            entities_in_abstract.extend(set([token.upper() for token in tokenized_abstract]) & entities_to_extract_uppercase)
-            all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
-            upper_counter = Counter([entity.upper() for entity in all_entities])
-            for upper_entity, count in upper_counter.items():
-                if count > 1:
-                    all_entities.remove(upper_entity)
+            all_entities = extract_all_entities(nlp_pipeline=nlp_pipeline, fulltext=fulltext, title=title,
+                                                abstract=abstract, entity_extraction_model=entity_extraction_model)
 
             logger.info("Sending extracted entities as tags to ABC.")
             for entity in all_entities:
@@ -217,6 +202,27 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             set_job_started(job)
             set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
+
+
+def extract_all_entities(nlp_pipeline, fulltext, entity_extraction_model, title, abstract):
+    results = nlp_pipeline(fulltext)
+    entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
+    entities_to_extract = set(entity_extraction_model.entities_to_extract)
+    entities_to_extract_uppercase = set([entity.upper() for entity in entities_to_extract])
+    tokenized_title = entity_extraction_model.tokenizer.tokenize(title)
+    entities_in_title = []
+    entities_in_title.extend(set(tokenized_title) & entities_to_extract)
+    entities_in_title.extend(set([token.upper() for token in tokenized_title]) & entities_to_extract_uppercase)
+    tokenized_abstract = entity_extraction_model.tokenizer.tokenize(abstract)
+    entities_in_abstract = []
+    entities_in_abstract.extend(set(tokenized_abstract) & entities_to_extract)
+    entities_in_abstract.extend(set([token.upper() for token in tokenized_abstract]) & entities_to_extract_uppercase)
+    all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
+    upper_counter = Counter([entity.upper() for entity in all_entities])
+    for upper_entity, count in upper_counter.items():
+        if count > 1:
+            all_entities.remove(upper_entity)
+    return all_entities
 
 
 def main():
