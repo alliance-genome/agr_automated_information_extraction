@@ -15,6 +15,8 @@ def main():
     parser = argparse.ArgumentParser(description="Upload the entity extractor model to the Alliance ML API")
     parser.add_argument("-m", "--mod-abbreviation", required=True,
                         help="The MOD abbreviation (e.g., FB, WB, SGD, etc.)")
+    parser.add_argument("-s", "--species", required=True,
+                        help="The taxon id of the species related to the entity extraction model")
     parser.add_argument("--min-matches", type=int, required=True, help="Minimum number of matches required for an "
                                                                        "entity to be extracted")
     parser.add_argument("--tfidf-threshold", type=float, required=True, help="TF-IDF threshold for entity extraction")
@@ -77,7 +79,8 @@ def main():
         "best_params": None,
     }
     upload_ml_model(task_type="biocuration_entity_extraction", mod_abbreviation=args.mod_abbreviation,
-                    model_path=entity_extraction_model_file_path, stats=stats, topic=args.topic, file_extension="dpkl")
+                    model_path=entity_extraction_model_file_path, stats=stats, topic=args.topic, file_extension="dpkl",
+                    species=args.species)
     logger.info(f"String Matching Entity Extractor uploaded to the Alliance API for {args.mod_abbreviation}.")
 
 

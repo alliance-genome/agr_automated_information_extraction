@@ -154,8 +154,8 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
         self.dummy_param = torch.nn.Parameter(torch.zeros(1))
 
     def update_entities_to_extract(self, entities_to_extract):
+        self.tokenizer.add_tokens(list(set(self.entities_to_extract) - set(entities_to_extract)))
         self.entities_to_extract = set(entities_to_extract)
-        self.tokenizer.add_tokens(entities_to_extract)
         self.alliance_entities_loaded = False
 
     def set_tfidf_threshold(self, tfidf_threshold):
