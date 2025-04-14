@@ -160,39 +160,29 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             set_job_started(reference_curie_job_map[reference_curie])
             set_job_failure(reference_curie_job_map[reference_curie])
             continue
-        (confidence_level, novel_flag, no_data_flag) = get_confidence_level(classification, conf_score,
-                                                                            model_meta_data['novel_data'], model_meta_data['no_data'])
+        confidence_level = get_confidence_level(classification, conf_score)
 
-        result = send_classification_tag_to_abc(reference_curie, species, topic,
-                                                negated=no_data_flag,
-                                                novel_flag=novel_flag,
-                                                confidence_level=confidence_level, tet_source_id=tet_source_id)
+        result = True
+        if classification > 0 or model_meta_data['no_data']:
+            result = send_classification_tag_to_abc(reference_curie, species, topic,
+                                                    negated=classification == 0,
+                                                    novel_flag=model_meta_data['novel_data'],
+                                                    confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
         os.remove(file_path)
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
 
 
-def get_confidence_level(classification, conf_score, novel_data, no_data):
-    novel_flag = False
-    no_data_flag = False
-    confidence = "NEG"
+def get_confidence_level(classification, conf_score):
     if classification == 0:
-        if no_data:
-            no_data_flag = True
+        return "NEG"
     elif conf_score < 0.5:
-        if novel_data:
-            novel_flag = True
-        confidence = "Low"
+        return "Low"
     elif conf_score < 0.75:
-        if novel_data:
-            novel_flag = True
-        confidence = "Med"
+        return "Med"
     else:
-        if novel_data:
-            novel_flag = True
-        confidence = "High"
-    return confidence, novel_flag, no_data_flag
+        return "High"
 
 
 def classify_mode(args: Namespace):
