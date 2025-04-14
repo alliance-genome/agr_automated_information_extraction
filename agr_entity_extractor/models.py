@@ -137,7 +137,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
 
     def __init__(self, config, min_matches, tfidf_threshold,
                  tokenizer, vectorizer, entities_to_extract, load_entities_dynamically_fnc=None,
-                 match_uppercase: bool = False):
+                 match_uppercase: bool = False, name_to_curie_mapping=None):
         super().__init__(config)
         self.config = config
         self.tfidf_threshold = tfidf_threshold
@@ -148,7 +148,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
         self.entities_to_extract = set(entities_to_extract) if entities_to_extract else None
         self.load_entities_dynamically_fnc = load_entities_dynamically_fnc
         self.alliance_entities_loaded = False
-        self.name_to_curie_mapping = None
+        self.name_to_curie_mapping = name_to_curie_mapping
         # Dummy parameter so that the model has parameters.
         self.dummy_param = torch.nn.Parameter(torch.zeros(1))
 

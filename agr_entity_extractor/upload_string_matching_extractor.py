@@ -46,7 +46,7 @@ def main():
             entity_type_str="gene" if args.topic == "ATP:0000005" else "allele"
         )
 
-    entities_to_extract, _ = load_entities_dynamically_fnc()
+    entities_to_extract, name_to_curie_mapping = load_entities_dynamically_fnc()
     custom_tokenizer = CustomTokenizer(tokens=entities_to_extract, match_uppercase_entities=args.match_uppercase)
 
     # Initialize the model
@@ -59,7 +59,8 @@ def main():
         vectorizer=tfidf_vectorizer,
         entities_to_extract=entities_to_extract,
         load_entities_dynamically_fnc=load_entities_dynamically_fnc,
-        match_uppercase=args.match_uppercase
+        match_uppercase=args.match_uppercase,
+        name_to_curie_mapping=name_to_curie_mapping
     )
 
     # Serialize the model
