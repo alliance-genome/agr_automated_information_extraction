@@ -48,6 +48,7 @@ def main():
 
     entities_to_extract, name_to_curie_mapping = load_entities_dynamically_fnc()
     custom_tokenizer = CustomTokenizer(tokens=entities_to_extract, match_uppercase_entities=args.match_uppercase)
+    upper_to_original_mapping = {entity.upper(): entity for entity in entities_to_extract}
 
     # Initialize the model
     config = AllianceStringMatchingEntityExtractorConfig()
@@ -60,7 +61,8 @@ def main():
         entities_to_extract=entities_to_extract,
         load_entities_dynamically_fnc=load_entities_dynamically_fnc,
         match_uppercase=args.match_uppercase,
-        name_to_curie_mapping=name_to_curie_mapping
+        name_to_curie_mapping=name_to_curie_mapping,
+        upper_to_original_mapping=upper_to_original_mapping
     )
 
     # Serialize the model

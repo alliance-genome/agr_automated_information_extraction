@@ -3,6 +3,7 @@ import copy
 import logging
 import os
 import sys
+from collections import Counter
 
 import dill
 import requests
@@ -168,8 +169,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             except Exception as e:
                 logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
                 continue
-            entity_extraction_model.load_entities_dynamically_fnc()
-            entity_extraction_model.alliance_entities_loaded = True
+            entity_extraction_model.load_entities_dynamically()
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                     tokenizer=entity_extraction_model.tokenizer)
             title = ""
@@ -200,11 +200,20 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             entities_in_abstract.extend(set(tokenized_abstract) & entities_to_extract)
             entities_in_abstract.extend(set([token.upper() for token in tokenized_abstract]) & entities_to_extract_uppercase)
             all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
+            upper_counter = Counter([entity.upper() for entity in all_entities])
+            for upper_entity, count in upper_counter.items():
+                if count > 1:
+                    all_entities.remove(upper_entity)
+
             logger.info("Sending extracted entities as tags to ABC.")
             for entity in all_entities:
+                if entity in entity_extraction_model.name_to_curie_mapping:
+                    entity_curie = entity_extraction_model.name_to_curie_mapping[entity]
+                else:
+                    entity_curie = entity_extraction_model.name_to_curie_mapping[
+                        entity_extraction_model.upper_to_original_mapping[entity]]
                 send_entity_tag_to_abc(reference_curie=curie, mod_abbreviation=mod_abbr, topic=topic,
-                                       entity=entity_extraction_model.name_to_curie_mapping[entity],
-                                       tet_source_id=tet_source_id)
+                                       entity=entity_curie, tet_source_id=tet_source_id)
             set_job_started(job)
             set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")

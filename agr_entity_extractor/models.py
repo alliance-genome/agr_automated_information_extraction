@@ -137,7 +137,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
 
     def __init__(self, config, min_matches, tfidf_threshold,
                  tokenizer, vectorizer, entities_to_extract, load_entities_dynamically_fnc=None,
-                 match_uppercase: bool = False, name_to_curie_mapping=None):
+                 match_uppercase: bool = False, name_to_curie_mapping=None, upper_to_original_mapping=None):
         super().__init__(config)
         self.config = config
         self.tfidf_threshold = tfidf_threshold
@@ -149,6 +149,7 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
         self.load_entities_dynamically_fnc = load_entities_dynamically_fnc
         self.alliance_entities_loaded = False
         self.name_to_curie_mapping = name_to_curie_mapping
+        self.upper_to_original_mapping = upper_to_original_mapping
         # Dummy parameter so that the model has parameters.
         self.dummy_param = torch.nn.Parameter(torch.zeros(1))
 
@@ -171,16 +172,20 @@ class AllianceStringMatchingEntityExtractor(PreTrainedModel):
             loss = loss_fct(logits.view(-1, self.config.num_labels), labels.view(-1))
         return {"loss": loss, "logits": logits}
 
+    def load_entities_dynamically(self):
+        if self.load_entities_dynamically_fnc and not self.alliance_entities_loaded:
+            entities_to_extract, name_to_curie_mapping = self.load_entities_dynamically_fnc()
+            self.update_entities_to_extract(entities_to_extract)
+            self.name_to_curie_mapping = name_to_curie_mapping
+            self.upper_to_original_mapping = {entity.upper(): entity for entity in entities_to_extract}
+            self.alliance_entities_loaded = True
+
     def custom_entity_extraction(self, input_ids):
         """
         Produce logits at token level.
         The logits tensor should have shape (batch_size, seq_length, num_labels).
         """
-        if self.load_entities_dynamically_fnc and not self.alliance_entities_loaded:
-            entities_to_extract, name_to_curie_mapping = self.load_entities_dynamically_fnc()
-            self.update_entities_to_extract(entities_to_extract)
-            self.name_to_curie_mapping = name_to_curie_mapping
-            self.alliance_entities_loaded = True
+        self.load_entities_dynamically()
         batch_tokens = [self.tokenizer.convert_ids_to_tokens(seq) for seq in input_ids]
         logits_list = []
         if self.match_uppercase:
