@@ -3,14 +3,16 @@ import json
 import logging
 import os
 import html
+import time
 import urllib.request
 from collections import defaultdict
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Union
 from urllib.error import HTTPError
-
+from argparse import Namespace
 import psycopg2
 import requests
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
+
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
@@ -20,16 +22,6 @@ curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.
 logger = logging.getLogger(__name__)
 
 cache = {}
-
-job_category_topic_map = {
-    "catalytic_activity": "ATP:0000061",
-    "disease": "ATP:0000152",
-    "expression": "ATP:0000010",
-    "interaction": "ATP:0000068",
-    "physical_interaction": "ATP:0000069",
-    "RNAi": "ATP:0000082",
-    "antibody": "ATP:0000096"
-}
 
 
 def get_mod_species_map():
@@ -135,36 +127,44 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             raise
 
 
-def send_classification_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, negated: bool,
-                                   confidence_level: str, tet_source_id):
+def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
+                                   novel_flag: bool, confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
-        "species": get_cached_mod_species_map()[mod_abbreviation],
+        # "species": get_cached_mod_species_map()[mod_abbreviation],
+        "species": species,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
+        "novel_data": novel_flag,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
     }).encode('utf-8')
     headers = generate_headers(token)
-    try:
-        create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
-        create_request.add_header("Content-type", "application/json")
-        create_request.add_header("Accept", "application/json")
-        with urllib.request.urlopen(create_request) as create_response:
-            if create_response.getcode() == 201:
-                logger.debug("TET created")
-                return True
-            else:
-                logger.error(f"Failed to create TET: {str(tet_data)}")
-                return False
-    except requests.exceptions.RequestException as e:
-        logger.error(f"Error occurred during TET upload: {e}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
+            create_request.add_header("Content-type", "application/json")
+            create_request.add_header("Accept", "application/json")
+            with urllib.request.urlopen(create_request) as create_response:
+                if create_response.getcode() == 201:
+                    logger.debug("TET created")
+                else:
+                    logger.error(f"Failed to create TET (attempt {attempts}): {str(tet_data)}")
+        except requests.exceptions.RequestException as exc:
+            if attempts >= 3:
+                logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
+                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}")
+                logger.error(f"novel_flag: {novel_flag}, negated: {negated}, confidence: {confidence_level}, tet_source_id: {tet_source_id}")
+                raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
+            time.sleep(attempts)
+    return True
 
 
 def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
@@ -204,8 +204,14 @@ def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: s
         return False
 
 
-def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0):
+def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
+    if args and args.mod:
+        jobs_url += f'&mod={args.mod}'
+    if args and args.reference:
+        jobs_url += f'&reference={args.reference}'
+    if args and args.topic:
+        jobs_url += f'&topic={args.topic}'
     request = urllib.request.Request(url=jobs_url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -223,12 +229,16 @@ def set_job_started(job):
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
-    try:
-        urllib.request.urlopen(request)
-        return True
-    except HTTPError as e:
-        logger.error(f"Error setting job started: {str(job)}: {str(e)}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            return True
+        except HTTPError:
+            time.sleep(attempts)
+    logger.error(f"Error setting job started after 3 attempts: {str(job)}")
+    return False
 
 
 def set_job_success(job):
@@ -236,12 +246,17 @@ def set_job_success(job):
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
-    try:
-        urllib.request.urlopen(request)
-        return True
-    except HTTPError as e:
-        logger.error(f"Error setting job success: {str(job)}: {str(e)}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            return True
+        except HTTPError:
+            time.sleep(attempts)
+
+    logger.error(f"Error setting job success after 3 attempts: {str(job)}")
+    return False
 
 
 def set_job_failure(job):
@@ -249,12 +264,16 @@ def set_job_failure(job):
     request = urllib.request.Request(url=url, method='POST')
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
-    try:
-        urllib.request.urlopen(request)
-        return True
-    except HTTPError as e:
-        logger.error(f"Error setting job failed: {str(job)}: {str(e)}")
-        return False
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            return True
+        except HTTPError:
+            time.sleep(attempts)
+    logger.error(f"Error setting job failed: {str(job)}")
+    return False
 
 
 def get_file_from_abc_reffile_obj(referencefile_json_obj):
@@ -423,7 +442,25 @@ def convert_pdf_with_grobid(file_content):
     return response
 
 
+def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
+    model_data = None
+    get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}?{topic}"
+    token = get_authentication_token()
+    headers = generate_headers(token)
+
+    # Make the request to download the model
+    response = requests.get(get_model_url, headers=headers)
+    if response.status_code == 200:
+        model_data = response.json()
+        logger.info("Model meta data downloaded successfully.")
+    else:
+        logger.error(f"Failed to download model meta data: {response.text}")
+        response.raise_for_status()
+    return model_data
+
+
 def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
+    # TODO: Question, How can there be NO topic?
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
         topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
     token = get_authentication_token()
@@ -441,8 +478,9 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
         response.raise_for_status()
 
 
-def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, species, dataset_id: int = None,
-                    topic: str = None, file_extension: str = ""):
+def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
+                    topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
+                    no_data: Union[bool, None] = True, species: Union[str, None] = None, novel_data: Union[bool, None] = False):
     upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -455,14 +493,14 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "version_num": None,
         "file_extension": file_extension,
         "model_type": stats["model_name"],
-        "precision": stats.get("average_precision") or stats.get("average_f1_macro"),
-        "recall": stats.get("average_recall"),
-        "f1_score": stats.get("average_f1") or stats.get("average_f1_macro"),
-        "parameters": str(stats["best_params"]) if stats.get("best_params") is not None else None,
+        "precision": stats["average_precision"],
+        "recall": stats["average_recall"],
+        "f1_score": stats["average_f1"],
+        "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
         "dataset_id": dataset_id,
-        "production": True,
-        "negated": False,
-        "novel_topic_data": False,
+        "production": production,
+        "no_data": no_data,
+        "novel_data": novel_data,
         "species": species
     }
 
@@ -655,7 +693,7 @@ def get_all_ref_curies(mod_abbreviation: str):
     return curies
 
 
-def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
+def load_all_jobs(job_label: str, args: Namespace) -> Dict[Tuple[str, str], List[dict]]:
     """
     Loads and processes all jobs with a specified label from an external source, organizing
     them by module ID and topic.
@@ -667,6 +705,7 @@ def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
 
     :param job_label: The label used to filter and load jobs from the external database.
     :type job_label: str
+    :param args: The arguments passed to the external source.
     :return: A dictionary where keys are tuples of `(module ID, topic)` and the values
         are lists of job dictionaries filtered and grouped accordingly.
     :rtype: Dict[Tuple[str, str], List[dict]]
@@ -677,7 +716,7 @@ def load_all_jobs(job_label: str) -> Dict[Tuple[str, str], List[dict]]:
     jobs_already_added = set()
     logger.info("Loading jobs from ABC ...")
 
-    while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset):
+    while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset, args=args):
         for job in all_jobs:
             reference_id = job["reference_id"]
             topic = job["topic_id"]

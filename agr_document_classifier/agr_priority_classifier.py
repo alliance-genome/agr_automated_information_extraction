@@ -42,7 +42,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_review_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs
+    set_job_failure, load_all_jobs, get_cached_mod_species_map
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -528,6 +528,7 @@ def prepare_classification_directory():
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id):
     logger.info("Sending classification tags to ABC.")
+    species = get_cached_mod_species_map()[mod_abbr]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -537,8 +538,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             set_job_failure(reference_curie_job_map[reference_curie])
             continue
         confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
+        result = send_classification_tag_to_abc(reference_curie, species, topic,
                                                 negated=bool(classification == 0),
+                                                novel_flag=False,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
