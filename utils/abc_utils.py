@@ -167,23 +167,21 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return True
 
 
-def send_entity_tag_to_abc(reference_curie: str, mod_abbreviation: str, topic: str, entity: str, tet_source_id):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, entity: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
-    # TODO: pass negated and confidence_level
-    # Remove after fixing
-    negated = False
-    confidence_level = "Needs Confidence"
-    # End of TODO
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
+        "entity_type": topic,
+        "entity_id_validation": "alliance",
         "entity": entity,
-        "species": get_cached_mod_species_map()[mod_abbreviation],
+        "species": species,
         "topic_entity_tag_source_id": tet_source_id,
-        "negated": negated,
-        "confidence_level": confidence_level,
+        "negated": False,
+        "novel_topic_data": novel_data,
+        "confidence_level": None,
         "reference_curie": reference_curie,
         "force_insertion": True
     }).encode('utf-8')
@@ -444,7 +442,7 @@ def convert_pdf_with_grobid(file_content):
 
 def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
     model_data = None
-    get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}?{topic}"
+    get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}/{topic}"
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -499,8 +497,8 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "parameters": str(stats["best_params"]) if stats["best_params"] is not None else None,
         "dataset_id": dataset_id,
         "production": production,
-        "no_data": no_data,
-        "novel_data": novel_data,
+        "negated": no_data,
+        "novel_topic_data": novel_data,
         "species": species
     }
 

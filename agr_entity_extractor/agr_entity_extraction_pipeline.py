@@ -10,7 +10,7 @@ import requests
 from transformers import pipeline
 
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
-    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc
+    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data
 from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
     entity_extraction_model_file_path = (f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_"
                                          f"{topic.replace(':', '_')}.dpkl")
     try:
+        model_metadata = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_entity_extraction",
+                                        topic=topic)
+        species = model_metadata['species']
+        novel_data = model_metadata['novel_topic_data']
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
                            task_type="biocuration_entity_extraction")
         logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
@@ -197,10 +201,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 else:
                     entity_curie = entity_extraction_model.name_to_curie_mapping[
                         entity_extraction_model.upper_to_original_mapping[entity]]
-                send_entity_tag_to_abc(reference_curie=curie, mod_abbreviation=mod_abbr, topic=topic,
-                                       entity=entity_curie, tet_source_id=tet_source_id)
-            set_job_started(job)
-            set_job_success(job)
+                result = send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic,
+                                                entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
+                if result:
+                    set_job_started(job)
+                    set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
 
 
@@ -237,7 +242,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    mod_topic_jobs = load_all_jobs("_extraction_job")
+    mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         process_entity_extraction_jobs(mod_id, topic, jobs)
     logger.info("Finished processing all entity extraction jobs.")
