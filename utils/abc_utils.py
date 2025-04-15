@@ -230,7 +230,9 @@ def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, off
 
 def set_job_started(job):
     url = f'{blue_api_base_url}/workflow_tag/job/started/{job["reference_workflow_tag_id"]}'
-    request = urllib.request.Request(url=url, method='POST')
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
@@ -247,7 +249,10 @@ def set_job_started(job):
 
 def set_job_success(job):
     url = f'{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
-    request = urllib.request.Request(url=url, method='POST')
+    print(f"url for job success is {url}")
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
@@ -267,7 +272,9 @@ def set_job_success(job):
 
 def set_job_failure(job):
     url = f'{blue_api_base_url}/workflow_tag/job/failed/{job["reference_workflow_tag_id"]}'
-    request = urllib.request.Request(url=url, method='POST')
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
