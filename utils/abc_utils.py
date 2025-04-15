@@ -162,6 +162,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
                     logger.debug("TET created")
                 else:
                     logger.error(f"Failed to create TET (attempt {attempts}): {str(tet_data)}")
+            return True
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
@@ -169,7 +170,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
                 logger.error(f"novel_flag: {novel_flag}, negated: {negated}, confidence: {confidence_level}, tet_source_id: {tet_source_id}")
                 raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
             time.sleep(attempts)
-    return True
+    return False
 
 
 def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, entity: str, tet_source_id):
