@@ -163,10 +163,10 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         confidence_level = get_confidence_level(classification, conf_score)
 
         result = True
-        if classification > 0 or model_meta_data['no_data']:
+        if classification > 0 or model_meta_data['negated']:
             result = send_classification_tag_to_abc(reference_curie, species, topic,
                                                     negated=classification == 0,
-                                                    novel_flag=model_meta_data['novel_data'],
+                                                    novel_flag=model_meta_data['novel_topic_data'],
                                                     confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
@@ -195,7 +195,7 @@ def classify_mode(args: Namespace):
         try:
             process_classification_jobs(mod_id, topic, jobs, embedding_model)
         except Exception as e:
-            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
+            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}: {e}")
             failed = {'topic': topic,
                       'mod_abbreviation': mod_id,
                       'exception': str(e)}

@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 cache = {}
 
 
-
 def set_blue_api_base_url(value):
     global blue_api_base_url
     blue_api_base_url = value
