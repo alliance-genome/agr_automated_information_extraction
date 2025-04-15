@@ -164,6 +164,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 
         result = True
         if classification > 0 or model_meta_data['negated']:
+            logger.debug(f"novel_flag: {model_meta_data['novel_topic_data']} type: {type(model_meta_data['novel_topic_data'])}")
             result = send_classification_tag_to_abc(reference_curie, species, topic,
                                                     negated=classification == 0,
                                                     novel_flag=model_meta_data['novel_topic_data'],
