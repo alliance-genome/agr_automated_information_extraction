@@ -17,7 +17,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
-    get_cached_mod_species_map
+    get_cached_mod_species_map, set_blue_api_base_url
 from utils.get_documents import get_documents
 from utils.embedding import load_embedding_model, get_document_embedding
 
@@ -224,6 +224,7 @@ def main():
     args: Namespace = parse_arguments()
     configure_logging(args.log_level)
     if args.stage:
+        set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
     classify_mode(args)
 

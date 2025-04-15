@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 cache = {}
 
 
+
+def set_blue_api_base_url(value):
+    global blue_api_base_url
+    blue_api_base_url = value
+
+
 def get_mod_species_map():
     url = f'{blue_api_base_url}/mod/taxons/default'
     request = urllib.request.Request(url=url)
