@@ -255,8 +255,10 @@ def set_job_success(job):
         attempts += 1
         try:
             urllib.request.urlopen(request)
+            logger.debug("Successfully set job started")
             return True
-        except HTTPError:
+        except HTTPError as e:
+            logger.warning(f"Error setting to success for : {str(job)}: {e}")
             time.sleep(attempts)
 
     logger.error(f"Error setting job success after 3 attempts: {str(job)}")
