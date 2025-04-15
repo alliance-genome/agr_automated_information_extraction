@@ -167,8 +167,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             logger.debug(f"novel_flag: {model_meta_data['novel_topic_data']} type: {type(model_meta_data['novel_topic_data'])}")
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}'")
             result = send_classification_tag_to_abc(reference_curie, species, topic,
-                                                    negated=(classification == 0),
-                                                    novel_flag=model_meta_data['novel_topic_data'],
+                                                    negated=bool(classification == 0),
+                                                    novel_flag=bool(model_meta_data['novel_topic_data']),
                                                     confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
