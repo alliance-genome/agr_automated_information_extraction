@@ -17,7 +17,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
-    get_cached_mod_species_map
+    get_cached_mod_species_map, set_blue_api_base_url
 from utils.get_documents import get_documents
 from utils.embedding import load_embedding_model, get_document_embedding
 
@@ -163,10 +163,12 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         confidence_level = get_confidence_level(classification, conf_score)
 
         result = True
-        if classification > 0 or model_meta_data['no_data']:
+        if classification > 0 or model_meta_data['negated']:
+            logger.debug(f"novel_flag: {model_meta_data['novel_topic_data']} type: {type(model_meta_data['novel_topic_data'])}")
+            logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}'")
             result = send_classification_tag_to_abc(reference_curie, species, topic,
-                                                    negated=classification == 0,
-                                                    novel_flag=model_meta_data['novel_data'],
+                                                    negated=bool(classification == 0),
+                                                    novel_flag=bool(model_meta_data['novel_topic_data']),
                                                     confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
@@ -195,7 +197,7 @@ def classify_mode(args: Namespace):
         try:
             process_classification_jobs(mod_id, topic, jobs, embedding_model)
         except Exception as e:
-            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
+            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}: {e}")
             failed = {'topic': topic,
                       'mod_abbreviation': mod_id,
                       'exception': str(e)}
@@ -224,6 +226,7 @@ def main():
     args: Namespace = parse_arguments()
     configure_logging(args.log_level)
     if args.stage:
+        set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
     classify_mode(args)
 

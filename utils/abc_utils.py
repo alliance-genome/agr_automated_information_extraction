@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 cache = {}
 
 
+def set_blue_api_base_url(value):
+    global blue_api_base_url
+    blue_api_base_url = value
+
+
 def get_mod_species_map():
     url = f'{blue_api_base_url}/mod/taxons/default'
     request = urllib.request.Request(url=url)
@@ -157,6 +162,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
                     logger.debug("TET created")
                 else:
                     logger.error(f"Failed to create TET (attempt {attempts}): {str(tet_data)}")
+            return True
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
@@ -164,7 +170,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
                 logger.error(f"novel_flag: {novel_flag}, negated: {negated}, confidence: {confidence_level}, tet_source_id: {tet_source_id}")
                 raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
             time.sleep(attempts)
-    return True
+    return False
 
 
 def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, entity: str, tet_source_id):
@@ -204,10 +210,10 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
 
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
-    if args and args.mod:
-        jobs_url += f'&mod={args.mod}'
-    if args and args.reference:
-        jobs_url += f'&reference={args.reference}'
+    if args and args.mod_abbreviation:
+        jobs_url += f'&mod={args.mod_abbreviation}'
+    if args and args.reference_curie:
+        jobs_url += f'&reference={args.reference_curie}'
     if args and args.topic:
         jobs_url += f'&topic={args.topic}'
     request = urllib.request.Request(url=jobs_url)
@@ -224,7 +230,9 @@ def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, off
 
 def set_job_started(job):
     url = f'{blue_api_base_url}/workflow_tag/job/started/{job["reference_workflow_tag_id"]}'
-    request = urllib.request.Request(url=url, method='POST')
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
@@ -241,7 +249,10 @@ def set_job_started(job):
 
 def set_job_success(job):
     url = f'{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
-    request = urllib.request.Request(url=url, method='POST')
+    print(f"url for job success is {url}")
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
@@ -249,8 +260,10 @@ def set_job_success(job):
         attempts += 1
         try:
             urllib.request.urlopen(request)
+            logger.debug("Successfully set job started")
             return True
-        except HTTPError:
+        except HTTPError as e:
+            logger.warning(f"Error setting to success for : {str(job)}: {e}")
             time.sleep(attempts)
 
     logger.error(f"Error setting job success after 3 attempts: {str(job)}")
@@ -259,7 +272,9 @@ def set_job_success(job):
 
 def set_job_failure(job):
     url = f'{blue_api_base_url}/workflow_tag/job/failed/{job["reference_workflow_tag_id"]}'
-    request = urllib.request.Request(url=url, method='POST')
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
