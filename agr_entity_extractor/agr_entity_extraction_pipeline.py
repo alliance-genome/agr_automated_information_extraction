@@ -10,7 +10,8 @@ import requests
 from transformers import pipeline
 
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
-    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data
+    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
+    set_job_failure
 from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 fulltext = tei_obj.get_fulltext()
             except Exception as e:
                 logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
-                continue
+                set_job_started(job)
+                set_job_failure(job)
             try:
                 abstract = tei_obj.get_abstract()
             except Exception as e:
@@ -201,11 +203,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 else:
                     entity_curie = entity_extraction_model.name_to_curie_mapping[
                         entity_extraction_model.upper_to_original_mapping[entity]]
-                result = send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic,
-                                                entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
-                if result:
-                    set_job_started(job)
-                    set_job_success(job)
+                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic,
+                                       entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
+            set_job_started(job)
+            set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
 
 
