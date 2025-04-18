@@ -144,7 +144,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "species": species,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
-        "novel_data": novel_flag,
+        "novel_topic_data": novel_flag,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
