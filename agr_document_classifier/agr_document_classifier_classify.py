@@ -150,8 +150,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                                 mod_abbr, topic, tet_source_id, model_meta_data):
     logger.info("Sending classification tags to ABC.")
     species = get_cached_mod_species_map()[mod_abbr]
-    if species in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
-        species = model_meta_data[species]
+    if 'species' in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
+        species = model_meta_data['species']
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -164,7 +164,6 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 
         result = True
         if classification > 0 or model_meta_data['negated']:
-            logger.debug(f"novel_flag: {model_meta_data['novel_topic_data']} type: {type(model_meta_data['novel_topic_data'])}")
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}'")
             result = send_classification_tag_to_abc(reference_curie, species, topic,
                                                     negated=bool(classification == 0),
