@@ -249,7 +249,6 @@ def set_job_started(job):
 
 def set_job_success(job):
     url = f'{blue_api_base_url}/workflow_tag/job/success/{job["reference_workflow_tag_id"]}'
-    print(f"url for job success is {url}")
     token = get_authentication_token()
     headers = generate_headers(token)
     request = urllib.request.Request(url=url, method='POST', headers=headers)
