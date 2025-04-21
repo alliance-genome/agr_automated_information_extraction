@@ -70,7 +70,7 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
         job_batch = jobs_to_process[:classification_batch_size]
         reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
         jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
+        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
 
         os.makedirs("/data/agr_entity_extraction/to_extract", exist_ok=True)
@@ -157,7 +157,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
         job_batch = jobs_to_process[:classification_batch_size]
         reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
         jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
+        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         os.makedirs("/data/agr_entity_extraction/to_extract", exist_ok=True)
         logger.info("Cleaning up existing files in the to_extract directory")
