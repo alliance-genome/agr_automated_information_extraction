@@ -75,7 +75,7 @@ def dump_tet():
                     WHERE tet.date_created >= '{sql_date}'
                          AND cr.reference_id = tet.reference_id
                          AND cr.curie_prefix = 'PMID'
-                         AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214') 
+                         AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
                          order by tet.date_created desc"""
     print(query)
     rs = db_session.execute(text(query))
