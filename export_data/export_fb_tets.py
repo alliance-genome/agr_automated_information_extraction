@@ -88,14 +88,14 @@ def dump_tet():
     neg = ""
     for row in rows:
         if row[2] != 'NEG':
-            pos += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}"
+            pos += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}\n"
         else:
-            neg += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}"
+            neg += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}\n"
 
     if pos:
-        write_to_top('textmining_positive_ABC.txt', pos)
+        write_to_top('curation_status/textmining_positive_ABC.txt', pos)
     if neg:
-        write_to_top('textmining_negative_ABC.txt', neg)
+        write_to_top('curation_status/textmining_negative_ABC.txt', neg)
 
 
 if __name__ == "__main__":
