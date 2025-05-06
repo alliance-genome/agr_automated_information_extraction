@@ -45,12 +45,6 @@ def write_to_top(file_path, text_to_add):
         file.write(text_to_add + existing_content)
 
 
-# Example Usage
-file_path = "my_file.txt"
-text_to_prepend = "This is added to the top.\n"
-write_to_top(file_path, text_to_prepend)
-
-
 def dump_tet():
     conversions = {"NEG": 'neg',
                    "High": 'high',
@@ -76,13 +70,15 @@ def dump_tet():
 
     # Format the date for SQL (YYYY-MM-DD)
     sql_date = seven_days_ago.strftime('%Y-%m-%d')
-    rs = db_session.execute(text(f"SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie  "
-                                 f"FROM topic_entity_tag tet, cross_reference cr "
-                                 f"WHERE tet.date_created >= '{sql_date}' "
-                                 f"AND cr.reference_id = tet.reference_id "
-                                 f"AND cr.curie_prefix = 'PMID' "
-                                 f"AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214') "
-                                 f"order by tet.date_created desc"))
+    query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
+                  FROM topic_entity_tag tet, cross_reference cr
+                    WHERE tet.date_created >= '{sql_date}'
+                         AND cr.reference_id = tet.reference_id
+                         AND cr.curie_prefix = 'PMID'
+                         AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214') 
+                         order by tet.date_created desc"""
+    print(query)
+    rs = db_session.execute(text(query))
     rows = rs.fetchall()
     pos = ""
     neg = ""
