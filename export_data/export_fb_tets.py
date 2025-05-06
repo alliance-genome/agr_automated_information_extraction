@@ -42,6 +42,7 @@ def write_to_top(file_path, text_to_add):
         existing_content = ""
 
     with open(file_path, 'w') as file:
+        print(file.name())
         file.write(text_to_add + existing_content)
 
 
@@ -91,12 +92,12 @@ def dump_tet():
     if pos:
         print("Updating positive data")
         print(pos)
-        write_to_top('./textmining_positive_ABC.txt', pos)
+        write_to_top('./curation_status/textmining_positive_ABC.txt', pos)
     else:
         print("No positive data found")
     if neg:
         print("Updating negative data")
-        write_to_top('./textmining_negative_ABC.txt', neg)
+        write_to_top('./curation_status/textmining_negative_ABC.txt', neg)
     else:
         print("No negative data found")
 
