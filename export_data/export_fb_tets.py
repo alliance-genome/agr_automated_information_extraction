@@ -93,9 +93,15 @@ def dump_tet():
             neg += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}\n"
 
     if pos:
+        print("Updating positive data")
         write_to_top('textmining_positive_ABC.txt', pos)
+    else:
+        print("No positive data found")
     if neg:
+        print("Updating negative data")
         write_to_top('textmining_negative_ABC.txt', neg)
+    else:
+        print("No negative data found")
 
 
 if __name__ == "__main__":
