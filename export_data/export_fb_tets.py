@@ -1,5 +1,4 @@
 from sqlalchemy import text
-from os import getenv
 from os import environ
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -36,6 +35,7 @@ def create_postgres_session(verbose):
 
     return session
 
+
 def write_to_top(file_path, text_to_add):
     """Writes text to the top of a file, preserving existing content."""
     try:
@@ -52,6 +52,7 @@ def write_to_top(file_path, text_to_add):
 file_path = "my_file.txt"
 text_to_prepend = "This is added to the top.\n"
 write_to_top(file_path, text_to_prepend)
+
 
 def dump_tet():
     conversions = {"NEG": 'neg',
@@ -98,6 +99,7 @@ def dump_tet():
         write_to_top('textmining_positive_ABC.txt', pos)
     if neg:
         write_to_top('textmining_negative_ABC.txt', neg)
+
 
 if __name__ == "__main__":
     dump_tet()
