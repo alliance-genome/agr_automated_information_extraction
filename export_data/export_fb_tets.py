@@ -90,12 +90,13 @@ def dump_tet():
 
     if pos:
         print("Updating positive data")
-        write_to_top('textmining_positive_ABC.txt', pos)
+        print(pos)
+        write_to_top('./textmining_positive_ABC.txt', pos)
     else:
         print("No positive data found")
     if neg:
         print("Updating negative data")
-        write_to_top('textmining_negative_ABC.txt', neg)
+        write_to_top('./textmining_negative_ABC.txt', neg)
     else:
         print("No negative data found")
 
