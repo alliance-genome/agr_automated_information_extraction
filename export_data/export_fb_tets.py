@@ -42,7 +42,6 @@ def write_to_top(file_path, text_to_add):
         existing_content = ""
 
     with open(file_path, 'w') as file:
-        print(file.name())
         file.write(text_to_add + existing_content)
 
 
