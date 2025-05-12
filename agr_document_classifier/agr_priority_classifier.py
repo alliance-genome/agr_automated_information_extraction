@@ -30,7 +30,10 @@ from grobid_client.types import TEI, File
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 # from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
-from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
+from sklearn.metrics import precision_recall_fscore_support
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, RandomizedSearchCV, StratifiedKFold
 from sklearn.metrics import precision_recall_fscore_support
 
 from sklearn.linear_model import LogisticRegression
@@ -42,7 +45,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_review_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs, get_cached_mod_species_map
+    set_job_failure, load_all_jobs
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -90,155 +93,178 @@ def configure_logging(log_level):
     logger.addHandler(stream_handler)
 
 
-"""
-lightweight, resource-efficient version of train_classifier:
-define POSSIBLE_CLASSIFIERS inline to trim down the models
-without affecting the global/default configuration in the models.py.
-* n_iter from 100 to 10
-* cv folds from 5 to 3
-* n_jobs to 1
-* Limited the hyperparameter space
-limiting to just "Logistic Regression" and "Random Forest", we can reduce overhead while still
-covering two fundamentally different model types (linear and ensemble).
-This helps prevent Docker containers from being killed due to memory/CPU pressure.
-"""
+def _build_feature_matrix(
+    embedding_model,
+    training_data_dir: str,
+    weighted_average_word_embedding: bool,
+    standardize_embeddings: bool,
+    normalize_embeddings: bool,
+    sections_to_use: List[str] = None
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Load all docs under training_data_dir/{priority_1,priority_2,priority_3},
+    embed them, and return (X, y).
+    """
+    X, y = [], []
+    # map labels to ints
+    label_mapping = {"priority_1": 0, "priority_2": 1, "priority_3": 2}
 
-
-def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
-                     standardize_embeddings: bool = False, normalize_embeddings: bool = False,
-                     sections_to_use: List[str] = None):
-
-    embedding_model = load_embedding_model(model_path=embedding_model_path)
-
-    X = []
-    y = []
-
-    # Precompute word_to_index
+    # build word‐to‐index once
     if isinstance(embedding_model, KeyedVectors):
         word_to_index = embedding_model.key_to_index
     else:
-        word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
+        word_to_index = {w: i for i, w in enumerate(embedding_model.get_words())}
 
-    logger.info("Loading prioritization sets")
-    label_mapping = {"priority_1": 0, "priority_2": 1, "priority_3": 2}
     for label in ["priority_1", "priority_2", "priority_3"]:
-        documents = list(get_documents(os.path.join(training_data_dir, label)))
-        logger.info(f"Loading {len(documents)} documents for {label}")
-        for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
-            text = ""
+        docs = list(get_documents(os.path.join(training_data_dir, label)))
+        logger.info(f"  → loading {len(docs)} docs for {label}")
+        for _, (_, fulltext, title, abstract) in enumerate(docs, start=1):
+            # pick which sections to use
             if not sections_to_use:
                 text = fulltext
             else:
+                parts = []
                 if "title" in sections_to_use:
-                    text = title
-                if "fulltext" in sections_to_use:
-                    text += " " + fulltext
+                    parts.append(title)
                 if "abstract" in sections_to_use:
-                    text += " " + abstract
-            if text:
-                text = remove_stopwords(text)
-                text = text.lower()
-                text_embedding = get_document_embedding(
-                    embedding_model,
-                    text,
-                    weighted_average_word_embedding=weighted_average_word_embedding,
-                    standardize_embeddings=standardize_embeddings,
-                    normalize_embeddings=normalize_embeddings,
-                    word_to_index=word_to_index
-                )
-                X.append(text_embedding)
-                y.append(label_mapping[label])
+                    parts.append(abstract)
+                if "fulltext" in sections_to_use:
+                    parts.append(fulltext)
+                text = " ".join(parts)
 
-    del embedding_model
-    logger.info("Finished loading training set.")
-    logger.info(f"Dataset size: {len(X)}")
+            if not text:
+                continue
+
+            text = remove_stopwords(text).lower()
+            emb = get_document_embedding(
+                embedding_model,
+                text,
+                weighted_average_word_embedding=weighted_average_word_embedding,
+                standardize_embeddings=standardize_embeddings,
+                normalize_embeddings=normalize_embeddings,
+                word_to_index=word_to_index
+            )
+            X.append(emb)
+            y.append(label_mapping[label])
 
     X = np.array(X)
     y = np.array(y)
+    logger.info(f"Built feature matrix X.shape={X.shape}, y.shape={y.shape}")
+    return X, y
 
-    best_score = 0
-    best_classifier = None
-    best_params = None
-    best_classifier_name = ""
 
-    stratified_k_folds = StratifiedKFold(n_splits=3)
+def train_classifier(
+    embedding_model_path: str,
+    training_data_dir: str,
+    weighted_average_word_embedding: bool = False,
+    standardize_embeddings: bool = False,
+    normalize_embeddings: bool = False,
+    sections_to_use: List[str] = None,
+    test_size: float = 0.2,
+    n_iter: int = 20,
+    cv_folds: int = 3,
+    n_jobs: int = -1
+) -> Tuple[Pipeline, dict]:
 
-    POSSIBLE_CLASSIFIERS = {
+    # --- load embeddings + documents (unchanged) ---
+    embedding_model = load_embedding_model(model_path=embedding_model_path)
+    X, y = _build_feature_matrix(embedding_model, training_data_dir,
+                                 weighted_average_word_embedding,
+                                 standardize_embeddings,
+                                 normalize_embeddings,
+                                 sections_to_use)
+    del embedding_model
+
+    # hold out a test set
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=test_size, stratify=y, random_state=42
+    )
+    logger.info(f"Train size: {len(y_train)}, Test size: {len(y_test)}")
+
+    # --- define pipelines & search spaces ---
+    pipelines = {
+        'LogisticRegression': Pipeline([
+            ('scaler', StandardScaler()),
+            ('clf', LogisticRegression(max_iter=2000, class_weight='balanced', n_jobs=n_jobs))
+        ]),
+        'RandomForestClassifier': Pipeline([
+            ('scaler', StandardScaler(with_mean=False)),  # for sparse embeddings
+            ('clf', RandomForestClassifier(class_weight='balanced', n_jobs=n_jobs))
+        ]),
+    }
+
+    param_grids = {
         'LogisticRegression': {
-            'model': LogisticRegression(max_iter=1000),
-            'params': {
-                'C': [0.01, 0.1, 1.0],
-                'penalty': ['l2'],
-                'solver': ['saga']
-            }
+            'clf__C': [0.01, 0.1, 1.0, 10.0],
+            'clf__penalty': ['l2'],
+            'clf__solver': ['saga']
         },
         'RandomForestClassifier': {
-            'model': RandomForestClassifier(),
-            'params': {
-                'n_estimators': [10, 25, 50],
-                'max_depth': [5, 10, None],
-                'min_samples_split': [2, 5],
-                'min_samples_leaf': [1, 2]
-            }
+            'clf__n_estimators': [50, 100, 200],
+            'clf__max_depth': [5, 10, None],
+            'clf__min_samples_split': [2, 5],
+            'clf__min_samples_leaf': [1, 2]
         }
     }
 
-    logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
-    for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
-        logger.info(f"Evaluating model {classifier_name}.")
-        try:
-            random_search = RandomizedSearchCV(
-                estimator=classifier_info['model'],
-                n_iter=10,
-                param_distributions=classifier_info['params'],
-                cv=stratified_k_folds,
-                scoring='f1_macro',
-                refit=True,
-                verbose=1,
-                n_jobs=1
-            )
-            random_search.fit(X, y)
+    best_score = 0
+    best_pipeline = None
+    best_name = ""
+    best_params = {}
 
-            logger.info(f"Finished training model {classifier_name}. F1_macro score: {random_search.best_score_:.4f}")
+    skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=0)
 
-            if random_search.best_score_ > best_score:
-                best_score = random_search.best_score_
-                best_classifier = random_search.best_estimator_
-                best_params = random_search.best_params_
-                best_classifier_name = classifier_name
-        except Exception as e:
-            logger.exception(f"Model {classifier_name} failed during training: {str(e)}")
+    for name, pipe in pipelines.items():
+        logger.info(f"Searching {name}")
+        search = RandomizedSearchCV(
+            pipe,
+            param_grids[name],
+            n_iter=n_iter,
+            scoring='f1_macro',
+            cv=skf,
+            verbose=1,
+            n_jobs=n_jobs,
+            refit=True,
+            random_state=0
+        )
+        search.fit(X_train, y_train)
 
-    if not best_classifier:
-        raise RuntimeError("No classifier successfully trained.")
+        logger.info(f"{name} best CV macro-F1 = {search.best_score_:.4f}")
+        if search.best_score_ > best_score:
+            best_score    = search.best_score_
+            best_pipeline = search.best_estimator_
+            best_params   = search.best_params_
+            best_name     = name
 
-    logger.info(f"Selected model {best_classifier_name}.")
+    if best_pipeline is None:
+        raise RuntimeError("No valid model found during hyperparameter search.")
 
-    y_pred = best_classifier.predict(X)
-    per_class_precision, per_class_recall, per_class_f1, support = precision_recall_fscore_support(
-        y, y_pred, labels=[0, 1, 2], zero_division=0
+    # --- evaluate on hold-out test set ---
+    y_pred = best_pipeline.predict(X_test)
+    prec, rec, f1, supp = precision_recall_fscore_support(
+        y_test, y_pred, labels=[0,1,2], zero_division=0
     )
-    label_mapping_rev = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
-    per_class_scores = {
-        label_mapping_rev[i]: {
-            "precision": round(float(p), 3),
-            "recall": round(float(r), 3),
-            "f1": round(float(f), 3),
-            "support": int(support[i])
+    label_rev = {0: "priority_1", 1:"priority_2", 2:"priority_3"}
+    per_class = {
+        label_rev[i]: {
+            "precision": round(float(prec[i]),3),
+            "recall":    round(float(rec[i]),3),
+            "f1":        round(float(f1[i]),3),
+            "support":   int(supp[i])
         }
-        for i, (p, r, f) in enumerate(zip(per_class_precision, per_class_recall, per_class_f1))
+        for i in range(3)
     }
 
     stats = {
-        "model_name": best_classifier_name,
-        "average_f1_macro": round(float(best_score), 3),
+        "model_name": best_name,
+        "average_f1_macro": round(best_score, 3),
         "best_params": best_params,
-        "per_class_scores": per_class_scores,
-        "num_samples": len(y),
-        "labels": list(label_mapping_rev.values())
+        "per_class_scores": per_class,
+        "num_samples_train": len(y_train),
+        "num_samples_test": len(y_test),
+        "labels": list(label_rev.values())
     }
-
-    return best_classifier, stats
+    return best_pipeline, stats
 
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
@@ -500,7 +526,7 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
+        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
 
@@ -528,7 +554,6 @@ def prepare_classification_directory():
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id):
     logger.info("Sending classification tags to ABC.")
-    species = get_cached_mod_species_map()[mod_abbr]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -538,9 +563,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             set_job_failure(reference_curie_job_map[reference_curie])
             continue
         confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, species, topic,
+        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
                                                 negated=bool(classification == 0),
-                                                novel_flag=False,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
