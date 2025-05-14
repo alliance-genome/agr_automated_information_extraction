@@ -31,13 +31,16 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 # from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.metrics import precision_recall_fscore_support
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline as SkPipeline
 from sklearn.preprocessing import StandardScaler
+from imblearn.pipeline import Pipeline as ImbPipeline
+
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, StratifiedKFold
 from sklearn.metrics import precision_recall_fscore_support
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.svm import SVC
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
 # from models import POSSIBLE_CLASSIFIERS
@@ -91,6 +94,157 @@ def configure_logging(log_level):
     logger.handlers = []  # Clear any existing handlers
     logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
+
+
+"""
+lightweight, resource-efficient version of train_classifier:
+define POSSIBLE_CLASSIFIERS inline to trim down the models
+without affecting the global/default configuration in the models.py.
+* n_iter from 100 to 10
+* cv folds from 5 to 3
+* n_jobs to 1
+* Limited the hyperparameter space
+limiting to just "Logistic Regression" and "Random Forest", we can reduce overhead while still
+covering two fundamentally different model types (linear and ensemble).
+This helps prevent Docker containers from being killed due to memory/CPU pressure.
+"""
+
+
+def train_classifier_old(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
+                         standardize_embeddings: bool = False, normalize_embeddings: bool = False,
+                         sections_to_use: List[str] = None):
+
+    embedding_model = load_embedding_model(model_path=embedding_model_path)
+
+    X = []
+    y = []
+
+    # Precompute word_to_index
+    if isinstance(embedding_model, KeyedVectors):
+        word_to_index = embedding_model.key_to_index
+    else:
+        word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
+
+    logger.info("Loading prioritization sets")
+    label_mapping = {"priority_1": 0, "priority_2": 1, "priority_3": 2}
+    for label in ["priority_1", "priority_2", "priority_3"]:
+        documents = list(get_documents(os.path.join(training_data_dir, label)))
+        logger.info(f"Loading {len(documents)} documents for {label}")
+        for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
+            text = ""
+            if not sections_to_use:
+                text = fulltext
+            else:
+                if "title" in sections_to_use:
+                    text = title
+                if "fulltext" in sections_to_use:
+                    text += " " + fulltext
+                if "abstract" in sections_to_use:
+                    text += " " + abstract
+            if text:
+                text = remove_stopwords(text)
+                text = text.lower()
+                text_embedding = get_document_embedding(
+                    embedding_model,
+                    text,
+                    weighted_average_word_embedding=weighted_average_word_embedding,
+                    standardize_embeddings=standardize_embeddings,
+                    normalize_embeddings=normalize_embeddings,
+                    word_to_index=word_to_index
+                )
+                X.append(text_embedding)
+                y.append(label_mapping[label])
+
+    del embedding_model
+    logger.info("Finished loading training set.")
+    logger.info(f"Dataset size: {len(X)}")
+
+    X = np.array(X)
+    y = np.array(y)
+
+    best_score = 0
+    best_classifier = None
+    best_params = None
+    best_classifier_name = ""
+
+    stratified_k_folds = StratifiedKFold(n_splits=3)
+
+    POSSIBLE_CLASSIFIERS = {
+        'LogisticRegression': {
+            'model': LogisticRegression(max_iter=1000),
+            'params': {
+                'C': [0.01, 0.1, 1.0],
+                'penalty': ['l2'],
+                'solver': ['saga']
+            }
+        },
+        'RandomForestClassifier': {
+            'model': RandomForestClassifier(),
+            'params': {
+                'n_estimators': [10, 25, 50],
+                'max_depth': [5, 10, None],
+                'min_samples_split': [2, 5],
+                'min_samples_leaf': [1, 2]
+            }
+        }
+    }
+
+    logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
+    for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
+        logger.info(f"Evaluating model {classifier_name}.")
+        try:
+            random_search = RandomizedSearchCV(
+                estimator=classifier_info['model'],
+                n_iter=10,
+                param_distributions=classifier_info['params'],
+                cv=stratified_k_folds,
+                scoring='f1_macro',
+                refit=True,
+                verbose=1,
+                n_jobs=1
+            )
+            random_search.fit(X, y)
+
+            logger.info(f"Finished training model {classifier_name}. F1_macro score: {random_search.best_score_:.4f}")
+
+            if random_search.best_score_ > best_score:
+                best_score = random_search.best_score_
+                best_classifier = random_search.best_estimator_
+                best_params = random_search.best_params_
+                best_classifier_name = classifier_name
+        except Exception as e:
+            logger.exception(f"Model {classifier_name} failed during training: {str(e)}")
+
+    if not best_classifier:
+        raise RuntimeError("No classifier successfully trained.")
+
+    logger.info(f"Selected model {best_classifier_name}.")
+
+    y_pred = best_classifier.predict(X)
+    per_class_precision, per_class_recall, per_class_f1, support = precision_recall_fscore_support(
+        y, y_pred, labels=[0, 1, 2], zero_division=0
+    )
+    label_mapping_rev = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
+    per_class_scores = {
+        label_mapping_rev[i]: {
+            "precision": round(float(p), 3),
+            "recall": round(float(r), 3),
+            "f1": round(float(f), 3),
+            "support": int(support[i])
+        }
+        for i, (p, r, f) in enumerate(zip(per_class_precision, per_class_recall, per_class_f1))
+    }
+
+    stats = {
+        "model_name": best_classifier_name,
+        "average_f1_macro": round(float(best_score), 3),
+        "best_params": best_params,
+        "per_class_scores": per_class_scores,
+        "num_samples": len(y),
+        "labels": list(label_mapping_rev.values())
+    }
+
+    return best_classifier, stats
 
 
 def _build_feature_matrix(
@@ -162,109 +316,174 @@ def train_classifier(
     sections_to_use: List[str] = None,
     test_size: float = 0.2,
     n_iter: int = 20,
-    cv_folds: int = 3,
+    cv_folds: int = 5,
     n_jobs: int = -1
-) -> Tuple[Pipeline, dict]:
+) -> Tuple[ImbPipeline, dict]:
+    # 1) Load embeddings + build (X, y)
+    emb_model = load_embedding_model(model_path=embedding_model_path)
+    X, y = _build_feature_matrix(
+        emb_model, training_data_dir,
+        weighted_average_word_embedding,
+        standardize_embeddings,
+        normalize_embeddings,
+        sections_to_use
+    )
+    del emb_model
+    logger.info(f"Built feature matrix X.shape={X.shape}, y.shape={y.shape}")
 
-    # --- load embeddings + documents (unchanged) ---
-    embedding_model = load_embedding_model(model_path=embedding_model_path)
-    X, y = _build_feature_matrix(embedding_model, training_data_dir,
-                                 weighted_average_word_embedding,
-                                 standardize_embeddings,
-                                 normalize_embeddings,
-                                 sections_to_use)
-    del embedding_model
-
-    # hold out a test set
+    # 2) Stratified hold‐out split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, stratify=y, random_state=42
+        X, y,
+        test_size=test_size,
+        stratify=y,
+        shuffle=True,
+        random_state=0
     )
     logger.info(f"Train size: {len(y_train)}, Test size: {len(y_test)}")
 
-    # --- define pipelines & search spaces ---
+    # 3) Define pipelines (with oversampling)
     pipelines = {
-        'LogisticRegression': Pipeline([
+        'LogisticRegression': ImbPipeline([
+            ('ros', RandomOverSampler(random_state=0)),
             ('scaler', StandardScaler()),
-            ('clf', LogisticRegression(max_iter=2000, class_weight='balanced', n_jobs=n_jobs))
+            ('clf', LogisticRegression(
+                max_iter=2000,
+                class_weight='balanced',
+                random_state=0,
+                n_jobs=n_jobs
+            ))
         ]),
-        'RandomForestClassifier': Pipeline([
-            ('scaler', StandardScaler(with_mean=False)),  # for sparse embeddings
-            ('clf', RandomForestClassifier(class_weight='balanced', n_jobs=n_jobs))
+        'RandomForest': ImbPipeline([
+            ('ros', RandomOverSampler(random_state=0)),
+            ('clf', RandomForestClassifier(
+                class_weight='balanced',
+                random_state=0,
+                n_jobs=n_jobs
+            ))
+        ]),
+        'SVM': ImbPipeline([
+            ('ros', RandomOverSampler(random_state=0)),
+            ('scaler', StandardScaler()),
+            ('clf', SVC(
+                class_weight='balanced',
+                probability=True,
+                random_state=0
+            ))
+        ]),
+        'XGBoost': ImbPipeline([
+            ('ros', RandomOverSampler(random_state=0)),
+            ('clf', XGBClassifier(
+                use_label_encoder=False,
+                eval_metric='mlogloss',
+                random_state=0,
+                n_jobs=n_jobs
+            ))
+        ]),
+        'LightGBM': ImbPipeline([
+            ('ros', RandomOverSampler(random_state=0)),
+            ('clf', LGBMClassifier(
+                class_weight='balanced',
+                random_state=0,
+                n_jobs=n_jobs,
+                verbose=-1
+            ))
         ]),
     }
 
+    # 4) Hyperparameter grids
     param_grids = {
         'LogisticRegression': {
             'clf__C': [0.01, 0.1, 1.0, 10.0],
             'clf__penalty': ['l2'],
             'clf__solver': ['saga']
         },
-        'RandomForestClassifier': {
+        'RandomForest': {
             'clf__n_estimators': [50, 100, 200],
             'clf__max_depth': [5, 10, None],
             'clf__min_samples_split': [2, 5],
             'clf__min_samples_leaf': [1, 2]
-        }
+        },
+        'SVM': {
+            'clf__C': [0.1, 1, 10],
+            'clf__kernel': ['rbf', 'linear'],
+            'clf__gamma': ['scale', 'auto']
+        },
+        'XGBoost': {
+            'clf__n_estimators': [50, 100, 200],
+            'clf__learning_rate': [0.01, 0.1],
+            'clf__max_depth': [3, 5, 7]
+        },
+        'LightGBM': {
+            'clf__n_estimators': [50, 100],
+            'clf__learning_rate': [0.05, 0.1],
+            'clf__num_leaves': [31, 63],
+            'clf__min_data_in_leaf': [10, 20],
+            'clf__min_gain_to_split': [0.0, 0.01]
+        },
     }
 
-    best_score = 0
-    best_pipeline = None
-    best_name = ""
-    best_params = {}
-
+    # 5) RandomizedSearchCV over each pipeline
     skf = StratifiedKFold(n_splits=cv_folds, shuffle=True, random_state=0)
+    best_score = 0.0
+    best_pipe  = None
+    best_name  = None
+    best_params= None
 
     for name, pipe in pipelines.items():
         logger.info(f"Searching {name}")
         search = RandomizedSearchCV(
             pipe,
-            param_grids[name],
+            param_distributions=param_grids[name],
             n_iter=n_iter,
-            scoring='f1_macro',
             cv=skf,
+            scoring='f1_macro',
             verbose=1,
             n_jobs=n_jobs,
             refit=True,
             random_state=0
         )
         search.fit(X_train, y_train)
-
         logger.info(f"{name} best CV macro-F1 = {search.best_score_:.4f}")
+
         if search.best_score_ > best_score:
-            best_score    = search.best_score_
-            best_pipeline = search.best_estimator_
-            best_params   = search.best_params_
-            best_name     = name
+            best_score  = search.best_score_
+            best_pipe   = search.best_estimator_
+            best_name   = name
+            best_params = search.best_params_
 
-    if best_pipeline is None:
-        raise RuntimeError("No valid model found during hyperparameter search.")
+    if best_pipe is None:
+        raise RuntimeError("No classifier successfully trained.")
 
-    # --- evaluate on hold-out test set ---
-    y_pred = best_pipeline.predict(X_test)
+    # 6) Evaluate on hold‐out test set
+    y_pred = best_pipe.predict(X_test)
     prec, rec, f1, supp = precision_recall_fscore_support(
         y_test, y_pred, labels=[0,1,2], zero_division=0
     )
-    label_rev = {0: "priority_1", 1:"priority_2", 2:"priority_3"}
+    label_rev = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
     per_class = {
         label_rev[i]: {
-            "precision": round(float(prec[i]),3),
-            "recall":    round(float(rec[i]),3),
-            "f1":        round(float(f1[i]),3),
+            "precision": round(float(prec[i]), 3),
+            "recall":    round(float(rec[i]), 3),
+            "f1":        round(float(f1[i]), 3),
             "support":   int(supp[i])
         }
         for i in range(3)
     }
 
+    # 7) Aggregate stats
     stats = {
-        "model_name": best_name,
-        "average_f1_macro": round(best_score, 3),
-        "best_params": best_params,
-        "per_class_scores": per_class,
+        "model_name":        best_name,
+        "average_f1_macro":  round(best_score, 3),
+        "average_precision": round(float(np.mean(prec)),  3),
+        "average_recall":    round(float(np.mean(rec)),   3),
+        "best_params":       best_params,
+        "per_class_scores":  per_class,
         "num_samples_train": len(y_train),
-        "num_samples_test": len(y_test),
-        "labels": list(label_rev.values())
+        "num_samples_test":  len(y_test),
+        "labels":            list(label_rev.values())
     }
-    return best_pipeline, stats
+
+    return best_pipe, stats
 
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
