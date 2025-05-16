@@ -196,6 +196,17 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             all_entities = extract_all_entities(nlp_pipeline=nlp_pipeline, fulltext=fulltext, title=title,
                                                 abstract=abstract, entity_extraction_model=entity_extraction_model)
 
+            logger.info("Sending 'no data' tag to ABC.")
+            if not all_entities:
+                send_entity_tag_to_abc(
+                    reference_curie=curie,
+                    species=species,
+                    topic=topic,
+                    negated=True,
+                    tet_source_id=tet_source_id,
+                    novel_data=novel_data
+                )
+
             logger.info("Sending extracted entities as tags to ABC.")
             for entity in all_entities:
                 if entity in entity_extraction_model.name_to_curie_mapping:
@@ -203,7 +214,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 else:
                     entity_curie = entity_extraction_model.name_to_curie_mapping[
                         entity_extraction_model.upper_to_original_mapping[entity]]
-                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic,
+                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic, entity_type=topic,
                                        entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
             set_job_started(job)
             set_job_success(job)

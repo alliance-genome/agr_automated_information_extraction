@@ -6,7 +6,7 @@ import html
 import time
 import urllib.request
 from collections import defaultdict
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Dict, Union, Optional
 from urllib.error import HTTPError
 from argparse import Namespace
 import psycopg2
@@ -173,19 +173,19 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, entity: str, tet_source_id):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
-        "entity_type": topic,
+        "entity_type": entity_type,
         "entity_id_validation": "alliance",
         "entity": entity,
         "species": species,
         "topic_entity_tag_source_id": tet_source_id,
-        "negated": False,
+        "negated": negated,
         "novel_topic_data": novel_data,
         "confidence_level": None,
         "reference_curie": reference_curie,
