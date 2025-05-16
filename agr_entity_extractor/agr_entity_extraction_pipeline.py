@@ -202,8 +202,6 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                     reference_curie=curie,
                     species=species,
                     topic=topic,
-                    entity_type="",
-                    entity="",
                     negated=True,
                     tet_source_id=tet_source_id,
                     novel_data=novel_data
@@ -216,7 +214,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                 else:
                     entity_curie = entity_extraction_model.name_to_curie_mapping[
                         entity_extraction_model.upper_to_original_mapping[entity]]
-                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic,
+                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic, entity_type=topic,
                                        entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
             set_job_started(job)
             set_job_success(job)
