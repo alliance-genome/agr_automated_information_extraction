@@ -204,7 +204,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
                     topic=topic,
                     entity_type="",
                     entity="",
-                    negated = True,
+                    negated=True,
                     tet_source_id=tet_source_id,
                     novel_data=novel_data
                 )
