@@ -6,7 +6,7 @@ import html
 import time
 import urllib.request
 from collections import defaultdict
-from typing import List, Tuple, Dict, Union
+from typing import List, Tuple, Dict, Union, Optional
 from urllib.error import HTTPError
 from argparse import Namespace
 import psycopg2
