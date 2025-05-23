@@ -1,7 +1,5 @@
 """
-A single multiclass classifier (classifying directly into priority 1, 2, or 3).
-It uses RandomizedSearchCV to tune parameters and pick the best model based on macro F1 score.
-It then computes per-class precision/recall/f1 from the predicted multiclass outputs.
+LogisticRegression multiclass classifier
 """
 import argparse
 import copy
@@ -29,7 +27,6 @@ from grobid_client.models import Article, ProcessForm
 from grobid_client.types import TEI, File
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-# from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.metrics import precision_recall_fscore_support
 
@@ -37,12 +34,11 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
-# from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_review_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs, get_cached_mod_species_map
+    set_job_failure, load_all_jobs
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -56,20 +52,6 @@ root_data_path = "/data/agr_document_classifier/"
 logger = logging.getLogger(__name__)
 
 
-"""
-def configure_logging(log_level):
-    # Configure logging based on the log_level argument
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        stream=sys.stdout
-    )
-    global logger
-    logger = logging.getLogger(__name__)
-"""
-
-
 def configure_logging(log_level):
     logger = logging.getLogger(__name__)
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
@@ -79,29 +61,11 @@ def configure_logging(log_level):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    file_handler = logging.FileHandler("training_debug.log", mode="w")
-    file_handler.setFormatter(formatter)
-
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
 
-    logger.handlers = []  # Clear any existing handlers
-    logger.addHandler(file_handler)
+    logger.handlers = []
     logger.addHandler(stream_handler)
-
-
-"""
-lightweight, resource-efficient version of train_classifier:
-define POSSIBLE_CLASSIFIERS inline to trim down the models
-without affecting the global/default configuration in the models.py.
-* n_iter from 100 to 10
-* cv folds from 5 to 3
-* n_jobs to 1
-* Limited the hyperparameter space
-limiting to just "Logistic Regression" and "Random Forest", we can reduce overhead while still
-covering two fundamentally different model types (linear and ensemble).
-This helps prevent Docker containers from being killed due to memory/CPU pressure.
-"""
 
 
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
@@ -500,7 +464,7 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
+        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
 
@@ -528,7 +492,6 @@ def prepare_classification_directory():
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id):
     logger.info("Sending classification tags to ABC.")
-    species = get_cached_mod_species_map()[mod_abbr]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -538,9 +501,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             set_job_failure(reference_curie_job_map[reference_curie])
             continue
         confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, species, topic,
+        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
                                                 negated=bool(classification == 0),
-                                                novel_flag=False,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
