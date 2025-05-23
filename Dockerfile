@@ -14,6 +14,7 @@ ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
 ADD agr_entity_extractor/fit_and_upload_tfidf_vectorizer.py .
+ADD agr_entity_extractor/upload_string_matching_extractor.py .
 ADD agr_entity_extractor/models.py ./agr_entity_extractor/models.py
 ADD Makefile .
 ADD utils/ ./utils
