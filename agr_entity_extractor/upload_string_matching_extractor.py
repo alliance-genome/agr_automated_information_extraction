@@ -45,7 +45,12 @@ def main():
     def load_entities_dynamically_fnc():
         return get_all_curated_entities(
             mod_abbreviation=args.mod_abbreviation,
-            entity_type_str="gene" if args.topic == "ATP:0000005" else "allele"
+            entity_type_str=(
+                "gene" if args.topic == "ATP:0000005"
+                else "allele" if args.topic == "ATP:0000006"
+                else "strain" if args.topic == "ATP:0000027"
+                else "gene"
+            )
         )
 
     entities_to_extract, name_to_curie_mapping = load_entities_dynamically_fnc()
