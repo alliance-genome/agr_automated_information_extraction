@@ -1,12 +1,10 @@
 """
-two-step sequential binary classifier:
+SVM two-step sequential binary classifier:
 * Follow the ZFIN sequential binary workflow
   * Trains two separate binary classifiers:
     * One for priority_1 vs (priority_2 or priority_3)
     * Another for priority_3 vs (priority_1 or priority_2)
   * The final classification logic uses those two binary decisions to assign one of the three classes.
-* Doesn't require the multiclass RandomizedSearchCV logic.
-* Requires logging/tracking precision/recall/f1 per binary classifier, not per multiclass label.
 """
 import argparse
 import copy
@@ -34,20 +32,16 @@ from grobid_client.models import Article, ProcessForm
 from grobid_client.types import TEI, File
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
-# from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
-# from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 from sklearn.metrics import precision_recall_fscore_support
-
-from sklearn.linear_model import LogisticRegression
-# from sklearn.ensemble import RandomForestClassifier
+# from sklearn.linear_model import LogisticRegression
+from sklearn.svm import SVC
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
-# from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_review_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs, get_cached_mod_species_map
+    set_job_failure, load_all_jobs
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -61,20 +55,6 @@ root_data_path = "/data/agr_document_classifier/"
 logger = logging.getLogger(__name__)
 
 
-"""
-def configure_logging(log_level):
-    # Configure logging based on the log_level argument
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper(), logging.INFO),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S',
-        stream=sys.stdout
-    )
-    global logger
-    logger = logging.getLogger(__name__)
-"""
-
-
 def configure_logging(log_level):
     logger = logging.getLogger(__name__)
     logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
@@ -84,14 +64,10 @@ def configure_logging(log_level):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-    file_handler = logging.FileHandler("training_debug.log", mode="w")
-    file_handler.setFormatter(formatter)
-
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
 
     logger.handlers = []  # Clear any existing handlers
-    logger.addHandler(file_handler)
     logger.addHandler(stream_handler)
 
 
@@ -143,7 +119,16 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info("Training Priority 1 vs. (2 or 3) classifier")
     y1_binary = np.where(y == 0, 1, 0)  # 1 = priority_1, 0 = others
 
-    clf1 = LogisticRegression(max_iter=1000, solver='saga', penalty='l2', C=1.0)
+    # clf1 = LogisticRegression(max_iter=1000, solver='saga', penalty='l2', C=1.0)
+    # Classifier 1: priority_1 vs others, now using SVM
+    clf1 = SVC(
+        kernel='linear',       # or 'rbf'
+        C=1.0,
+        class_weight='balanced',
+        probability=True,
+        random_state=42
+    )
+
     clf1.fit(X, y1_binary)
     y1_pred = clf1.predict(X)
     precision1, recall1, f1_1, _ = precision_recall_fscore_support(y1_binary, y1_pred, average='binary')
@@ -152,7 +137,16 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info("Training Priority 3 vs. (1 or 2) classifier")
     y2_binary = np.where(y == 2, 1, 0)  # 1 = priority_3, 0 = others
 
-    clf2 = LogisticRegression(max_iter=1000, solver='saga', penalty='l2', C=1.0)
+    # clf2 = LogisticRegression(max_iter=1000, solver='saga', penalty='l2', C=1.0)
+    # Classifier 2: priority_3 vs others, also SVM
+    clf2 = SVC(
+        kernel='linear',
+        C=1.0,
+        class_weight='balanced',
+        probability=True,
+        random_state=42
+    )
+
     clf2.fit(X, y2_binary)
     y2_pred = clf2.predict(X)
     precision2, recall2, f1_2, _ = precision_recall_fscore_support(y2_binary, y2_pred, average='binary')
@@ -514,7 +508,7 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
+        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
 
@@ -542,7 +536,6 @@ def prepare_classification_directory():
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id):
     logger.info("Sending classification tags to ABC.")
-    species = get_cached_mod_species_map()[mod_abbr]
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -552,9 +545,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             set_job_failure(reference_curie_job_map[reference_curie])
             continue
         confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, species, topic,
+        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
                                                 negated=bool(classification == 0),
-                                                novel_flag=False,
                                                 confidence_level=confidence_level, tet_source_id=tet_source_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])

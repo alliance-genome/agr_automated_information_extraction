@@ -80,5 +80,7 @@ urllib3==2.3.0
 wrapt==1.16.0
 xgboost==2.1.0
 psycopg2-binary~=2.9.10
+lightgbm==4.6.0
+imbalanced-learn==0.13.0
 dill
 pandas
