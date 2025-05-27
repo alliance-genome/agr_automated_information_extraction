@@ -16,20 +16,8 @@ from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
 
-"""
-AGRKB:101000000641073 WB:WBPaper00061585
-AGRKB:101000000641132 WB:WBPaper00061646
-AGRKB:101000000641112 WB:WBPaper00061624
-AGRKB:101000000640598 WB:WBPaper00061063
-AGRKB:101000000641062 WB:WBPaper00061573
-AGRKB:101000000641018 WB:WBPaper00061521
-AGRKB:101000000640727 WB:WBPaper00061198
-AGRKB:101000000640813 WB:WBPaper00061297
-AGRKB:101000000639765 WB:WBPaper00060134
-AGRKB:101000000640768 WB:WBPaper00061245
-"""
 
-TARGET_ENTITIES = {
+STRAIN_TARGET_ENTITIES = {
     "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
     "AGRKB:101000000641132": ["EG4322", "GE24"],
     "AGRKB:101000000641112": ["N2", "EG6699", "JT734"],
@@ -61,8 +49,7 @@ TARGET_ENTITIES = {
     ]
 }
 
-"""
-{
+GENE_TARGET_ENTITIES = {
     "AGRKB:101000000634691": ["lov-3"],
     "AGRKB:101000000635145": ["his-58"],
     "AGRKB:101000000635933": ["spe-4", "spe-6", "spe-8", "swm-1", "zipt-7.1", "zipt-7.2"],
@@ -85,7 +72,6 @@ TARGET_ENTITIES = {
     "AGRKB:101000000638052": ["cept-1", "cept-2", "daf-22", "drp-1", "fat-1", "fat-2", "fat-3", "fat-4", "fat-6",
                               "fat-7", "fzo-1", "pcyt-1", "seip-1"],
 }
-"""
 
 
 def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
@@ -108,9 +94,14 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))
     entity_extraction_model.alliance_entities_loaded = True
 
-    best_threshold = 0.1
-    best_similarity = -1
-    thresholds = [i / 10.0 for i in range(1, 51)]
+    if topic == 'ATP:0000027':
+        best_threshold = 0.00
+        best_similarity = -1
+        thresholds = [-0.001, 0.0, 0.0005, 0.001, 0.0015, 0.002]
+    else:
+        best_threshold = 0.1
+        best_similarity = -1
+        thresholds = [i / 10.0 for i in range(1, 51)]
 
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
@@ -290,6 +281,8 @@ def extract_all_entities(nlp_pipeline, fulltext, entity_extraction_model, title,
 
 def main():
     parser = argparse.ArgumentParser(description='Extract biological entities from documents')
+    parser.add_argument("--tune-threshold", action="store_true",
+                        help="Run find_best_tfidf_threshold on all jobs (slow, for experimentation only)")
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
@@ -301,19 +294,23 @@ def main():
         stream=sys.stdout
     )
     mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
+    if args.tune_threshold:
+        for (mod_id, topic), jobs in mod_topic_jobs.items():
+            TARGET_ENTITIES = (
+                STRAIN_TARGET_ENTITIES
+                if topic == 'ATP:0000027'
+                else GENE_TARGET_ENTITIES
+            )
+            best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET_ENTITIES)
+            logger.info(f"Best TF-IDF threshold for {mod_id}/{topic}: {best}")
+        logger.info("Threshold tuning complete.")
+        return
+
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         process_entity_extraction_jobs(mod_id, topic, jobs)
     logger.info("Finished processing all entity extraction jobs.")
 
 
 if __name__ == '__main__':
-    # logging.basicConfig(
-    #     level=getattr(logging, "DEBUG", logging.INFO),
-    #     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    #     datefmt='%Y-%m-%d %H:%M:%S',
-    #     stream=sys.stdout
-    # )
-    # mod_topic_jobs = load_all_jobs("_extraction_job")
-    # for (mod_id, topic), jobs in mod_topic_jobs.items():
-    #     find_best_tfidf_threshold(mod_id, topic, jobs, TARGET_ENTITIES)
+
     main()
