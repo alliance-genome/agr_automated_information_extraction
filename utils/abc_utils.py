@@ -381,10 +381,10 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
         logger.error(e)
 
 
-def download_bib_data_for_need_review_references(output_dir: str, mod_abbreviation):
+def download_bib_data_for_need_prioritization_references(output_dir: str, mod_abbreviation):
     logger.info("Started retrieving bib data")
     os.makedirs(output_dir, exist_ok=True)
-    url = f"{blue_api_base_url}/sort/need_review?mod_abbreviation={mod_abbreviation}"
+    url = f"{blue_api_base_url}/sort/need_prioritization?mod_abbreviation={mod_abbreviation}"
     try:
         response = requests.get(url)
         if response.status_code == 200:
@@ -394,6 +394,7 @@ def download_bib_data_for_need_review_references(output_dir: str, mod_abbreviati
                 abstract = html.unescape(x['abstract'] or "")
                 with open(os.path.join(output_dir, reference_curie + ".txt"), "w") as out_file:
                     out_file.write(f"title|{title}\nabstract|{abstract}\n")
+                logger.info(f"{reference_curie}: the txt file is generated.")
         else:
             logger.info(f"Bib data not found for {url}: status code {response.status_code}")
     except requests.exceptions.RequestException as e:
@@ -590,6 +591,17 @@ def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, v
     else:
         logger.error(f"Failed to add entry to dataset: {response.text}")
         response.raise_for_status()
+
+
+def set_indexing_priority(ref_curie, mod_abbr, priority_name):
+    indexing_url = f"{blue_api_base_url}/workflow_tag/set_priority/{ref_curie}/{mod_abbr}/{priority_name}"
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    response = requests.post(indexing_url, headers=headers)
+    if response.status_code == 200:
+        logger.info(f"{ref_curie} is successfully set to {priority_name}")
+    else:
+        logger.error(f"Failed to set the indexing priority: {response.text}")
 
 
 def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False):

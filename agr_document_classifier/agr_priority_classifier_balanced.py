@@ -38,9 +38,9 @@ from imblearn.under_sampling import RandomUnderSampler
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
 from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
-    download_bib_data_for_need_review_references, set_job_success, get_tet_source_id, \
+    download_bib_data_for_need_prioritization_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs
+    set_job_failure, load_all_jobs, set_indexing_priority
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -55,8 +55,8 @@ logger = logging.getLogger(__name__)
 
 
 def configure_logging(log_level):
-    logger = logging.getLogger(__name__)
-    logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper(), logging.INFO))
 
     formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -66,8 +66,8 @@ def configure_logging(log_level):
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
 
-    logger.handlers = []  # Clear any existing handlers
-    logger.addHandler(stream_handler)
+    root_logger.handlers = []
+    root_logger.addHandler(stream_handler)
 
 
 def _build_feature_matrix(
@@ -244,7 +244,9 @@ def train_classifier(
 
     stats = {
         "model_name": best_name,
-        "average_f1_macro": round(best_score, 3),
+        "average_f1": round(best_score, 3),
+        "average_recall": None,
+        "average_precision": None,
         "best_params": best_params,
         "per_class_scores": per_class,
         "num_train": len(y_train),
@@ -391,10 +393,11 @@ def classify_from_csv_file(csv_path: str, mod_abbr: str, topic: str, embedding_m
     set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path, ref_curie_to_mod_curie)
 
 
-def classify_pretriage_papers(mod_abbr: str, topic: str, embedding_model_path: str):
-    output_dir = f"{root_data_path}pretriage_to_classify"
+def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_model_path: str):
+    output_dir = f"{root_data_path}new_to_classify"
+    shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
-    download_bib_data_for_need_review_references(output_dir, mod_abbr)
+    download_bib_data_for_need_prioritization_references(output_dir, mod_abbr)
 
     set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path)
 
@@ -428,6 +431,9 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
                 row.append(ref_curie_to_mod_curie.get(reference_id, ''))
             row.extend([label_mapping.get(label, 'unknown'), round(score, 4), valid])
             writer.writerow(row)
+            priority_name = label_mapping.get(label, 'unknown')
+            ref_curie = reference_id
+            set_indexing_priority(ref_curie, mod_abbr, priority_name)
 
     logger.info(f"Classification complete. Results saved to {results_file}")
 
@@ -484,7 +490,6 @@ def parse_arguments():
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
     parser.add_argument("--csv_file", type=str, required=False, help="Path to CSV file for flat classification input")
-    parser.add_argument("--need_review", action='store_true', help="classify the need_review papers")
 
     return parser.parse_args()
 
@@ -686,8 +691,7 @@ def main():
     args = parse_arguments()
     configure_logging(args.log_level)
 
-    logger = logging.getLogger(__name__)
-    logger.info(">>> Logging is working")
+    # logger = logging.getLogger(__name__)
 
     if args.mode == "classify":
         if hasattr(args, 'csv_file') and args.csv_file:
@@ -697,13 +701,11 @@ def main():
                 topic=args.datatype_train,
                 embedding_model_path=args.embedding_model_path
             )
-        elif args.need_review:
-            classify_pretriage_papers(
+        else:
+            classify_need_prioritization_papers(
                 mod_abbr=args.mod_train,
                 topic=args.datatype_train,
                 embedding_model_path=args.embedding_model_path)
-        else:
-            classify_mode(args)
     else:
         train_mode(args)
 
