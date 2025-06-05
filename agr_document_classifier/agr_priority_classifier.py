@@ -208,7 +208,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
     model_path = f"{root_data_path}training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
-    upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
+    upload_ml_model("biocuration_pretriage_priority_classification", mod_abbreviation=mod_abbreviation, topic=topic,
                     model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
 
@@ -446,11 +446,11 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
                                       source_description="Alliance document classification pipeline using machine "
                                                          "learning to identify papers of interest for curation data "
                                                          "types")
-    classifier_file_path = (f"{root_data_path}biocuration_topic_classification_{mod_abbr}_"
+    classifier_file_path = (f"{root_data_path}biocuration_pretriage_priority_classification_{mod_abbr}_"
                             f"{topic.replace(':', '_')}_classifier.joblib")
     try:
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
-                           task_type="biocuration_topic_classification")
+                           task_type="biocuration_pretriage_priority_classification")
         logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
@@ -571,7 +571,7 @@ def upload_pre_existing_model(args, training_set):
     stats["average_precision"] = stats["precision"]
     stats["average_recall"] = stats["recall"]
     stats["average_f1"] = stats["f1_score"]
-    upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
+    upload_ml_model(task_type="biocuration_pretriage_priority_classification", mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
                     model_path=f"{root_data_path}training/{args.mod_train}_"
                                f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
