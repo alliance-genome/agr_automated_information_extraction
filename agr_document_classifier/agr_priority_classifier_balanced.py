@@ -397,9 +397,15 @@ def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_mod
     output_dir = f"{root_data_path}new_to_classify"
     shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
+
+    # Fetch all “need prioritization” papers into output_dir
     download_bib_data_for_need_prioritization_references(output_dir, mod_abbr)
 
-    set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path)
+    # Only proceed if at least one file was downloaded
+    if os.listdir(output_dir):
+        set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path)
+    else:
+        logger.info(f"No papers to classify for MOD '{mod_abbr}'.")
 
 
 def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embedding_model_path: str, ref_curie_to_mod_curie: dict = None):
