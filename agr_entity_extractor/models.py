@@ -53,31 +53,26 @@ class CustomTokenizer(PreTrainedTokenizer):
         self.unknown_token_id = self.unk_token_id
 
     def add_tokens(self, new_tokens):
-        self.tokens = list(set(self.tokens + new_tokens))
-        tokens_to_match = self.tokens
-        vocab_tokens = self.tokens.copy()
-        if self.match_uppercase_entities:
-            tokens_to_match.extend([token.upper() for token in self.tokens])
-            vocab_tokens.extend([token.upper() for token in self.tokens])
-        tokens_to_match = list(set(tokens_to_match))
+        # keep your master list up to date
+        self.tokens = list({*self.tokens, *new_tokens})
 
-        # Sort by length (longest first) and add word boundaries to prevent substring matching
-        # Use custom boundaries that treat underscores as boundaries
-        sorted_entities = sorted(tokens_to_match, key=len, reverse=True)
-        escaped_entities = [rf"(?<![a-zA-Z0-9]){re.escape(entity)}(?![a-zA-Z0-9])" for entity in sorted_entities]
-        pattern_entities = "|".join(escaped_entities)
-        # More selective fallback: only alphanumeric words, no hyphens unless it's a C. elegans gene pattern
-        fallback_pattern = r"\b(?:[a-zA-Z]+\d*(?:-\d+)?|\w+)\b"
-        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})")
-        self.update_vocab(vocab_tokens)
+        # 1) sort longest first so 'PD1074' wins over 'PD4482'
+        to_match = sorted(self.tokens, key=len, reverse=True)
+        if self.match_uppercase_entities:
+            to_match += [t.upper() for t in to_match]
+
+        # 2) build one regex that ONLY matches those exact codes, bounded by non-alphanumerics
+        esc = [re.escape(tok) for tok in to_match]
+        pat = r'(?<![A-Za-z0-9])(' + '|'.join(esc) + r')(?![A-Za-z0-9])'
+        flags = re.IGNORECASE if self.match_uppercase_entities else 0
+        self.pattern = re.compile(pat, flags)
+
+        # 3) rebuild vocab for convert_ids↔tokens
+        self.update_vocab(self.tokens)
 
     def _tokenize(self, text, *args, **kwargs):
-        # Use the simple tokenizer logic.
-        tokens = []
-        for match in re.finditer(self.pattern, text):
-            token = match.group(1) or match.group(2)
-            tokens.append(token)
-        return tokens
+        # only ever emit the exact curated codes
+        return [m.group(1) for m in self.pattern.finditer(text)]
 
     def tokenize(self, text, *args, **kwargs):
         # Wrapper for backward compatibility
