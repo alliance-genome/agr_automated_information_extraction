@@ -115,43 +115,44 @@ def test_gene_name_extraction(simple_extractor):
 
 # Test data from realistic TEI files
 MIRNA_PAPER_TEXT = """
-An interplay of miRNA abundance and target site architecture determines 
-miRNA activity and specificity. MicroRNAs often occur in families whose 
-members share an identical 5 terminal 'seed' sequence. Using the let-7 
-miRNA family in Caenorhabditis elegans, we find that seed match 
-imperfections can increase specificity by requiring extensive pairing 
-outside the miRNA seed region for efficient silencing. let-7 ensures 
-proper development of C. elegans by repressing one crucial target, lin-41, 
-whose 3' UTR contains two functional let-7 binding sites. Both sites 
-contain imperfect seed-matches, which yield a bulged-out nucleotide and 
-a G:U wobble base-pair respectively. Moreover, both sites exhibit extensive 
-complementarity to the seed-distal sequence of let-7 but to none of its 
-sisters mir-48, mir-84, and mir-241. The transgenic unc-54 + miRNA sites 
-reporter strains were obtained by single-copy integration. Both reporters 
-are driven by the ubiquitous and constitutively active dpy-30 promoter and 
-contain the unc-54 3' UTR. Wild-type worms were injected with 
-strain-specific constructs including dpy-10 co-crispr mix. The 
-lin-41(xe83[perfect]) allele differs from the wildtype allele in two 
+An interplay of miRNA abundance and target site architecture determines
+miRNA activity and specificity. MicroRNAs often occur in families whose
+members share an identical 5 terminal 'seed' sequence. Using the let-7
+miRNA family in Caenorhabditis elegans, we find that seed match
+imperfections can increase specificity by requiring extensive pairing
+outside the miRNA seed region for efficient silencing. let-7 ensures
+proper development of C. elegans by repressing one crucial target, lin-41,
+whose 3' UTR contains two functional let-7 binding sites. Both sites
+contain imperfect seed-matches, which yield a bulged-out nucleotide and
+a G:U wobble base-pair respectively. Moreover, both sites exhibit extensive
+complementarity to the seed-distal sequence of let-7 but to none of its
+sisters mir-48, mir-84, and mir-241. The transgenic unc-54 + miRNA sites
+reporter strains were obtained by single-copy integration. Both reporters
+are driven by the ubiquitous and constitutively active dpy-30 promoter and
+contain the unc-54 3' UTR. Wild-type worms were injected with
+strain-specific constructs including dpy-10 co-crispr mix. The
+lin-41(xe83[perfect]) allele differs from the wildtype allele in two
 nucleotides.
 """
 
 SPERM_PAPER_TEXT = """
-The zinc transporter ZIPT-7.1 regulates sperm activation in nematodes. 
-The zipt-7.1 mutant hermaphrodites cannot self-fertilize, and males 
-reproduce poorly, because mutant spermatids are defective in responding 
-to activating signals. C. elegans strains were derived from Bristol N2. 
-They include fog-1(q253) I, glp-4(bn2) I, rrf-1(pk1417) I, 
-Dsp2/spe-8(hc53) dpy-5 I, spe-6(hc163) dpy-18(e364) III, dpy-13(e184) IV, 
-zipt-7.1(hc130) IV, zipt-7.1(ok971) IV, zipt-7.1(as42) IV, fem-3(q96) IV, 
-fem-1(hc17) IV, swm-1(ok1193) V, him-5(e1490) V, and fog-2(q71) V. Dpy 
-hermaphrodites from the strain hc130 dpy-13(e184)/nT1 were crossed with 
-N2 males to separate the hc130 allele from dpy-13. Next, sterile, non-Dpy 
-hermaphrodites isolated from the F2 were crossed with males from the 
-polymorphic strain CB4856. The zipt-7.1 gene is expressed in the germ line 
-and functions in germ cells to promote sperm activation. Genetic epistasis 
-places zipt-7.1 at the end of the spe-8 sperm activation pathway, and 
+The zinc transporter ZIPT-7.1 regulates sperm activation in nematodes.
+The zipt-7.1 mutant hermaphrodites cannot self-fertilize, and males
+reproduce poorly, because mutant spermatids are defective in responding
+to activating signals. C. elegans strains were derived from Bristol N2.
+They include fog-1(q253) I, glp-4(bn2) I, rrf-1(pk1417) I,
+Dsp2/spe-8(hc53) dpy-5 I, spe-6(hc163) dpy-18(e364) III, dpy-13(e184) IV,
+zipt-7.1(hc130) IV, zipt-7.1(ok971) IV, zipt-7.1(as42) IV, fem-3(q96) IV,
+fem-1(hc17) IV, swm-1(ok1193) V, him-5(e1490) V, and fog-2(q71) V. Dpy
+hermaphrodites from the strain hc130 dpy-13(e184)/nT1 were crossed with
+N2 males to separate the hc130 allele from dpy-13. Next, sterile, non-Dpy
+hermaphrodites isolated from the F2 were crossed with males from the
+polymorphic strain CB4856. The zipt-7.1 gene is expressed in the germ line
+and functions in germ cells to promote sperm activation. Genetic epistasis
+places zipt-7.1 at the end of the spe-8 sperm activation pathway, and
 ZIPT-7.1 binds SPE-4, a presenilin that regulates sperm activation.
 """
+
 
 def test_realistic_mirna_entities_extraction(realistic_extractor):
     """Test entity extraction from realistic miRNA paper text."""
@@ -285,12 +286,12 @@ def test_comprehensive_entity_coverage(realistic_extractor):
     """Test extractor covers comprehensive range of C. elegans entities."""
     # Test text covering different entity types
     comprehensive_text = """
-    In this study, we used C. elegans strain N2 and the Hawaiian 
-    strain CB4856. We examined sperm genes including spe-8, spe-6, 
-    spe-4, and zipt-7.1. Fertility genes fog-1, fog-2, fem-3, and 
-    glp-4 were also analyzed. The let-7 miRNA family members mir-48, 
-    mir-84, and mir-241 regulate lin-41. Reporter constructs used 
-    unc-54 and dpy-30 promoters. Mutant alleles included him-5(e1490), 
+    In this study, we used C. elegans strain N2 and the Hawaiian
+    strain CB4856. We examined sperm genes including spe-8, spe-6,
+    spe-4, and zipt-7.1. Fertility genes fog-1, fog-2, fem-3, and
+    glp-4 were also analyzed. The let-7 miRNA family members mir-48,
+    mir-84, and mir-241 regulate lin-41. Reporter constructs used
+    unc-54 and dpy-30 promoters. Mutant alleles included him-5(e1490),
     dpy-13(e184), and zipt-7.1(hc130).
     """
 
