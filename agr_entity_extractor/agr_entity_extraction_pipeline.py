@@ -253,6 +253,10 @@ def main():
                         default='INFO', help="Set the logging level")
     parser.add_argument("-s", "--stage", action="store_true",
                         help="Only run for on stage.", required=False)
+    parser.add_argument("-f", "--reference_curie", type=str, help="Only run for this reference.", required=False)
+    parser.add_argument("-m", "--mod_abbreviation", type=str, help="Only run for this mod.", required=False)
+    parser.add_argument("-t", "--topic", type=str, help="Only run for this topic.", required=False)
+
     args = parser.parse_args()
     if args.stage:
         set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
