@@ -11,7 +11,7 @@ from transformers import pipeline
 
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
     download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
-    set_job_failure
+    set_job_failure, set_blue_api_base_url
 from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
@@ -129,7 +129,7 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     return best_threshold
 
 
-def process_entity_extraction_jobs(mod_id, topic, jobs):
+def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_entity_extractor",
                                       source_description="Alliance entity extraction pipeline using machine learning "
@@ -219,6 +219,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):
             set_job_started(job)
             set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
+        if os.path.isfile('/data/agr_entity_extraction/stop_extraction'):
+            logger.info("Stopping Extraction due to time limit (stop file exists)")
+            os.remove('/data/agr_entity_extraction/stop_extraction')
+            break
 
 
 def extract_all_entities(nlp_pipeline, fulltext, entity_extraction_model, title, abstract):
@@ -247,7 +251,13 @@ def main():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
+    parser.add_argument("-s", "--stage", action="store_true",
+                        help="Only run for on stage.", required=False)
     args = parser.parse_args()
+    if args.stage:
+        set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
+        os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
+
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -261,13 +271,4 @@ def main():
 
 
 if __name__ == '__main__':
-    # logging.basicConfig(
-    #     level=getattr(logging, "DEBUG", logging.INFO),
-    #     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    #     datefmt='%Y-%m-%d %H:%M:%S',
-    #     stream=sys.stdout
-    # )
-    # mod_topic_jobs = load_all_jobs("_extraction_job")
-    # for (mod_id, topic), jobs in mod_topic_jobs.items():
-    #     find_best_tfidf_threshold(mod_id, topic, jobs, TARGET_ENTITIES)
     main()
