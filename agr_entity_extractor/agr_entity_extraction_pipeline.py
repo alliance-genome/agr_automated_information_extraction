@@ -129,7 +129,7 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     return best_threshold
 
 
-def process_entity_extraction_jobs(mod_id, topic, jobs):  #noqa C901
+def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_entity_extractor",
                                       source_description="Alliance entity extraction pipeline using machine learning "
