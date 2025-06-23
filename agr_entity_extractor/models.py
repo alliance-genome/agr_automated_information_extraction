@@ -34,7 +34,6 @@ class CustomTokenizer(PreTrainedTokenizer):
         self.unk_token = "[UNK]"
         self.vocab = {self.unk_token: 0}
         self.add_tokens(tokens)
-        self.update_vocab(self.tokens)
         # Set explicit unknown token id.
         self.unk_token_id = self.vocab[self.unk_token]
         # Some parts of the pipeline might look for `unknown_token_id`
@@ -54,24 +53,30 @@ class CustomTokenizer(PreTrainedTokenizer):
         self.unknown_token_id = self.unk_token_id
 
     def add_tokens(self, new_tokens):
-        self.tokens = list(set(self.tokens + new_tokens))
-        tokens_to_match = self.tokens
+        # keep your master list up to date
+        self.tokens = list({*self.tokens, *new_tokens})
+
+        # 1) sort longest first so 'PD1074' wins over 'PD4482'
+        to_match = sorted(self.tokens, key=len, reverse=True)
         if self.match_uppercase_entities:
-            tokens_to_match.extend([token.upper() for token in self.tokens])
-        tokens_to_match = list(set(tokens_to_match))
-        escaped_entities = [re.escape(entity) for entity in sorted(tokens_to_match, key=len, reverse=True)]
-        pattern_entities = "|".join(escaped_entities)
-        fallback_pattern = r"\b\w+(?:[-']\w+)*\b"
-        self.pattern = re.compile(f"({pattern_entities})|({fallback_pattern})")
-        self.update_vocab(new_tokens)
+            to_match += [t.upper() for t in to_match]
+
+        # 2) build one regex that ONLY matches those exact codes, bounded by non-alphanumerics
+        esc = [re.escape(tok) for tok in to_match]
+        pat = r'(?<![A-Za-z0-9])(' + '|'.join(esc) + r')(?![A-Za-z0-9])'
+        flags = re.IGNORECASE if self.match_uppercase_entities else 0
+        self.pattern = re.compile(pat, flags)
+
+        # 3) rebuild vocab for convert_ids↔tokens
+        self.update_vocab(self.tokens)
 
     def _tokenize(self, text, *args, **kwargs):
-        # Use the simple tokenizer logic.
-        tokens = []
-        for match in re.finditer(self.pattern, text):
-            token = match.group(1) or match.group(2)
-            tokens.append(token)
-        return tokens
+        # only ever emit the exact curated codes
+        return [m.group(1) for m in self.pattern.finditer(text)]
+
+    def tokenize(self, text, *args, **kwargs):
+        # Wrapper for backward compatibility
+        return self._tokenize(text, *args, **kwargs)
 
     def __call__(self, text, *args, **kwargs):
         tokens = self._tokenize(text)

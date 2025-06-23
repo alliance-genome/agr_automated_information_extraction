@@ -650,6 +650,15 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         "aggregations": [],
         "nonNullFieldsTable": []
     }
+    if entity_type_str in ["strain", "genotype", "fish"]:
+        params["searchFilters"]["subtypeFilter"] = {
+            "subtype.name": {
+                "queryString": entity_type_str,
+                "tokenOperator": "OR"
+            }
+        }
+        entity_type_str = "agm"
+
     current_page = 0
     while True:
         logger.info(f"Fetching page {current_page} of entities from A-team API")
@@ -669,10 +678,15 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         for result in resp_obj['results']:
             if result['obsolete'] or result['internal']:
                 continue
-            entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
-            if entity_name:
-                all_curated_entity_names.append(entity_name)
-                entity_name_curie_mappings[entity_name] = result['primaryExternalId']
+            entity_name = None
+            if entity_type_str == "agm":
+                if 'agmFullName' in result and 'displayText' in result['agmFullName']:
+                    entity_name = result['agmFullName']['displayText']
+                else:
+                    entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
+                if entity_name:
+                    all_curated_entity_names.append(entity_name)
+                    entity_name_curie_mappings[entity_name] = result['primaryExternalId']
         current_page += 1
     return all_curated_entity_names, entity_name_curie_mappings
 
