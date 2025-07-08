@@ -25,7 +25,7 @@ extract_entities:
 	docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_entity_extractor.py
 
 extraction_build_full:
-    docker build -f Dockerfile_Base -t entity_extraction_base
+    docker build . -f Dockerfile_Base -t entity_extraction_base
     docker build . -t agr_automated_information_extraction
 
 extraction_build:
