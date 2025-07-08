@@ -30,17 +30,33 @@ import requests
 import xmltodict
 
 from retry import retry
-from agr_entity_extractor.bert_entity_extraction.gene_finding import get_genes
-from agr_entity_extractor.bert_entity_extraction.gene_finding import deep_learning
+from gene_finding import get_genes
+from gene_finding import deep_learning
 from utils.abc_utils import (load_all_jobs, set_blue_api_base_url)
 #, get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
-from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
+# from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
 
+parser = argparse.ArgumentParser(description='Extract biological entities from documents using Bert model')
+parser.add_argument("-l", "--log_level", type=str,
+                    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+                    default='INFO', help="Set the logging level")
+parser.add_argument("-s", "--stage", action="store_true",
+                    help="Only run for on stage.", required=False)
+parser.add_argument("-f", "--reference_curie", type=str,
+                    help="Only run for this reference.", required=False)
+parser.add_argument("-t", "--topic", type=str,
+                    help="Only run for this topic.", required=False)
+parser.add_argument("-m", "--mod_abbreviation", type=str,
+                    default="FB", help="Only run for FB.")
+parser.add_argument("-c", "---config_file", type=str,
+                    default="/usr/src/app/bert_entity_extraction/config.ini",
+                    help="Config file for FlyBert")
+
+args = parser.parse_args()
+config_parser = configparser.ConfigParser()
+config_parser.read(args.config_file)
 
 logger = logging.getLogger(__name__)
-
-config_parser = configparser.ConfigParser()
-config_parser.read("config/config.ini")
 
 #get pmid to pmcid pickle dictionary
 #with open(config_parser.get('PICKLES','PMC_ids_dict'), "rb") as f:
@@ -120,16 +136,19 @@ def get_pmcids_for_references(jobs):
                FROM cross_reference
                 WHERE curie_prefix = 'PMCID'
                      AND reference_id in ({','.join(refs)})"""
+    return sql
 
-
-def get_data_from_alliance_db(args):
+def get_data_from_alliance_db():
+    """
+    Get jobs to run.
+    Get pmc to reference_id for those jobs
+    """
     input_list = []
-    pmc_to_ref = {}
     jobs = {}
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
     for (mod_id, topic), jobs in mod_topic_jobs.items():
-        for job in jobs:
-            print(f"job {job}")
+        print(f"mod_id = {mod_id}, topic = {topic}, first job {jobs[0]}")
+    pmc_to_ref = get_pmcids_for_references(jobs)
     return input_list, jobs, pmc_to_ref
 
 
@@ -155,17 +174,6 @@ def removeFiles(pmcid: str):
         pass
 
 def main():
-    parser = argparse.ArgumentParser(description='Extract biological entities from documents using Bert model')
-    parser.add_argument("-l", "--log_level", type=str,
-                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-                        default='INFO', help="Set the logging level")
-    parser.add_argument("-s", "--stage", action="store_true",
-                        help="Only run for on stage.", required=False)
-    parser.add_argument("-f", "--reference_curie", type=str, help="Only run for this reference.", required=False)
-    parser.add_argument("-m", "--mod_abbreviation", type=str, help="Only run for this mod.", required=False)
-    parser.add_argument("-t", "--topic", type=str, help="Only run for this topic.", required=False)
-
-    args = parser.parse_args()
     if args.stage:
         set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
@@ -176,7 +184,8 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    input_list, pmc_to_ref, jobs = get_data_from_alliance_db(args)
+    input_list, pmc_to_ref, jobs = get_data_from_alliance_db()
+    print(f"Number of jobs: {len(jobs)}, {pmc_to_ref}")
     exit()
 
     #unpickle gene dictionary
