@@ -503,7 +503,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         confidence_level = get_confidence_level(classification, conf_score)
         result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
                                                 negated=bool(classification == 0),
-                                                confidence_level=confidence_level, tet_source_id=tet_source_id)
+                                                confidence_score=conf_score,
+                                                confidence_level=confidence_level,
+                                                tet_source_id=tet_source_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
             set_job_success(reference_curie_job_map[reference_curie])
