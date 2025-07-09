@@ -53,6 +53,7 @@ parser.add_argument("-c", "---config_file", type=str,
                     help="Config file for FlyBert")
 
 args = parser.parse_args()
+print(args)
 config_parser = configparser.ConfigParser()
 config_parser.read(args.config_file)
 
@@ -131,11 +132,17 @@ def getXmlFromTar(pmcid: str):
 
 def get_pmcids_for_references(jobs):
     """Look up pmc_ids for the reference in the jobs."""
-    refs = [j['reference_id'] for j in jobs]
-    sql = f"""SELECT reference_id, cross_reference_id
-               FROM cross_reference
-                WHERE curie_prefix = 'PMCID'
-                     AND reference_id in ({','.join(refs)})"""
+    refs = [str(j['reference_id']) for j in jobs]
+
+    if refs:
+        print(f"refs is {refs[:5]}")
+        sql = f"""SELECT reference_id, cross_reference_id
+                   FROM cross_reference
+                    WHERE curie_prefix = 'PMCID'
+                         AND reference_id in ({','.join(refs)})"""
+        # print(sql)
+    else:
+        print("No jobs to process")
     return sql
 
 def get_data_from_alliance_db():
@@ -145,10 +152,12 @@ def get_data_from_alliance_db():
     """
     input_list = []
     jobs = {}
+    print(f"ARGS: {args}")
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
+    pmc_to_ref = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         print(f"mod_id = {mod_id}, topic = {topic}, first job {jobs[0]}")
-    pmc_to_ref = get_pmcids_for_references(jobs)
+        pmc_to_ref = get_pmcids_for_references(jobs)
     return input_list, jobs, pmc_to_ref
 
 
@@ -185,7 +194,7 @@ def main():
         stream=sys.stdout
     )
     input_list, pmc_to_ref, jobs = get_data_from_alliance_db()
-    print(f"Number of jobs: {len(jobs)}, {pmc_to_ref}")
+    print(f"Number of jobs: {len(jobs)}")
     exit()
 
     #unpickle gene dictionary

@@ -1,4 +1,4 @@
-FROM entity_extraction_base
+FROM agr_document_classifier_base
 
 ENV TZ=UTC
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
