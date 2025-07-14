@@ -133,7 +133,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
-                                   novel_flag: bool, confidence_score: float, confidence_level: str, tet_source_id):
+                                   novel_flag: bool, confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
@@ -145,7 +145,6 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "novel_topic_data": novel_flag,
-        "confidence_score": confidence_score,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
@@ -167,9 +166,8 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
-                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, novel_flag: {novel_flag}, ")
-                logger.error(f"negated: {negated}, confidence_score: {confidence_score}, ")
-                logger.error(f"confidence_level: {confidence_level}, tet_source_id: {tet_source_id}")
+                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}")
+                logger.error(f"novel_flag: {novel_flag}, negated: {negated}, confidence: {confidence_level}, tet_source_id: {tet_source_id}")
                 raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
             time.sleep(attempts)
     return False
@@ -189,7 +187,6 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "novel_topic_data": novel_data,
-        "confidence_score": None,
         "confidence_level": None,
         "reference_curie": reference_curie,
         "force_insertion": True
@@ -662,6 +659,17 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         }
         entity_type_str = "agm"
 
+    # primaryExternalId
+    if entity_type_str == 'transgenic_allele':
+        entity_type_str = 'allele'
+        if mod_abbreviation == 'WB':
+            params["searchFilters"]["primaryExternalIdFilter"] = {
+                "primaryExternalId": {
+                    "queryString": 'WB:WBTransgene',
+                    "tokenOperator": "OR"
+                }
+            }
+
     current_page = 0
     while True:
         logger.info(f"Fetching page {current_page} of entities from A-team API")
@@ -690,6 +698,7 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
             else:
                 entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
             if entity_name:
+                print("transgenic allele:", entity_name, result['primaryExternalId'])
                 all_curated_entity_names.append(entity_name)
                 entity_name_curie_mappings[entity_name] = result['primaryExternalId']
         current_page += 1
@@ -697,6 +706,7 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
 
 
 def get_all_ref_curies(mod_abbreviation: str):
+
     db_params = {
         "dbname": os.getenv("DB_NAME", "default_dbname"),
         "user": os.getenv("DB_USER", "default_user"),
