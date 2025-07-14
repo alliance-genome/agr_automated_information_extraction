@@ -698,7 +698,6 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
             else:
                 entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
             if entity_name:
-                print("transgenic allele:", entity_name, result['primaryExternalId'])
                 all_curated_entity_names.append(entity_name)
                 entity_name_curie_mappings[entity_name] = result['primaryExternalId']
         current_page += 1
