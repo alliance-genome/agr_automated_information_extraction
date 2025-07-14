@@ -35,7 +35,7 @@ from retry import retry
 from .gene_finding import get_genes
 from .gene_finding import deep_learning
 from utils.abc_utils import (load_all_jobs, set_blue_api_base_url)
-#, get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
+# get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
 # from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
 
 parser = argparse.ArgumentParser(description='Extract biological entities from documents using Bert model')
@@ -61,8 +61,8 @@ config_parser.read(args.config_file)
 
 logger = logging.getLogger(__name__)
 
-#get pmid to pmcid pickle dictionary
-#with open(config_parser.get('PICKLES','PMC_ids_dict'), "rb") as f:
+# get pmid to pmcid pickle dictionary
+# with open(config_parser.get('PICKLES','PMC_ids_dict'), "rb") as f:
 #    pmid_to_pmcid_dict = pickle.load(f)
 
 EXCEPTIONS_PATH = config_parser.get('PATHS','exceptions')
@@ -99,6 +99,7 @@ def create_postgres_session():
 
     return session
 
+
 @retry(requests.exceptions.RequestException, delay=30, backoff=2, tries=10)
 def getFtpPath(pmcid: str):
     """Returns the ftp path to a paper given its pmcid
@@ -128,6 +129,7 @@ def getFtpPath(pmcid: str):
     except (requests.exceptions.RequestException, KeyError, AssertionError) as e:
         logging.warning(f"Failed to get FTP path for {pmcid}: {str(e)}")
     return None
+
 
 @retry(subprocess.CalledProcessError, delay=30, backoff=2, tries=10)
 def download(ftp: str):
@@ -163,6 +165,7 @@ def getXmlFromTar(pmcid: str):
     except subprocess.CalledProcessError as e:
         logging.warning(f"Failed to extract XML from tar for {pmcid}: {str(e)}")
 
+
 def get_pmcids_for_references(jobs):
     """Look up pmc_ids for the reference in the jobs."""
     refs = [str(j['reference_id']) for j in jobs]
@@ -185,6 +188,7 @@ def get_pmcids_for_references(jobs):
     else:
         print("No jobs to process")
     return pmc_to_ref
+
 
 def get_data_from_alliance_db():
     """
@@ -224,6 +228,7 @@ def removeFiles(pmcid: str):
     except FileNotFoundError:
         pass
 
+
 def main():
     if args.stage:
         set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
@@ -239,11 +244,11 @@ def main():
     print(f"Number of jobs: {len(jobs)}")
     exit()
 
-    #unpickle gene dictionary
+    # unpickle gene dictionary
     with open(config_parser.get('PICKLES','gene_dict'), "rb") as f:
         gene_dict = pickle.load(f)
 
-    #unpickle fbid to symbol dictionary
+    # unpickle fbid to symbol dictionary
     with open(config_parser.get('PICKLES','fbid_to_symbol_dict'), "rb") as f:
         fbid_to_symbol = pickle.load(f)
 
@@ -257,7 +262,7 @@ def main():
     #input list gained from search of db now
 
     for pmcid in pmc_to_ref.keys():
-        pmcid = pmid_to_pmcid_dict[pmid.strip()]
+        ref_id = pmc_to_ref[pmcid]
         ftp = getFtpPath(pmcid)
         if ftp is not None:
             download(ftp)
@@ -269,28 +274,28 @@ def main():
                                                                          pmcid + ".nxml"), gene_dict, fbid_to_symbol,
                                                                          EXCEPTIONS_PATH)
                 else:
-                    result = get_genes.get_genes(os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
-                                                 gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
-                                                 config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
-                                                 config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
-                                                 config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
-                                                 config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
-                                                 EXCEPTIONS_PATH)
+                    result = get_genes.get_genes(
+                        os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
+                                     gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
+                                     config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
+                                     config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
+                                     config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
+                                     config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
+                                     EXCEPTIONS_PATH)
                 if result:
-                    results[pmid.strip()] = result
+                    results[ref_id = result
                 else:
                     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
                         if status == 0:
-                            results[pmid.strip()] = {'No_Matches': 0.000000000000000}
+                            results[ref_id] = {'No_Matches': 0.000000000000000}
                         else:
-                            results[pmid.strip()] = {'No_nxml': 0.000000000000000}
+                            results[ref_id] = {'No_nxml': 0.000000000000000}
                     else:
-                        results[pmid.strip()] = [[], []]
+                        results[ref_id] = [[], []]
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
                 logging.warning(f"Error processing {pmcid}: {str(e)}")
-
 
     with open(config_parser.get('PATHS', 'output'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t', quotechar='"', quoting=csv.QUOTE_MINIMAL, escapechar='\\')
@@ -299,7 +304,7 @@ def main():
         if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
             for pmid in results:
                 for fbgn in results[pmid]:
-                    #when using deep learning, we only output the pmid, fbgn, and confidence
+                    # when using deep learning, we only output the pmid, fbgn, and confidence
                     writer.writerow([pmid, fbgn, results[pmid][fbgn]])
         else:
             for pmid in results:
@@ -315,15 +320,16 @@ def main():
                         scores.append(confidences[fbgn][get_genes.RAW])
                     snippet_type = config_parser.get('PARAMETERS', 'snippet_type')
                     if snippet_type != 'none' and config_parser.getboolean('PARAMETERS', 'output_gene_occurence'):
-                        for i, occurrences_for_gene in enumerate(occurrences[fbgn]):
+                        for _, occurrences_for_gene in enumerate(occurrences[fbgn]):
                             genes_occurrence = occurrences_for_gene[0]
                             snippet = occurrences_for_gene[1]
-                            writer.writerow([pmid, fbgn, genes_occurrence, snippet]+scores)
+                            writer.writerow([pmid, fbgn, genes_occurrence, snippet] + scores)
                     elif snippet_type != 'none' or config_parser.getboolean('PARAMETERS', 'output_gene_occurence'):
                         for occurrence in occurrences[fbgn]:
-                            writer.writerow([pmid, fbgn, occurrence]+scores)
+                            writer.writerow([pmid, fbgn, occurrence] + scores)
                     else:
-                        writer.writerow([pmid,fbgn]+scores)
+                        writer.writerow([pmid, fbgn] + scores)
+
 
 if __name__ == '__main__':
     main()
