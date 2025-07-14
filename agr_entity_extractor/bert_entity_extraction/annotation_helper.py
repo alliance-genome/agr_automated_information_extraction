@@ -1,21 +1,21 @@
- # Copyright 2023 Charlie Grivaz
- #
- # Modified: Ian Longden to get data directly form Alliance databases.
- #
- # This file was part of Fly Base Annotation Helper
- #
- # Fly Base Annotation Helper is free software: you can redistribute it and/or modify
- # it under the terms of the GNU General Public License as published by
- # the Free Software Foundation, either version 3 of the License, or
- # (at your option) any later version.
- #
- # Fly Base Annotation Helper is distributed in the hope that it will be useful,
- # but WITHOUT ANY WARRANTY; without even the implied warranty of
- # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- # GNU General Public License for more details.
- #
- # You should have received a copy of the GNU General Public License
- # along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
+# Copyright 2023 Charlie Grivaz
+#
+# Modified: Ian Longden to get data directly form Alliance databases.
+#
+# This file was part of Fly Base Annotation Helper
+#
+# Fly Base Annotation Helper is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Fly Base Annotation Helper is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
 import time
 import os
 import argparse
@@ -65,7 +65,8 @@ logger = logging.getLogger(__name__)
 # with open(config_parser.get('PICKLES','PMC_ids_dict'), "rb") as f:
 #    pmid_to_pmcid_dict = pickle.load(f)
 
-EXCEPTIONS_PATH = config_parser.get('PATHS','exceptions')
+EXCEPTIONS_PATH = config_parser.get('PATHS',  'exceptions')
+
 
 def create_postgres_engine():
 
@@ -245,11 +246,11 @@ def main():
     exit()
 
     # unpickle gene dictionary
-    with open(config_parser.get('PICKLES','gene_dict'), "rb") as f:
+    with open(config_parser.get('PICKLES', 'gene_dict'), "rb") as f:
         gene_dict = pickle.load(f)
 
     # unpickle fbid to symbol dictionary
-    with open(config_parser.get('PICKLES','fbid_to_symbol_dict'), "rb") as f:
+    with open(config_parser.get('PICKLES', 'fbid_to_symbol_dict'), "rb") as f:
         fbid_to_symbol = pickle.load(f)
 
     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
@@ -257,9 +258,9 @@ def main():
 
     results = {}
     # FB mod_topic_jobs = load_all_jobs("_extraction_job", args=args)
-    #with open(args.input.name, "r") as f:
+    # with open(args.input.name, "r") as f:
     #    input_list = f.readlines()
-    #input list gained from search of db now
+    # input list gained from search of db now
 
     for pmcid in pmc_to_ref.keys():
         ref_id = pmc_to_ref[pmcid]
@@ -270,18 +271,18 @@ def main():
             result = None
             try:
                 if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
-                    result, status = deep_learning.get_genes_with_dl(os.path.join(config_parser.get('PATHS', 'xml'),
-                                                                         pmcid + ".nxml"), gene_dict, fbid_to_symbol,
-                                                                         EXCEPTIONS_PATH)
+                    result, status = deep_learning.get_genes_with_dl(
+                        os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
+                        gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 else:
                     result = get_genes.get_genes(
                         os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
-                                     gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
-                                     config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
-                                     config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
-                                     config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
-                                     config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
-                                     EXCEPTIONS_PATH)
+                        gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
+                        config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
+                        config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
+                        config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
+                        config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
+                        EXCEPTIONS_PATH)
                 if result:
                     results[ref_id = result
                 else:
