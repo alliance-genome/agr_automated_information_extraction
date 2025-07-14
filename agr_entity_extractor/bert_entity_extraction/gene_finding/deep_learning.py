@@ -1,4 +1,5 @@
-# Copyright 2023 Charlie Grivaz
+"""
+ # Copyright 2023 Charlie Grivaz
  #
  # This file is part of Fly Base Annotation Helper
  #
@@ -14,12 +15,13 @@
  #
  # You should have received a copy of the GNU General Public License
  # along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
+"""
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 import os
 import sys
 import pubmed_parser as pp
 import typing
-from gene_finding import get_genes
+from get_genes import get_genes
 
 
 model_pipeline = None
@@ -45,7 +47,8 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str], fbid_to
         # get text
         pubmed_dict = pp.parse_pubmed_xml(paper_file)  # dictionary output
         abstract = pubmed_dict["abstract"]  # abstract
-        _, candidates = get_genes.get_genes(paper_file, gene_dict, 'none', True, False, False, False, exceptions_path)
+        _, candidates = get_genes(paper_file, gene_dict, 'none', True,
+                                  False, False, False, exceptions_path)
         results = {}
         for fbrf in candidates:
             gene = get_gene(fbrf, candidates[fbrf], fbid_to_symbol)
@@ -61,6 +64,7 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str], fbid_to
 
 
 def transform(input):
+    global model_pipeline
     #print error if model_pipeline is not initialized
     if model_pipeline is None:
         raise Exception("model_pipeline not initialized")

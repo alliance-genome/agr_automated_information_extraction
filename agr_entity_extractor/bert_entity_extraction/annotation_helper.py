@@ -25,13 +25,15 @@ import sys
 import csv
 import logging
 import subprocess
-import tqdm
+# import tqdm
 import requests
 import xmltodict
+from sqlalchemy import create_engine, text
+from sqlalchemy.orm import sessionmaker
 
 from retry import retry
-from gene_finding import get_genes
-from gene_finding import deep_learning
+from .gene_finding import get_genes
+from .gene_finding import deep_learning
 from utils.abc_utils import (load_all_jobs, set_blue_api_base_url)
 #, get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
 # from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
@@ -65,6 +67,37 @@ logger = logging.getLogger(__name__)
 
 EXCEPTIONS_PATH = config_parser.get('PATHS','exceptions')
 
+def create_postgres_engine():
+
+    """Connect to database."""
+    if args.stage:
+        server = os.environ.get('PSQL_HOST', 'literature-stage.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
+    else:
+        server = os.environ.get('PSQL_HOST', 'literature-prod.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
+
+    user = os.environ.get('PSQL_USERNAME', 'postgres')
+    password = os.environ.get('PSQL_PASSWORD')
+    port = os.environ.get('PSQL_PORT', '5432')
+    db = os.environ.get('PSQL_DATABASE', 'literature')
+
+    # Create our SQL Alchemy engine from our environmental variables.
+    engine_var = 'postgresql://' + user + ":" + password + '@' + server + ':' + port + '/' + db
+    # future=True is recommended for 2.0-style behavior.
+    # But referencefile unit test would fail, so removed it.
+    engine = create_engine(engine_var)
+
+    return engine
+
+
+def create_postgres_session():
+
+    engine = create_postgres_engine()
+
+    # SQLAlchemy 2.0 recommends using 'autocommit=False' explicitly in sessionmaker
+    Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+    session = Session()
+
+    return session
 
 @retry(requests.exceptions.RequestException, delay=30, backoff=2, tries=10)
 def getFtpPath(pmcid: str):
@@ -94,7 +127,7 @@ def getFtpPath(pmcid: str):
         return ftplink
     except (requests.exceptions.RequestException, KeyError, AssertionError) as e:
         logging.warning(f"Failed to get FTP path for {pmcid}: {str(e)}")
-
+    return None
 
 @retry(subprocess.CalledProcessError, delay=30, backoff=2, tries=10)
 def download(ftp: str):
@@ -133,17 +166,25 @@ def getXmlFromTar(pmcid: str):
 def get_pmcids_for_references(jobs):
     """Look up pmc_ids for the reference in the jobs."""
     refs = [str(j['reference_id']) for j in jobs]
-
+    pmc_to_ref = {}
     if refs:
+        db_session = create_postgres_session()
         print(f"refs is {refs[:5]}")
-        sql = f"""SELECT reference_id, cross_reference_id
+        # NOTE: remove [:2] from sql after testing
+        sql = f"""SELECT reference_id, curie
                    FROM cross_reference
                     WHERE curie_prefix = 'PMCID'
-                         AND reference_id in ({','.join(refs)})"""
-        # print(sql)
+                         AND reference_id in ({','.join(refs[:2])})"""
+        print(sql)
+        rs = db_session.execute(text(sql))
+        rows = rs.fetchall()
+        for row in rows:
+            # PMCID:PMC11238292
+            pmcid = row[1][6:]
+            pmc_to_ref[pmcid] = row[0]
     else:
         print("No jobs to process")
-    return sql
+    return pmc_to_ref
 
 def get_data_from_alliance_db():
     """
@@ -154,10 +195,11 @@ def get_data_from_alliance_db():
     jobs = {}
     print(f"ARGS: {args}")
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
-    pmc_to_ref = []
+    pmc_to_ref = {}
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         print(f"mod_id = {mod_id}, topic = {topic}, first job {jobs[0]}")
         pmc_to_ref = get_pmcids_for_references(jobs)
+        print(f"pmc_to_ref = {pmc_to_ref}")
     return input_list, jobs, pmc_to_ref
 
 
@@ -193,7 +235,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    input_list, pmc_to_ref, jobs = get_data_from_alliance_db()
+    input_list, jobs, pmc_to_ref = get_data_from_alliance_db()
     print(f"Number of jobs: {len(jobs)}")
     exit()
 
@@ -214,45 +256,40 @@ def main():
     #    input_list = f.readlines()
     #input list gained from search of db now
 
-    for pmid in tqdm.tqdm(input_list, desc="Processing articles", total=len(input_list)):
-        if pmid.strip() not in pmid_to_pmcid_dict:
-            # print it to the standard error stream
-            logging.warning(f"No pmcid for {pmid.strip()}")
-            results[pmid.strip()] = {'Bad_pmcid': 0.000000000000000}
-        else:
-            pmcid = pmid_to_pmcid_dict[pmid.strip()]
-            ftp = getFtpPath(pmcid)
-            if ftp is not None:
-                download(ftp)
-                getXmlFromTar(pmcid)
-                result = None
-                try:
-                    if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
-                        result, status = deep_learning.get_genes_with_dl(os.path.join(config_parser.get('PATHS', 'xml'),
+    for pmcid in pmc_to_ref.keys():
+        pmcid = pmid_to_pmcid_dict[pmid.strip()]
+        ftp = getFtpPath(pmcid)
+        if ftp is not None:
+            download(ftp)
+            getXmlFromTar(pmcid)
+            result = None
+            try:
+                if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
+                    result, status = deep_learning.get_genes_with_dl(os.path.join(config_parser.get('PATHS', 'xml'),
                                                                          pmcid + ".nxml"), gene_dict, fbid_to_symbol,
                                                                          EXCEPTIONS_PATH)
-                    else:
-                        result = get_genes.get_genes(os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
-                                                     gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
-                                                     config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
-                                                     config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
-                                                     config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
-                                                     config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
-                                                     EXCEPTIONS_PATH)
-                    if result:
-                        results[pmid.strip()] = result
-                    else:
-                        if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
-                            if status == 0:
-                                results[pmid.strip()] = {'No_Matches': 0.000000000000000}
-                            else:
-                                results[pmid.strip()] = {'No_nxml': 0.000000000000000}
+                else:
+                    result = get_genes.get_genes(os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
+                                                 gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
+                                                 config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
+                                                 config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
+                                                 config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
+                                                 config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
+                                                 EXCEPTIONS_PATH)
+                if result:
+                    results[pmid.strip()] = result
+                else:
+                    if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
+                        if status == 0:
+                            results[pmid.strip()] = {'No_Matches': 0.000000000000000}
                         else:
-                            results[pmid.strip()] = [[], []]
-                    if config_parser.getboolean('PARAMETERS', 'remove_files'):
-                        removeFiles(pmcid)
-                except Exception as e:
-                    logging.warning(f"Error processing {pmid.strip()}: {str(e)}")
+                            results[pmid.strip()] = {'No_nxml': 0.000000000000000}
+                    else:
+                        results[pmid.strip()] = [[], []]
+                if config_parser.getboolean('PARAMETERS', 'remove_files'):
+                    removeFiles(pmcid)
+            except Exception as e:
+                logging.warning(f"Error processing {pmcid}: {str(e)}")
 
 
     with open(config_parser.get('PATHS', 'output'), 'w', newline='', encoding='utf-8') as f:

@@ -671,9 +671,13 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         request.add_header("Content-type", "application/json")
         request.add_header("Accept", "application/json")
 
-        with urllib.request.urlopen(request) as response:
-            resp_obj = json.loads(response.read().decode("utf8"))
-
+        try:
+            with urllib.request.urlopen(request) as response:
+                resp_obj = json.loads(response.read().decode("utf8"))
+        except (requests.exceptions.RequestException, urllib.error.HTTPError) as e:
+            logger.error(f"Error occurred for accessing/retrieving curated entities data from {url}")
+            logger.error(f"error={e}")
+            exit(-1)
         if resp_obj['returnedRecords'] < 1:
             break
 
