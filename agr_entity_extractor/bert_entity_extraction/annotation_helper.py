@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # with open(config_parser.get('PICKLES','PMC_ids_dict'), "rb") as f:
 #    pmid_to_pmcid_dict = pickle.load(f)
 
-EXCEPTIONS_PATH = config_parser.get('PATHS',  'exceptions')
+EXCEPTIONS_PATH = config_parser.get('PATHS', 'exceptions')
 
 
 def create_postgres_engine():

@@ -26,6 +26,8 @@ from get_genes import get_genes
 
 model_pipeline = None
 tokenizer_kwargs = {'padding': "max_length", 'truncation': True, 'max_length': 512}
+
+
 def initialize(path_to_model):
     global model_pipeline
     if model_pipeline is None:
@@ -35,14 +37,17 @@ def initialize(path_to_model):
         model = AutoModelForSequenceClassification.from_pretrained(path_to_model, num_labels=2)
         model_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer, device=-1)
 
+
 def get_gene(fbrf, candidates, fbid_to_symbol):
     occurrences = set()
     for occurrence in candidates:
         occurrences.add(occurrence)
     out = fbid_to_symbol[fbrf] + " " + " ".join(str(candidates.count(cand)) + " " + cand for cand in occurrences)
     return out
- 
-def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str], fbid_to_symbol: typing.Dict[str, str], exceptions_path: str):
+
+
+def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str],
+                      fbid_to_symbol: typing.Dict[str, str], exceptions_path: str):
     if os.path.isfile(paper_file) and paper_file.endswith("nxml"):
         # get text
         pubmed_dict = pp.parse_pubmed_xml(paper_file)  # dictionary output
@@ -65,7 +70,7 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str], fbid_to
 
 def transform(input):
     global model_pipeline
-    #print error if model_pipeline is not initialized
+    # print error if model_pipeline is not initialized
     if model_pipeline is None:
         raise Exception("model_pipeline not initialized")
     result = model_pipeline(input, **tokenizer_kwargs)

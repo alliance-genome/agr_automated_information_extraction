@@ -1,19 +1,19 @@
- # Copyright 2023 Charlie Grivaz
- #
- # This file is part of Fly Base Annotation Helper
- #
- # Fly Base Annotation Helper is free software: you can redistribute it and/or modify
- # it under the terms of the GNU General Public License as published by
- # the Free Software Foundation, either version 3 of the License, or
- # (at your option) any later version.
- #
- # Fly Base Annotation Helper is distributed in the hope that it will be useful,
- # but WITHOUT ANY WARRANTY; without even the implied warranty of
- # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- # GNU General Public License for more details.
- #
- # You should have received a copy of the GNU General Public License
- # along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
+# Copyright 2023 Charlie Grivaz
+#
+# This file is part of Fly Base Annotation Helper
+#
+# Fly Base Annotation Helper is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Fly Base Annotation Helper is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
 
 from xml.etree import ElementTree
 
@@ -26,7 +26,6 @@ GENES = "genes"
 exceptions = None
 BODY = "body"
 SEC = "sec"
-
 
 
 def is_exception(gene_canditate: str, exceptions: typing.List[str], exceptions_path: str) -> bool:
@@ -161,4 +160,3 @@ def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: s
             confidences[RAW] = occurrences
         output[gene] = confidences
     return output, snippet_dict
-
