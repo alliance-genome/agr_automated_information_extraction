@@ -708,7 +708,6 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
 
 
 def get_all_ref_curies(mod_abbreviation: str):
-
     db_params = {
         "dbname": os.getenv("DB_NAME", "default_dbname"),
         "user": os.getenv("DB_USER", "default_user"),
