@@ -133,7 +133,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
-                                   novel_flag: bool, confidence_level: str, tet_source_id):
+                                   novel_flag: bool, confidence_score: float, confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
@@ -145,6 +145,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "novel_topic_data": novel_flag,
+        "confidence_score": confidence_score,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
@@ -166,8 +167,9 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
-                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}")
-                logger.error(f"novel_flag: {novel_flag}, negated: {negated}, confidence: {confidence_level}, tet_source_id: {tet_source_id}")
+                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, novel_flag: {novel_flag}, ")
+                logger.error(f"negated: {negated}, confidence_score: {confidence_score}, ")
+                logger.error(f"confidence_level: {confidence_level}, tet_source_id: {tet_source_id}")
                 raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
             time.sleep(attempts)
     return False
