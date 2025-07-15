@@ -81,6 +81,7 @@ def fit_vectorizer_on_agr_corpus(
         "gene" if topic == "ATP:0000005"
         else "allele" if topic == "ATP:0000006"
         else "strain" if topic == "ATP:0000027"
+        else "transgenic_allele" if topic == "ATP:0000110"
         else "gene"
     )
     curated_entities, _ = get_all_curated_entities(

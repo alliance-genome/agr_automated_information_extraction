@@ -662,6 +662,17 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         }
         entity_type_str = "agm"
 
+    # primaryExternalId
+    if entity_type_str == 'transgenic_allele':
+        entity_type_str = 'allele'
+        if mod_abbreviation == 'WB':
+            params["searchFilters"]["primaryExternalIdFilter"] = {
+                "primaryExternalId": {
+                    "queryString": 'WB:WBTransgene',
+                    "tokenOperator": "OR"
+                }
+            }
+
     current_page = 0
     while True:
         logger.info(f"Fetching page {current_page} of entities from A-team API")
