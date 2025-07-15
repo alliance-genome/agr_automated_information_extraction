@@ -187,6 +187,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "novel_topic_data": novel_data,
+        "confidence_score": None,
         "confidence_level": None,
         "reference_curie": reference_curie,
         "force_insertion": True
