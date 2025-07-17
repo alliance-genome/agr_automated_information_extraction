@@ -65,7 +65,7 @@ def is_exception(gene_canditate: str, exceptions: typing.List[str], exceptions_p
     return False
 
 
-def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: str, output_gene_occurrence: bool,
+def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: str, output_gene_occurrence: bool,  # noqa C901
               gene_freq: bool, word_freq: bool, raw_occurrences: bool, exceptions_path: str) -> typing.Dict[str, float]:  # noqa C901
     """
     Gets the genes that a paper should be tagged with
