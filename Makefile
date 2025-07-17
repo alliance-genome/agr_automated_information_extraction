@@ -30,3 +30,7 @@ doc_classifier_full_build:
 
 doc_classifier_build:
 	docker build . -t agr_document_classifier
+
+flybert_build:
+	docker build . -f Dockerfile_Base -t agr_document_classifier_base
+	docker build . -t flybert
