@@ -49,6 +49,7 @@ def main():
                 "gene" if args.topic == "ATP:0000005"
                 else "allele" if args.topic == "ATP:0000006"
                 else "strain" if args.topic == "ATP:0000027"
+                else "transgenic_allele" if args.topic == "ATP:0000110"
                 else "gene"
             )
         )

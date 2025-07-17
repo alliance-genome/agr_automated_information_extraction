@@ -1,12 +1,31 @@
 import logging
 import os
 import re
+import html
 
 from grobid_client.models import TextWithRefs
 from grobid_client.types import TEI
 
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_text(text: str) -> str:
+    """
+    Unescape HTML entities and replace brackets/parentheses with spaces to aid tokenization.
+    """
+    # Unescape HTML entities (e.g. &gt; -> >)
+    text = html.unescape(text)
+    # Replace parentheses and square brackets with spaces
+    """
+    so entities next to this special characters can also be extracted
+    some example below:
+    ieSi57(eft-3p&gt;TIR1::mRuby)           // "ieSi57": transgenic allele
+    muIs32[pmec-7::GFP, lin-15( + )]        // "muIs32": transgenic allele
+    mRuby (ieSi57 [eft-3pro::TIR1-mRuby])   // "ieSi57": transgenic allele
+    """
+    text = re.sub(r"[()\[\]]+", " ", text)
+    return text
 
 
 class AllianceTEI:
@@ -32,7 +51,8 @@ class AllianceTEI:
     def get_title(self):
         if self.tei_obj is None:
             return None
-        return self.tei_obj.title
+        title = self.tei_obj.title or ""
+        return _normalize_text(title)
 
     def get_abstract(self):
         if self.tei_obj is None:
@@ -40,7 +60,7 @@ class AllianceTEI:
 
         abstract = ""
         for section in self.tei_obj.sections:
-            if section.name.lower() == "abstract":
+            if section.name and section.name.lower() == "abstract":
                 for paragraph in section.paragraphs:
                     if isinstance(paragraph, TextWithRefs):
                         paragraph = [paragraph]
@@ -48,8 +68,8 @@ class AllianceTEI:
                         # strip any inline tags (e.g. <hi>, <formula>, etc.)
                         cleaned = re.sub(r'<[^<]+>', '', sentence.text)
                         abstract += cleaned + " "
-                return abstract
-        return abstract
+                break
+        return _normalize_text(abstract.strip())
 
     def get_fulltext(self):
         if self.tei_obj is None:
@@ -71,7 +91,7 @@ class AllianceTEI:
                         cleaned = cleaned + "."
                     base_fulltext += " " + cleaned
 
-        return base_fulltext
+        return _normalize_text(base_fulltext)
 
     def get_sentences(self):
         if self.tei_obj is None:
@@ -81,7 +101,7 @@ class AllianceTEI:
         for section in self.tei_obj.sections:
             sec_sentences, _ = get_sentences_from_tei_section(section)
             sentences.extend(sec_sentences)
-        return sentences
+        return [_normalize_text(s) for s in sentences]
 
 
 def get_sentences_from_tei_section(section):
