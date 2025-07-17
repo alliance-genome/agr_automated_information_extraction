@@ -21,7 +21,7 @@ import os
 import sys
 import pubmed_parser as pp
 import typing
-from get_genes import get_genes
+from .get_genes import get_genes
 
 
 model_pipeline = None

@@ -20,7 +20,6 @@ import time
 import os
 import argparse
 import configparser
-import pickle
 import sys
 import csv
 import logging
@@ -32,8 +31,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from retry import retry
-from .gene_finding import get_genes
-from .gene_finding import deep_learning
+from gene_finding import (get_genes)
+from gene_finding import deep_learning
 from utils.abc_utils import (load_all_jobs, set_blue_api_base_url)
 # get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
 # from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
@@ -68,18 +67,20 @@ logger = logging.getLogger(__name__)
 EXCEPTIONS_PATH = config_parser.get('PATHS', 'exceptions')
 
 
-def create_postgres_engine():
+def create_postgres_engine(db):
 
     """Connect to database."""
     if args.stage:
-        server = os.environ.get('PSQL_HOST', 'literature-stage.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
+        server = os.environ.get(f'{db}_HOST', 'literature-stage.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
     else:
-        server = os.environ.get('PSQL_HOST', 'literature-prod.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
+        server = os.environ.get(f'{db}_HOST', 'literature-prod.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
 
-    user = os.environ.get('PSQL_USERNAME', 'postgres')
-    password = os.environ.get('PSQL_PASSWORD')
-    port = os.environ.get('PSQL_PORT', '5432')
-    db = os.environ.get('PSQL_DATABASE', 'literature')
+    user = os.environ.get(f'{db}_USERNAME', 'postgres')
+    password = os.environ.get(f'{db}_PASSWORD')
+    if not password:
+        print(f"No password for env {db}_PASSWORD")
+    port = os.environ.get(f'{db}_PORT', '5432')
+    db = os.environ.get(f'{db}_DATABASE', 'literature')
 
     # Create our SQL Alchemy engine from our environmental variables.
     engine_var = 'postgresql://' + user + ":" + password + '@' + server + ':' + port + '/' + db
@@ -90,9 +91,9 @@ def create_postgres_engine():
     return engine
 
 
-def create_postgres_session():
+def create_postgres_session(db):
 
-    engine = create_postgres_engine()
+    engine = create_postgres_engine(db)
 
     # SQLAlchemy 2.0 recommends using 'autocommit=False' explicitly in sessionmaker
     Session = sessionmaker(bind=engine, autoflush=False, autocommit=False)
@@ -167,12 +168,34 @@ def getXmlFromTar(pmcid: str):
         logging.warning(f"Failed to extract XML from tar for {pmcid}: {str(e)}")
 
 
+def get_ateam_dicts() -> (dict[str, str], dict[str, str]):
+    db = create_postgres_session('PERSISTENT_STORE_DB')
+    sql = """SELECT DISTINCT be.primaryexternalid, sa.displaytext
+        FROM biologicalentity be
+        JOIN slotannotation sa ON be.id = sa.singlegene_id
+        JOIN ontologyterm ot ON be.taxon_id = ot.id
+        WHERE sa.slotannotationtype  in (
+            'GeneSymbolSlotAnnotation',
+            'GeneSystematicNameSlotAnnotation',
+            'GeneFullNameSlotAnnotation',
+            'GeneSynonymSlotAnnotation'
+        )
+        and ot.curie = 'NCBITaxon:7227'"""
+    rows = db.execute(text(sql)).all()
+    gene_dict = {}
+    fbid_to_symbol = {}
+    for row in rows:
+        gene_dict[row[1]] = row[0]
+        fbid_to_symbol[row[0]] = row[1]
+    return gene_dict, fbid_to_symbol
+
+
 def get_pmcids_for_references(jobs):
     """Look up pmc_ids for the reference in the jobs."""
     refs = [str(j['reference_id']) for j in jobs]
     pmc_to_ref = {}
     if refs:
-        db_session = create_postgres_session()
+        db_session = create_postgres_session('PSQL')
         print(f"refs is {refs[:5]}")
         # NOTE: remove [:2] from sql after testing
         sql = f"""SELECT reference_id, curie
@@ -243,15 +266,19 @@ def main():
     )
     input_list, jobs, pmc_to_ref = get_data_from_alliance_db()
     print(f"Number of jobs: {len(jobs)}")
-    exit()
+
 
     # unpickle gene dictionary
-    with open(config_parser.get('PICKLES', 'gene_dict'), "rb") as f:
-        gene_dict = pickle.load(f)
+    # gene_dict = get_gene_dict()
+    gene_dict, fbid_to_symbol = get_ateam_dicts()
+    print(f"gene_dict -> {len(gene_dict)}")
+    print(f"fbid_to_symbol -> {len(fbid_to_symbol)}")
+    # with open(config_parser.get('PICKLES', 'gene_dict'), "rb") as f:
+    #     gene_dict = pickle.load(f)
 
     # unpickle fbid to symbol dictionary
-    with open(config_parser.get('PICKLES', 'fbid_to_symbol_dict'), "rb") as f:
-        fbid_to_symbol = pickle.load(f)
+    # with open(config_parser.get('PICKLES', 'fbid_to_symbol_dict'), "rb") as f:
+    #     fbid_to_symbol = pickle.load(f)
 
     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
         deep_learning.initialize(config_parser.get('PATHS', 'deep_learning_model'))
@@ -284,7 +311,7 @@ def main():
                         config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
                         EXCEPTIONS_PATH)
                 if result:
-                    results[ref_id = result
+                    results[ref_id] = result
                 else:
                     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
                         if status == 0:
