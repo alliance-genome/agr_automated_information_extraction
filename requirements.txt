@@ -84,3 +84,7 @@ lightgbm==4.6.0
 imbalanced-learn==0.13.0
 dill
 pandas
+# FlyBert extras
+xmltodict==0.13.0
+pubmed_parser
+retry==0.9.2

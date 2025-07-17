@@ -213,12 +213,14 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
 
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
+    print(f"GJB: args = {args}")
     if args and args.mod_abbreviation:
-        jobs_url += f'&mod={args.mod_abbreviation}'
+        jobs_url += f'&mod_abbreviation={args.mod_abbreviation}'
     if args and args.reference_curie:
         jobs_url += f'&reference={args.reference_curie}'
     if args and args.topic:
         jobs_url += f'&topic={args.topic}'
+    print(f"GJB: jobs_url = {jobs_url}")
     request = urllib.request.Request(url=jobs_url)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -683,9 +685,13 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         request.add_header("Content-type", "application/json")
         request.add_header("Accept", "application/json")
 
-        with urllib.request.urlopen(request) as response:
-            resp_obj = json.loads(response.read().decode("utf8"))
-
+        try:
+            with urllib.request.urlopen(request) as response:
+                resp_obj = json.loads(response.read().decode("utf8"))
+        except (requests.exceptions.RequestException, urllib.error.HTTPError) as e:
+            logger.error(f"Error occurred for accessing/retrieving curated entities data from {url}")
+            logger.error(f"error={e}")
+            exit(-1)
         if resp_obj['returnedRecords'] < 1:
             break
 
