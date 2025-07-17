@@ -36,7 +36,7 @@ def get_pmid_to_pmcid(path: str):
             pmid = row["PMID"]
             if pmid and pmcid:
                 pmid_to_pmcid[pmid] = pmcid
-    #pickle the dictionary
+    # pickle the dictionary
     # get the directory path from the config parameter
     dir_path = os.path.dirname(config.get('PICKLES', 'PMC_ids_dict'))
 
@@ -45,7 +45,7 @@ def get_pmid_to_pmcid(path: str):
         os.makedirs(dir_path)
 
     # open the file for writing
-    with open(config.get('PICKLES','PMC_ids_dict'), "wb") as out:
+    with open(config.get('PICKLES', 'PMC_ids_dict'), "wb") as out:
         pickle.dump(pmid_to_pmcid, out)
 
 
@@ -84,7 +84,7 @@ def get_genes_dict(gene_synonyms_path: str, current_genes_path: str):
                 if fbid in relevant_genes:
                     fullname_synonyms = row[FULLNAME_SYNONYMS]
                     if len(fullname_synonyms) > 0:
-                        for syn in re.split("\|", fullname_synonyms):
+                        for syn in re.split('|', fullname_synonyms):
                             gene_dict[syn] = fbid
 
                     fullname = row[CURRENT_FULLNAME]
@@ -101,7 +101,7 @@ def get_genes_dict(gene_synonyms_path: str, current_genes_path: str):
                     symbol = row[CURRENT_SYMBOL]
                     gene_dict[symbol] = fbid  # this should be last to have absolute precedence
                     fbid_to_symbol[fbid] = symbol
-        #pickle the dictionaries
+        # pickle the dictionaries
         # get the directory paths from the config parameter
         dir_path = os.path.dirname(config.get('PICKLES', 'gene_dict'))
         fbid_to_symbol_dir_path = os.path.dirname(config.get('PICKLES', 'fbid_to_symbol_dict'))
@@ -113,9 +113,9 @@ def get_genes_dict(gene_synonyms_path: str, current_genes_path: str):
             os.makedirs(fbid_to_symbol_dir_path)
 
         # output the dictionaries
-        with open(config.get('PICKLES','gene_dict'), "wb") as out:
+        with open(config.get('PICKLES', 'gene_dict'), "wb") as out:
             pickle.dump(gene_dict, out)
-        with open(config.get('PICKLES','fbid_to_symbol_dict'), "wb") as out:
+        with open(config.get('PICKLES', 'fbid_to_symbol_dict'), "wb") as out:
             pickle.dump(fbid_to_symbol, out)
 
 
@@ -142,7 +142,7 @@ def main():
     current_genes = config.get('PUBMED', 'current_genes')
 
     if os.path.exists(pmcid) and os.path.exists(gene_syns) and os.path.exists(current_genes):
-        get_pmid_to_pmcid(config.get('PUBMED','PMC_ids'))
+        get_pmid_to_pmcid(config.get('PUBMED', 'PMC_ids'))
         get_genes_dict(gene_syns, current_genes)
     else:
         if not os.path.exists(pmcid):

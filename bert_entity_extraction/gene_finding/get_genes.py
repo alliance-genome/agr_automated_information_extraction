@@ -60,12 +60,13 @@ def is_exception(gene_canditate: str, exceptions: typing.List[str], exceptions_p
         position = gene_canditate.find(ex)
         if position != -1:
             if position == 0 or not gene_canditate[position - 1].isalnum():
-                if position + len(ex) == len(gene_canditate) -1 or not gene_canditate[position + len(ex)].isalnum():
+                if position + len(ex) == len(gene_canditate) - 1 or not gene_canditate[position + len(ex)].isalnum():
                     return True
     return False
 
+
 def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: str, output_gene_occurrence: bool,
-              gene_freq: bool, word_freq: bool, raw_occurrences: bool, exceptions_path: str) -> typing.Dict[str, float]:
+              gene_freq: bool, word_freq: bool, raw_occurrences: bool, exceptions_path: str) -> typing.Dict[str, float]:  # noqa C901
     """
     Gets the genes that a paper should be tagged with
 
@@ -108,7 +109,7 @@ def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: s
         if not in_body:
             return False
         assert n.tag == BODY
-        if sec == list(n)[0]: # somewhat crude way of guessing if it's in the introduction
+        if sec == list(n)[0]:  # somewhat crude way of guessing if it's in the introduction
             return False
         return True
 
@@ -119,12 +120,12 @@ def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: s
     for node in tree.iter('italic'):
         if node.text:
             gene_canditate = node.text.strip()
-            if gene_canditate in gene_dict and len(gene_canditate) > 1 and not is_exception(gene_canditate, 
+            if gene_canditate in gene_dict and len(gene_canditate) > 1 and not is_exception(gene_canditate,
                                                                                             exceptions, exceptions_path):
                 cands.add(gene_canditate)
                 if is_in_relevant_section(node):
                     gene = gene_dict[gene_canditate]
-                    if not gene in snippet_dict:
+                    if gene not in snippet_dict:
                         snippet_dict[gene] = []
                     if snippet_type != 'none':
                         if snippet_type == 'long':

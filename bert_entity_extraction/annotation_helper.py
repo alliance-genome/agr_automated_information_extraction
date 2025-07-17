@@ -253,7 +253,7 @@ def removeFiles(pmcid: str):
         pass
 
 
-def main():
+def main():  # noqa C901
     if args.stage:
         set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
@@ -266,7 +266,6 @@ def main():
     )
     input_list, jobs, pmc_to_ref = get_data_from_alliance_db()
     print(f"Number of jobs: {len(jobs)}")
-
 
     # unpickle gene dictionary
     # gene_dict = get_gene_dict()
