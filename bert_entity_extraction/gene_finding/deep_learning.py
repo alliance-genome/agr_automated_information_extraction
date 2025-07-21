@@ -57,7 +57,9 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str],
                                   False, False, False, exceptions_path)
         results = {}
         for fbrf in candidates:
+            print(f"Candidate: {fbrf}: {candidates[fbrf]}")
             gene = get_gene(fbrf, candidates[fbrf], fbid_to_symbol)
+            print(f"get gene gives {gene}")
             input = gene + ". " + abstract
             results[fbrf] = transform(input)
         if results:
