@@ -34,6 +34,7 @@ def initialize(path_to_model):
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         scibert = "allenai/scibert_scivocab_uncased"
         tokenizer = AutoTokenizer.from_pretrained(scibert, model_max_length=512)
+        print(f"Model path is {path_to_model}")
         model = AutoModelForSequenceClassification.from_pretrained(path_to_model, num_labels=2)
         model_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer, device=-1)
 
