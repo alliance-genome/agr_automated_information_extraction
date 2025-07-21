@@ -202,7 +202,7 @@ def get_pmcids_for_references(jobs):
         sql = f"""SELECT reference_id, curie
                    FROM cross_reference
                     WHERE curie_prefix = 'PMCID'
-                         AND reference_id in ({','.join(refs[:2])})"""
+                         AND reference_id in ({','.join(refs)})"""
         print(sql)
         rs = db_session.execute(text(sql))
         rows = rs.fetchall()
@@ -324,6 +324,8 @@ def main():  # noqa C901
                     removeFiles(pmcid)
             except Exception as e:
                 logging.warning(f"Error processing {pmcid}: {str(e)}")
+        else:
+            logging.warning(f"Error processing {pmcid}: No ftp file available")
 
     with open(config_parser.get('PATHS', 'output'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t', quotechar='"', quoting=csv.QUOTE_MINIMAL, escapechar='\\')
