@@ -127,6 +127,7 @@ def getFtpPath(pmcid: str):
                 ftplink = link['@href']
             assert (".tar.gz" in ftplink)
         time.sleep(config_parser.getint('PARAMETERS', 'sleep_time_between_requests'))
+        print(f"Link is '{ftplink}'")
         return ftplink
     except (requests.exceptions.RequestException, KeyError, AssertionError) as e:
         logging.warning(f"Failed to get FTP path for {pmcid}: {str(e)}")
