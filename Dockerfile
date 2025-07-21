@@ -23,6 +23,7 @@ ADD utils/ ./utils
 ADD agr_dataset_manager/ ./agr_dataset_manager
 ADD agr_document_classifier/models.py .
 ADD export_data/export_fb_tets.py .
+RUN apt-get -y install git-lfs
 RUN git lfs install --force
 RUN git clone https://huggingface.co/cgrivaz/FlyBaseGeneAbstractClassifier.git
 RUN export PYTHONPATH=/usr/src/app/bert_entity_extraction:/usr/src/app/bert_entity_extraction/gene_finding:/usr/src/app/
