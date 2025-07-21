@@ -80,7 +80,7 @@ def create_postgres_engine(db):
     if not password:
         print(f"No password for env {db}_PASSWORD")
     port = os.environ.get(f'{db}_PORT', '5432')
-    db = os.environ.get(f'{db}_DATABASE', 'literature')
+    db = os.environ.get(f'{db}_NAME', 'literature')
 
     # Create our SQL Alchemy engine from our environmental variables.
     engine_var = 'postgresql://' + user + ":" + password + '@' + server + ':' + port + '/' + db
