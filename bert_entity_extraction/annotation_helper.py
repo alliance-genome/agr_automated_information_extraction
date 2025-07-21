@@ -71,7 +71,7 @@ def create_postgres_engine(db):
 
     """Connect to database."""
     if args.stage:
-        server = os.environ.get(f'{db}_HOST', 'literature-stage.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
+        server = os.environ.get(f'{db}_HOST', 'literature-dev.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
     else:
         server = os.environ.get(f'{db}_HOST', 'literature-prod.cmnnhlso7wdi.us-east-1.rds.amazonaws.com')
 
