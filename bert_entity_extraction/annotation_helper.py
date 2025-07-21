@@ -208,6 +208,7 @@ def get_pmcids_for_references(jobs):
         rows = rs.fetchall()
         for row in rows:
             # PMCID:PMC11238292
+            print(f"sql res: {row}")
             pmcid = row[1][6:]
             pmc_to_ref[pmcid] = row[0]
     else:
