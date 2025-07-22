@@ -175,7 +175,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: float = None, confidence_level: str = None, tet_source_id = None):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
@@ -189,8 +189,8 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "novel_topic_data": novel_data,
-        "confidence_score": None,
-        "confidence_level": None,
+        "confidence_score": confidence_score,
+        "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "force_insertion": True
     }).encode('utf-8')
