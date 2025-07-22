@@ -273,6 +273,10 @@ def main():  # noqa C901
     # gene_dict = get_gene_dict()
     gene_dict, fbid_to_symbol = get_ateam_dicts()
     print(f"gene_dict -> {len(gene_dict)}")
+    key = gene_dict.keys()[0]
+    print(f"gene_dict Example: key -> {key} {gene_dict[key]}")
+    key = fbid_to_symbol.keys()[0]
+    print(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
     print(f"fbid_to_symbol -> {len(fbid_to_symbol)}")
     # with open(config_parser.get('PICKLES', 'gene_dict'), "rb") as f:
     #     gene_dict = pickle.load(f)
