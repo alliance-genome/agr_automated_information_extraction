@@ -171,11 +171,25 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     return best_threshold
 
 
-def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa: C901
+def process_entity_extraction_jobs(
+    mod_id,
+    topic,
+    jobs,
+    test_mode: bool = False,
+    test_fh=None,
+):  # noqa: C901
+    """
+    If test_mode=True, append "<curie>\t<pipe_separated_entities>" to out_lines instead of calling ABC.
+    """
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_entity_extractor",
-                                      source_description="Alliance entity extraction pipeline using machine learning "
-                                                         "to identify papers of interest for curation data types")
+    tet_source_id = None
+    if not test_mode:
+        tet_source_id = get_tet_source_id(
+            mod_abbreviation=mod_abbr,
+            source_method="abc_entity_extractor",
+            source_description="Alliance entity extraction pipeline using machine learning "
+            "to identify papers of interest for curation data types")
+
     entity_extraction_model_file_path = (f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_"
                                          f"{topic.replace(':', '_')}.dpkl")
     try:
@@ -250,26 +264,40 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa: C901
                     entity_extraction_model=entity_extraction_model
                 )
 
-            logger.info("Sending 'no data' tag to ABC.")
-            if not all_entities:
-                send_entity_tag_to_abc(
-                    reference_curie=curie,
-                    species=species,
-                    topic=topic,
-                    negated=True,
-                    tet_source_id=tet_source_id,
-                    novel_data=novel_data
-                )
+            if test_mode:
+                ents_str = " | ".join(sorted(all_entities))
+                line = f"{curie}\t{ents_str}\n"
+                test_fh.write(line)
+                test_fh.flush()
+                logger.info(f"[TEST] wrote: {line.strip()}")
+            else:
+                logger.info("Sending 'no data' tag to ABC.")
+                if not all_entities:
+                    send_entity_tag_to_abc(
+                        reference_curie=curie,
+                        species=species,
+                        topic=topic,
+                        negated=True,
+                        tet_source_id=tet_source_id,
+                        novel_data=novel_data
+                    )
 
-            logger.info("Sending extracted entities as tags to ABC.")
-            for entity in all_entities:
-                if entity in entity_extraction_model.name_to_curie_mapping:
-                    entity_curie = entity_extraction_model.name_to_curie_mapping[entity]
-                else:
-                    entity_curie = entity_extraction_model.name_to_curie_mapping[
-                        entity_extraction_model.upper_to_original_mapping[entity]]
-                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic, entity_type=topic,
-                                       entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
+                logger.info("Sending extracted entities as tags to ABC.")
+                for entity in all_entities:
+                    if entity in entity_extraction_model.name_to_curie_mapping:
+                        entity_curie = entity_extraction_model.name_to_curie_mapping[entity]
+                    else:
+                        entity_curie = entity_extraction_model.name_to_curie_mapping[
+                            entity_extraction_model.upper_to_original_mapping[entity]]
+                    send_entity_tag_to_abc(
+                        reference_curie=curie,
+                        species=species,
+                        topic=topic,
+                        entity_type=topic,
+                        entity=entity_curie,
+                        tet_source_id=tet_source_id,
+                        novel_data=novel_data
+                    )
             logger.info(f"{curie} = {all_entities}")
             set_job_started(job)
             set_job_success(job)
@@ -381,28 +409,71 @@ def main():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
+    parser.add_argument("-t", "--test-output", metavar="PATH",
+                        help="Write '<curie>\\t<pipe_separated_entities>' to PATH and skip sending tags to ABC")
+    parser.add_argument("-T", "--topic", action="append",
+                        help="Only process these topic CURIE(s). Repeatable.")
+    parser.add_argument("-m", "--mod", action="append",
+                        help="Only process these MOD abbreviations (e.g. WB, ZFIN). Repeatable.")
+
     args = parser.parse_args()
+
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
+
     mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
+
+    # ---- filtering by topic/mod ----
+    wanted_topics = set(args.topic) if args.topic else None
+    wanted_mods = {m.upper() for m in (args.mod or [])} if args.mod else None
+    _mod_cache = {}
+
+    def mod_id_to_abbr(mod_id):
+        if mod_id not in _mod_cache:
+            _mod_cache[mod_id] = get_cached_mod_abbreviation_from_id(mod_id).upper()
+        return _mod_cache[mod_id]
+
+    filtered = {}
+    for (mod_id, topic), jobs in mod_topic_jobs.items():
+        if wanted_topics and topic not in wanted_topics:
+            continue
+        if wanted_mods and mod_id_to_abbr(mod_id) not in wanted_mods:
+            continue
+        filtered[(mod_id, topic)] = jobs
+    mod_topic_jobs = filtered
+
+    if not mod_topic_jobs:
+        logger.warning("No jobs matched the provided filters (topic/mod). Exiting.")
+        return
+
+    # ---- tune threshold path ----
     if args.tune_threshold:
         for (mod_id, topic), jobs in mod_topic_jobs.items():
-            TARGET_ENTITIES = (
-                STRAIN_TARGET_ENTITIES
-                if topic == 'ATP:0000027'
-                else GENE_TARGET_ENTITIES
-            )
+            TARGET_ENTITIES = STRAIN_TARGET_ENTITIES if topic == 'ATP:0000027' else GENE_TARGET_ENTITIES
             best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET_ENTITIES)
             logger.info(f"Best TF-IDF threshold for {mod_id}/{topic}: {best}")
         logger.info("Threshold tuning complete.")
         return
 
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
-        process_entity_extraction_jobs(mod_id, topic, jobs)
+    test_mode = bool(args.test_output)
+    test_fh = open(args.test_output, "w", encoding="utf-8") if test_mode else None
+    try:
+        for (mod_id, topic), jobs in mod_topic_jobs.items():
+            process_entity_extraction_jobs(
+                mod_id,
+                topic,
+                jobs,
+                test_mode=test_mode,
+                test_fh=test_fh,
+            )
+    finally:
+        if test_fh:
+            test_fh.close()
+
     logger.info("Finished processing all entity extraction jobs.")
 
 
