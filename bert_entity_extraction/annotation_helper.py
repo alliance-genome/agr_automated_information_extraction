@@ -33,7 +33,9 @@ from sqlalchemy.orm import sessionmaker
 from retry import retry
 from gene_finding import (get_genes)
 from gene_finding import deep_learning
-from utils.abc_utils import (load_all_jobs, set_blue_api_base_url)
+from utils.abc_utils import load_all_jobs, get_tet_source_id, \
+    set_job_started, set_job_success, send_entity_tag_to_abc, \
+    set_job_failure, set_blue_api_base_url
 # get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
 # from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
 
@@ -267,6 +269,9 @@ def main():  # noqa C901
         stream=sys.stdout
     )
     input_list, jobs, pmc_to_ref = get_data_from_alliance_db()
+    # need ref_id to job_id
+    ref_to_job = {item['reference_id']: item['job_id'] for item in jobs}
+    print(ref_to_job)
     print(f"Number of jobs: {len(jobs)}")
 
     # unpickle gene dictionary
@@ -293,11 +298,19 @@ def main():  # noqa C901
     # with open(args.input.name, "r") as f:
     #    input_list = f.readlines()
     # input list gained from search of db now
-
+    tet_source_id = get_tet_source_id(
+        mod_abbreviation=args.mod_abbreviation,
+        source_method="abc_entity_extractor",
+        source_description="Alliance entity extraction pipeline using machine learning "
+                           "to identify papers of interest for curation data types")
+    species = 'NCBITaxon:7227'
     for pmcid in pmc_to_ref.keys():
         ref_id = pmc_to_ref[pmcid]
+        job_id = ref_to_job[ref_id]
+        print(f"pmcid -> {pmcid} job_id-> {job_id} ref_id -> {ref_id}")
         ftp = getFtpPath(pmcid)
         if ftp is not None:
+            print("Start Job")
             download(ftp)
             getXmlFromTar(pmcid)
             result = None
@@ -320,7 +333,15 @@ def main():  # noqa C901
                 else:
                     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
                         if status == 0:
-                            results[ref_id] = {'No_Matches': 0.000000000000000}
+                            #send_entity_tag_to_abc(
+                            #    reference_curie=ref_id,
+                            #    species=species,
+                            #    topic=args.topic,
+                            #    negated=True,
+                            #    tet_source_id=tet_source_id,
+                            #    novel_data=False
+                            #)
+                            print(f"No data reference_curie={ref_id}")
                         else:
                             results[ref_id] = {'No_nxml': 0.000000000000000}
                     else:
@@ -341,6 +362,15 @@ def main():  # noqa C901
                 for fbgn in results[pmid]:
                     # when using deep learning, we only output the pmid, fbgn, and confidence
                     writer.writerow([pmid, fbgn, results[pmid][fbgn]])
+                    #send_entity_tag_to_abc(reference_curie=pmid,
+                    #                       species=species,
+                    #                       topic=args.topic,
+                    #                       entity_type=args.topic,
+                    #                       entity=fbgn,
+                    #                       confidence_score=round(results[pmid][fbgn], 2),
+                    #                       tet_source_id=tet_source_id,
+                    #                       novel_data=False)
+                    print(f"MATCH: reference_curie={pmid}, entity={fbgn}, confidence_score={round(results[pmid][fbgn], 2)}")
         else:
             for pmid in results:
                 confidences = results[pmid][0]
