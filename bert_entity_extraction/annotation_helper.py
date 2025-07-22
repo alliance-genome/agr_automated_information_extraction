@@ -270,7 +270,7 @@ def main():  # noqa C901
     )
     input_list, jobs, pmc_to_ref = get_data_from_alliance_db()
     # need ref_id to job_id
-    ref_to_job = {item['reference_id']: item['job_id'] for item in jobs}
+    ref_to_job = {item['reference_id']: item['reference_workflow_tag_id'] for item in jobs}
     print(ref_to_job)
     print(f"Number of jobs: {len(jobs)}")
 
