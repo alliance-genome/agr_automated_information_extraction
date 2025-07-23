@@ -44,7 +44,7 @@ parser.add_argument("-s", "--stage", action="store_true",
                     help="Only run for on stage.", required=False)
 parser.add_argument("-f", "--reference_curie", type=str,
                     help="Only run for this reference.", required=False)
-parser.add_argument("-t", "--topic", type=str,
+parser.add_argument("-t", "--topic", type=str, default = 'ATP:0000005',
                     help="Only run for this topic.", required=False)
 parser.add_argument("-m", "--mod_abbreviation", type=str,
                     default="FB", help="Only run for FB.")
