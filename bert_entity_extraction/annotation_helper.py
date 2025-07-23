@@ -196,18 +196,15 @@ def get_pmcids_for_references(jobs):
     ref_to_pmc = {}
     if refs:
         db_session = create_postgres_session('PSQL')
-        print(f"refs is {refs[:5]}")
         # NOTE: remove [:2] from sql after testing
         sql = f"""SELECT reference_id, curie
                    FROM cross_reference
                     WHERE curie_prefix = 'PMCID'
                          AND reference_id in ({','.join(refs)})"""
-        print(sql)
         rs = db_session.execute(text(sql))
         rows = rs.fetchall()
         for row in rows:
             # PMCID:PMC11238292
-            print(f"sql res: {row}")
             pmcid = row[1][6:]
             ref_to_pmc[row[0]] = pmcid
     else:
@@ -221,13 +218,10 @@ def get_data_from_alliance_db():
     Get pmc to reference_id for those jobs
     """
     jobs = {}
-    print(f"ARGS: {args}")
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
     ref_to_pmc = {}
     for (mod_id, topic), jobs in mod_topic_jobs.items():
-        print(f"mod_id = {mod_id}, topic = {topic}, first job {jobs[0]}")
         ref_to_pmc = get_pmcids_for_references(jobs)
-        print(f"ref_to_pmc = {ref_to_pmc}")
     return jobs, ref_to_pmc
 
 
@@ -267,7 +261,6 @@ def main():  # noqa C901
     jobs, ref_to_pmc = get_data_from_alliance_db()
     # need ref_id to job_id
     ref_to_job = {item['reference_id']: item['reference_workflow_tag_id'] for item in jobs}
-    print(ref_to_job)
     print(f"Number of jobs: {len(jobs)}")
 
     # unpickle gene dictionary
@@ -279,28 +272,17 @@ def main():  # noqa C901
     key = list(fbid_to_symbol.keys())[0]
     print(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
     print(f"fbid_to_symbol -> {len(fbid_to_symbol)}")
-    # with open(config_parser.get('PICKLES', 'gene_dict'), "rb") as f:
-    #     gene_dict = pickle.load(f)
-
-    # unpickle fbid to symbol dictionary
-    # with open(config_parser.get('PICKLES', 'fbid_to_symbol_dict'), "rb") as f:
-    #     fbid_to_symbol = pickle.load(f)
 
     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
         deep_learning.initialize(config_parser.get('PATHS', 'deep_learning_model'))
 
-    results = {}
-    # FB mod_topic_jobs = load_all_jobs("_extraction_job", args=args)
-    # with open(args.input.name, "r") as f:
-    #    input_list = f.readlines()
-    # input list gained from search of db now
     tet_source_id = get_tet_source_id(
         mod_abbreviation=args.mod_abbreviation,
         source_method="abc_entity_extractor",
         source_description="Alliance entity extraction pipeline using machine learning "
                            "to identify papers of interest for curation data types")
+    # If we do other mods this will need changing to a look up
     species = 'NCBITaxon:7227'
-    # for pmcid in pmc_to_ref.keys():
     for job in jobs:
         ref_id = job['reference_id']
         job_id = job['reference_workflow_tag_id']
@@ -332,12 +314,10 @@ def main():  # noqa C901
                         #                       tet_source_id=tet_source_id,
                         #                       novel_data=False)
                         print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
-                        # results[ref_id] = result
                     print("Finished successfully but with results :-)")
                     # set_job_success(job_id)
                 else:
                     if status == 0:
-                        print("Finished successfully but no results")
                         #send_entity_tag_to_abc(
                         #    reference_curie=ref_id,
                         #    species=species,
