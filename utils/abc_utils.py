@@ -177,7 +177,10 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
 
 def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
-    token = get_authentication_token()
+    try:
+        token = get_authentication_token()
+    except Exception as exc:
+        print(f"Error getting token: {str(exc)}")
     try:
         tet_data = json.dumps({
             "created_by": "default_user",
