@@ -44,7 +44,7 @@ parser.add_argument("-s", "--stage", action="store_true",
                     help="Only run for on stage.", required=False)
 parser.add_argument("-f", "--reference_curie", type=str,
                     help="Only run for this reference.", required=False)
-parser.add_argument("-t", "--topic", type=str, default = 'ATP:0000005',
+parser.add_argument("-t", "--topic", type=str, default='ATP:0000005',
                     help="Only run for this topic.", required=False)
 parser.add_argument("-m", "--mod_abbreviation", type=str,
                     default="FB", help="Only run for FB.")
@@ -53,11 +53,12 @@ parser.add_argument("-c", "---config_file", type=str,
                     help="Config file for FlyBert")
 
 args = parser.parse_args()
-logger.debug(args)
+
 config_parser = configparser.ConfigParser()
 config_parser.read(args.config_file)
 
 logger = logging.getLogger(__name__)
+logger.debug(args)
 
 # get pmid to pmcid pickle dictionary
 # with open(config_parser.get('PICKLES','PMC_ids_dict'), "rb") as f:
