@@ -220,7 +220,7 @@ def get_data_from_alliance_db():
     jobs = {}
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
     ref_to_pmc = {}
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
+    for (_, _), jobs in mod_topic_jobs.items():
         ref_to_pmc = get_pmcids_for_references(jobs)
     return jobs, ref_to_pmc
 
@@ -291,7 +291,7 @@ def main():  # noqa C901
         ftp = getFtpPath(pmcid)
         if ftp is not None:
             print("Start Job")
-            # set_job_started(job_id)
+            set_job_started(job_id)
             download(ftp)
             getXmlFromTar(pmcid)
             try:
@@ -300,34 +300,32 @@ def main():  # noqa C901
                     gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 if results:
                     for fbgn in results:
-                        print(f"fbgn {fbgn}")
-                        # send_entity_tag_to_abc(reference_curie=pmid,
-                        #                       species=species,
-                        #                       topic=args.topic,
-                        #                       entity_type=args.topic,
-                        #                       entity=fbgn,
-                        #                       confidence_score=round(results[pmid][fbgn], 2),
-                        #                       tet_source_id=tet_source_id,
-                        #                       novel_data=False)
+                        send_entity_tag_to_abc(reference_curie=pmid,
+                                               species=species,
+                                               topic=args.topic,
+                                               entity_type=args.topic,
+                                               entity=fbgn,
+                                               confidence_score=round(results[pmid][fbgn], 2),
+                                               tet_source_id=tet_source_id,
+                                               novel_data=False)
                         print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                     print("Finished successfully but with results :-)")
-                    # set_job_success(job_id)
+                    set_job_success(job_id)
                 else:
                     if status == 0:
-                        #send_entity_tag_to_abc(
-                        #    reference_curie=ref_id,
-                        #    species=species,
-                        #    topic=args.topic,
-                        #    negated=True,
-                        #    tet_source_id=tet_source_id,
-                        #    novel_data=False
-                        #)
-                        #set_job_success(job_id)
+                        send_entity_tag_to_abc(
+                            reference_curie=ref_id,
+                            species=species,
+                            topic=args.topic,
+                            negated=True,
+                            tet_source_id=tet_source_id,
+                            novel_data=False
+                        )
+                        set_job_success(job_id)
                         print(f"Job finished BUT No data. reference_curie={ref_id}")
                     else:
-                        # set_job_failure(job_id)
+                        set_job_failure(job_id)
                         print("job failed NO nxml")
-                        # results[ref_id] = {'No_nxml': 0.000000000000000}
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
