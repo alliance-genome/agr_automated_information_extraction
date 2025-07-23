@@ -175,7 +175,7 @@ def process_entity_extraction_jobs(
     mod_id,
     topic,
     jobs,
-    test_mode: bool = False,
+    test_mode: bool = False,    
     test_fh=None,
 ):  # noqa: C901
     """
