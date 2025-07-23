@@ -312,8 +312,8 @@ def main():  # noqa C901
                             stat = send_entity_tag_to_abc(
                                 reference_curie=str(ref_id),
                                 species=species,
-                                topic=args.topic,
-                                entity_type=args.topic,
+                                topic=job['topic_id'],
+                                entity_type=job['topic_id'],
                                 entity=fbgn,
                                 confidence_score=round(results[fbgn], 2),
                                 confidence_level=confidence_level,
@@ -322,8 +322,8 @@ def main():  # noqa C901
                             if not stat:
                                 print(f"""reference_curie={str(ref_id)},
                                 species={species},
-                                topic={args.topic},
-                                entity_type={args.topic},
+                                topic={job['topic_id']},
+                                entity_type={job['topic_id']},
                                 entity={fbgn},
                                 confidence_score={round(results[fbgn], 2)},
                                 confidence_level={confidence_level},
@@ -342,7 +342,7 @@ def main():  # noqa C901
                         stat = send_entity_tag_to_abc(
                             reference_curie=ref_id,
                             species=species,
-                            topic=args.topic,
+                            topic=job['topic_id'],
                             negated=True,
                             tet_source_id=tet_source_id,
                             novel_data=False

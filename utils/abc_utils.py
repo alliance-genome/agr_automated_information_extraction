@@ -222,6 +222,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
 
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
+    print(f"jobs irl is {jobs_url}")
     if args and args.mod_abbreviation:
         jobs_url += f'&mod_abbreviation={args.mod_abbreviation}'
     if args and args.reference_curie:
