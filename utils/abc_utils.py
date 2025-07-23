@@ -256,6 +256,8 @@ def set_job_started(job):
             return True
         except HTTPError:
             time.sleep(attempts)
+        except Exception as e:
+            logger.error(f"Error attempt {attempts} setting to started for : {str(job)}: {e}")
     logger.error(f"Error setting job started after 3 attempts: {str(job)}")
     return False
 
@@ -277,7 +279,8 @@ def set_job_success(job):
         except HTTPError as e:
             logger.warning(f"Error setting to success for : {str(job)}: {e}")
             time.sleep(attempts)
-
+        except Exception as e:
+            logger.error(f"Error attempt {attempts} setting to success for : {str(job)}: {e}")
     logger.error(f"Error setting job success after 3 attempts: {str(job)}")
     return False
 
