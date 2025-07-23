@@ -335,7 +335,7 @@ def main():  # noqa C901
                         #                       confidence_score=round(results[pmid][fbgn], 2),
                         #                       tet_source_id=tet_source_id,
                         #                       novel_data=False)
-                        print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[ref_id][fbgn], 2)}")
+                        print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                         # results[ref_id] = result
                     print("Finished successfully but with results :-)")
                     # set_job_success(job_id)
