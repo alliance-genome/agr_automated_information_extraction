@@ -299,32 +299,43 @@ def main():  # noqa C901
                     os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
                     gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 if results:
+                    okay = True
                     for fbgn in results:
+                        confidence_level = 'Low'
+                        if results[fbgn] > 0.7:
+                            confidence_level = 'High'
+                        elif results[fbgn] > 0.5:
+                            confidence_level = 'Med'
                         print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
+
                         try:
-                            send_entity_tag_to_abc(reference_curie=ref_id,
+                            send_entity_tag_to_abc(reference_curie=str(ref_id),
                                                    species=species,
                                                    topic=args.topic,
                                                    entity_type=args.topic,
                                                    entity=fbgn,
                                                    confidence_score=round(results[fbgn], 2),
+                                                   confidence_level=confidence_level,
                                                    tet_source_id=tet_source_id,
                                                    novel_data=False)
                         except Exception as e:
+                            okay = False
                             print(f"Problem sending entity tag to abc: {e}")
-                    print("Finished successfully but with results :-)")
-                    if not set_job_success(job):
-                        print(f"Problem setting to job success {job}!!!")
+                    if okay:
+                        print("Finished successfully but with results :-)")
+                        if not set_job_success(job):
+                            print(f"Problem setting to job success {job}!!!")
                 else:
                     if status == 0:
-                        if not send_entity_tag_to_abc(
-                                reference_curie=ref_id,
-                                species=species,
-                                topic=args.topic,
-                                negated=True,
-                                tet_source_id=tet_source_id,
-                                novel_data=False
-                            ):
+                        stat = send_entity_tag_to_abc(
+                            reference_curie=ref_id,
+                            species=species,
+                            topic=args.topic,
+                            negated=True,
+                            tet_source_id=tet_source_id,
+                            novel_data=False
+                        )
+                        if not stat:
                             print(f"PROBLEM sending negated job data {job}!!!")
                         print(f"Job finished BUT No data. reference_curie={ref_id}")
                         if not set_job_success(job):
