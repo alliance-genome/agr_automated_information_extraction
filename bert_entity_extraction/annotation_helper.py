@@ -301,14 +301,17 @@ def main():  # noqa C901
                 if results:
                     for fbgn in results:
                         print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
-                        send_entity_tag_to_abc(reference_curie=ref_id,
-                                               species=species,
-                                               topic=args.topic,
-                                               entity_type=args.topic,
-                                               entity=fbgn,
-                                               confidence_score=round(results[fbgn], 2),
-                                               tet_source_id=tet_source_id,
-                                               novel_data=False)
+                        try:
+                            send_entity_tag_to_abc(reference_curie=ref_id,
+                                                   species=species,
+                                                   topic=args.topic,
+                                                   entity_type=args.topic,
+                                                   entity=fbgn,
+                                                   confidence_score=round(results[fbgn], 2),
+                                                   tet_source_id=tet_source_id,
+                                                   novel_data=False)
+                        except Exception as e:
+                            print(f"Problem sending entity tag to abc: {e}")
                     print("Finished successfully but with results :-)")
                     if not set_job_success(job):
                         print(f"Problem setting to job success {job}!!!")

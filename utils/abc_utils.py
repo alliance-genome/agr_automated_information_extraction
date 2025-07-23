@@ -178,22 +178,25 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
 def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
-    tet_data = json.dumps({
-        "created_by": "default_user",
-        "updated_by": "default_user",
-        "topic": topic,
-        "entity_type": entity_type,
-        "entity_id_validation": "alliance" if entity else None,
-        "entity": entity,
-        "species": species,
-        "topic_entity_tag_source_id": tet_source_id,
-        "negated": negated,
-        "novel_topic_data": novel_data,
-        "confidence_score": confidence_score,
-        "confidence_level": confidence_level,
-        "reference_curie": reference_curie,
-        "force_insertion": True
-    }).encode('utf-8')
+    try:
+        tet_data = json.dumps({
+            "created_by": "default_user",
+            "updated_by": "default_user",
+            "topic": topic,
+            "entity_type": entity_type,
+            "entity_id_validation": "alliance" if entity else None,
+            "entity": entity,
+            "species": species,
+            "topic_entity_tag_source_id": tet_source_id,
+            "negated": negated,
+            "novel_topic_data": novel_data,
+            "confidence_score": confidence_score,
+            "confidence_level": confidence_level,
+            "reference_curie": reference_curie,
+            "force_insertion": True
+        }).encode('utf-8')
+    except Exception as e:
+        print(f"PROBLEM with json dumps. Exception: {e}")
     headers = generate_headers(token)
     try:
         create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
