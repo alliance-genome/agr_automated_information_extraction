@@ -309,15 +309,27 @@ def main():  # noqa C901
                         print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
 
                         try:
-                            send_entity_tag_to_abc(reference_curie=str(ref_id),
-                                                   species=species,
-                                                   topic=args.topic,
-                                                   entity_type=args.topic,
-                                                   entity=fbgn,
-                                                   confidence_score=round(results[fbgn], 2),
-                                                   confidence_level=confidence_level,
-                                                   tet_source_id=tet_source_id,
-                                                   novel_data=False)
+                            stat = send_entity_tag_to_abc(
+                                reference_curie=str(ref_id),
+                                species=species,
+                                topic=args.topic,
+                                entity_type=args.topic,
+                                entity=fbgn,
+                                confidence_score=round(results[fbgn], 2),
+                                confidence_level=confidence_level,
+                                tet_source_id=tet_source_id,
+                                novel_data=False)
+                            if not stat:
+                                print(f"""reference_curie={str(ref_id)},
+                                species={species},
+                                topic={args.topic},
+                                entity_type={args.topic},
+                                entity={fbgn},
+                                confidence_score={round(results[fbgn], 2)},
+                                confidence_level={confidence_level},
+                                tet_source_id={tet_source_id},
+                                novel_data=False""")
+                                okay = False
                         except Exception as e:
                             okay = False
                             print(f"Problem sending entity tag to abc: {e}")
