@@ -1,16 +1,36 @@
 #!/usr/bin/env python3
+"""
+Speedups:
+- Cache curated entities (names+CURIEs) per (MOD, entity_type) on disk & RAM.
+- Pre-filter fulltext to only likely-entity sentences before NER.
+- Batch NER safely; fallback if tokenizer lacks pad_token_id.
+- Log timing/progress during each batch.
+- Skip/quiet HuggingFace pipeline for unsupported custom models.
+
+CLI:
+    --tune-threshold          Tune TF-IDF threshold (slow)
+    -t PATH / --test-output   Write "<curie>\t<entities>" to PATH instead of sending tags
+    -T CURIE --topic CURIE    Filter topics (repeatable) eg -T ATP:0000027
+    -m MOD   --mod MOD        Filter MODs (repeatable) eg -m WB
+    --ner-batch INT           HF NER batch size (default 16)
+    --no-prefilter            Disable regex/dictionary prefilter (slower)
+    --log-every INT           Log progress every N papers (default 10)
+"""
 import argparse
 import copy
+import json
 import logging
 import os
 import re
 import sys
-from collections import Counter
-from typing import List, Tuple, Set
-
+import time
+from pathlib import Path
+from typing import List, Tuple
 import dill
 import requests
 from transformers import pipeline
+from transformers.modeling_utils import PreTrainedModel
+from transformers.utils.logging import set_verbosity_error
 
 from utils.abc_utils import (
     load_all_jobs,
@@ -23,20 +43,35 @@ from utils.abc_utils import (
     send_entity_tag_to_abc,
     get_model_data,
     set_job_failure,
+    get_all_curated_entities,  # wrapped by cache
 )
 from utils.tei_utils import AllianceTEI
+
+# Silence HF info/warnings entirely
+set_verbosity_error()
 
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------- #
-# Caches                                                                #
+# CACHES & CONSTANTS                                                    #
 # --------------------------------------------------------------------- #
 _MODEL_CACHE = {}
 _PIPE_CACHE = {}
+_ENTITY_CACHE = {}  # (mod_abbr, entity_type) -> (names, mapping)
+ENTITY_CACHE_DIR = Path("/data/agr_entity_extraction/cache")
+ENTITY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-# --------------------------------------------------------------------- #
-# Target entities (for threshold tuning)                                #
-# --------------------------------------------------------------------- #
+GENERIC_NAME_PATTERN = re.compile(r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9:_\-]+\b')
+
+TOPIC2TYPE = {
+    "ATP:0000027": "strain",
+    "ATP:0000110": "transgenic_allele",
+    "ATP:0000006": "allele",
+    "ATP:0000123": "species",
+    "ATP:0000005": "gene",
+}
+
+# Only used for threshold tuning path
 STRAIN_TARGET_ENTITIES = {
     "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
     "AGRKB:101000000641132": ["EG4322", "GE24"],
@@ -93,13 +128,51 @@ GENE_TARGET_ENTITIES = {
                               "fat-7", "fzo-1", "pcyt-1", "seip-1"],
 }
 
-# regex tokens with ≥1 letter & ≥1 digit
-GENERIC_NAME_PATTERN = re.compile(
-    r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9:_\-]+\b'
-)
 
 # --------------------------------------------------------------------- #
-# Helpers                                                               #
+# Entity list caching / priming                                         #
+# --------------------------------------------------------------------- #
+def _entity_cache_path(mod_abbr: str, entity_type: str) -> Path:
+    return ENTITY_CACHE_DIR / f"{mod_abbr}_{entity_type}.json"
+
+
+def get_all_curated_entities_cached(mod_abbreviation: str, entity_type_str: str):
+    key = (mod_abbreviation, entity_type_str)
+    if key in _ENTITY_CACHE:
+        return _ENTITY_CACHE[key]
+
+    cache_file = _entity_cache_path(mod_abbreviation, entity_type_str)
+    if cache_file.exists():
+        with cache_file.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        names = data["names"]
+        mapping = data["mapping"]
+        _ENTITY_CACHE[key] = (names, mapping)
+        return names, mapping
+
+    # Not cached -> call once
+    names, mapping = get_all_curated_entities(mod_abbreviation, entity_type_str)
+    with cache_file.open("w", encoding="utf-8") as fh:
+        json.dump({"names": names, "mapping": mapping}, fh)
+    _ENTITY_CACHE[key] = (names, mapping)
+    return names, mapping
+
+
+def topic_to_entity_type(topic: str) -> str:
+    return TOPIC2TYPE.get(topic, "gene")
+
+
+def prime_model_entities(model, mod_abbr: str, topic: str):
+    entity_type = topic_to_entity_type(topic)
+    names, mapping = get_all_curated_entities_cached(mod_abbr, entity_type)
+    model.entities_to_extract = names
+    model.name_to_curie_mapping = mapping
+    model.upper_to_original_mapping = {n.upper(): n for n in names}
+    model.alliance_entities_loaded = True
+
+
+# --------------------------------------------------------------------- #
+# Model / pipeline helpers                                              #
 # --------------------------------------------------------------------- #
 def get_model(mod_abbr: str, topic: str, path: str):
     k = (mod_abbr, topic)
@@ -109,17 +182,43 @@ def get_model(mod_abbr: str, topic: str, path: str):
 
 
 def get_pipe(mod_abbr: str, topic: str, model):
+    """
+    Return a HF token-classification pipeline if the model is compatible.
+    Otherwise return None (we'll use regex/dictionary only).
+    """
     k = (mod_abbr, topic)
-    if k not in _PIPE_CACHE:
+    if k in _PIPE_CACHE:
+        return _PIPE_CACHE[k]
+
+    if isinstance(model, PreTrainedModel) and model.__class__.__name__.endswith("ForTokenClassification"):
         _PIPE_CACHE[k] = pipeline(
             "ner",
             model=model,
             tokenizer=model.tokenizer,
             aggregation_strategy="simple"
         )
+    else:
+        _PIPE_CACHE[k] = None
     return _PIPE_CACHE[k]
 
 
+def _run_ner_batched(pipe, texts: List[str], batch_size: int):
+    if pipe is None:
+        return [[] for _ in texts]  # no NER results
+    tok = pipe.tokenizer
+    if getattr(tok, "pad_token_id", None) is None:
+        if getattr(tok, "eos_token_id", None) is not None:
+            tok.pad_token_id = tok.eos_token_id
+            tok.pad_token = getattr(tok, "eos_token", None) or tok.convert_ids_to_tokens(tok.eos_token_id)
+        else:
+            logger.debug("No pad_token_id; running NER per-text.")
+            return [pipe(t) for t in texts]
+    return pipe(texts, batch_size=batch_size)
+
+
+# --------------------------------------------------------------------- #
+# Extraction helpers                                                    #
+# --------------------------------------------------------------------- #
 def extract_entities_from_title_abstract(model, title: str, abstract: str) -> Tuple[List[str], List[str]]:
     gold = set(model.entities_to_extract)
     gold_up = {g.upper() for g in gold}
@@ -141,8 +240,30 @@ def extract_entities_from_title_abstract(model, title: str, abstract: str) -> Tu
     return list(ents_title), list(ents_abs)
 
 
+def prefilter_text(fulltext: str, model) -> str:
+    """
+    Only keep sentences/paragraphs likely to contain entities:
+      - match generic pattern (letters+digits) OR
+      - contain known entity substrings (case-insensitive check)
+    Fallback to fulltext if nothing keeps.
+    """
+    if not fulltext:
+        return ""
+    gold_up = {e.upper() for e in model.entities_to_extract}
+    pieces = re.split(r'(?<=[\.\?\!])\s+', fulltext)
+    kept = []
+    for p in pieces:
+        if GENERIC_NAME_PATTERN.search(p):
+            kept.append(p)
+            continue
+        up = p.upper()
+        # cheap substring check (can still be heavy if gold_up huge; remove if too slow)
+        if any(g in up for g in gold_up):
+            kept.append(p)
+    return " ".join(kept) if kept else fulltext
+
+
 def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model) -> List[str]:
-    """Combine NER hits + title/abstract tokens + regex fallback."""
     gold_up = {e.upper() for e in model.entities_to_extract}
 
     ents_full = {
@@ -184,7 +305,7 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
         logger.info("Classification model downloaded for mod=%s, topic=%s.", mod_abbr, topic)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning("Classification model not found for mod=%s, topic=%s. Skipping.", mod_abbr, topic)
+            logger.warning("Model not found for mod=%s, topic=%s. Skipping.", mod_abbr, topic)
             return None
         raise
 
@@ -258,18 +379,7 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
 # --------------------------------------------------------------------- #
 # Core processing                                                       #
 # --------------------------------------------------------------------- #
-def process_entity_extraction_jobs(
-    mod_id,
-    topic,
-    jobs,
-    test_mode: bool = False,
-    test_fh=None,
-    ner_batch_size: int = 16,
-):  # noqa: C901
-    """
-    If test_mode=True, DO NOT call send_entity_tag_to_abc.
-    Instead write: "<curie>\t<pipe_separated_entities>\\n" to test_fh immediately.
-    """
+def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10):  # noqa: C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
 
     tet_source_id = None
@@ -302,6 +412,10 @@ def process_entity_extraction_jobs(
         raise
 
     model = get_model(mod_abbr, topic, model_fp)
+    if not getattr(model, "alliance_entities_loaded", False):
+        logger.info("Priming Alliance entity lists for %s/%s", mod_abbr, topic)
+        prime_model_entities(model, mod_abbr, topic)
+
     ner_pipe = get_pipe(mod_abbr, topic, model)
 
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
@@ -312,10 +426,8 @@ def process_entity_extraction_jobs(
         jobs_to_process = jobs_to_process[classification_batch_size:]
 
         ref_map = {j["reference_curie"]: j for j in job_batch}
-        logger.info("Processing batch of %d jobs. Remaining: %d",
-                    len(job_batch), len(jobs_to_process))
+        logger.info("Processing batch of %d jobs. Remaining: %d", len(job_batch), len(jobs_to_process))
 
-        # Prep TEI dir
         out_dir = "/data/agr_entity_extraction/to_extract"
         os.makedirs(out_dir, exist_ok=True)
         for f in os.listdir(out_dir):
@@ -323,9 +435,10 @@ def process_entity_extraction_jobs(
 
         download_tei_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
 
-        texts: List[str] = []
         metas: List[Tuple[str, dict, str, str, str]] = []  # (curie, job, title, abstract, fulltext)
+        texts_for_ner: List[str] = []
 
+        # ---- Prepare TEIs ----
         for fname in os.listdir(out_dir):
             curie = fname.split(".")[0].replace("_", ":")
             job = ref_map.get(curie)
@@ -359,17 +472,24 @@ def process_entity_extraction_jobs(
                 logger.warning("Title error for %s: %s. Ignoring.", curie, e)
                 title = ""
 
-            texts.append(fulltext)
+            text_for_ner = prefilter_text(fulltext, model) if prefilter else fulltext
+
+            texts_for_ner.append(text_for_ner)
             metas.append((curie, job, title, abstract, fulltext))
 
-        if not texts:
+        if not texts_for_ner:
             logger.info("No valid TEIs in this batch.")
             continue
 
-        # Batched NER inference
-        results_list = ner_pipe(texts, batch_size=ner_batch_size, truncation=True)
+        # ---- Run NER (or stub) ----
+        t0 = time.perf_counter()
+        results_list = _run_ner_batched(ner_pipe, texts_for_ner, ner_batch_size)
+        total_time = time.perf_counter() - t0
+        logger.info("NER (or stub) on %d docs took %.1fs (%.2fs/doc)",
+                    len(texts_for_ner), total_time, total_time / len(texts_for_ner))
 
-        for (curie, job, title, abstract, fulltext), results in zip(metas, results_list):
+        # ---- Post-process ----
+        for idx, ((curie, job, title, abstract, fulltext), results) in enumerate(zip(metas, results_list), 1):
             all_entities = build_entities_from_results(results, title, abstract, fulltext, model)
 
             if test_mode:
@@ -403,15 +523,18 @@ def process_entity_extraction_jobs(
                             novel_data=novel_data
                         )
 
-            logger.info("%s = %s", curie, all_entities)
+            if idx % log_every == 0:
+                logger.info("Processed %d/%d in this batch", idx, len(metas))
+
             set_job_started(job)
             set_job_success(job)
+            logger.info("%s = %s", curie, all_entities)
 
         logger.info("Finished processing batch of %d jobs.", len(job_batch))
 
 
 # --------------------------------------------------------------------- #
-# CLI / main                                                            #
+# Main                                                                  #
 # --------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description='Extract biological entities from documents')
@@ -428,6 +551,10 @@ def main():
                         help="Only process these MOD abbreviations (e.g. WB, ZFIN). Repeatable.")
     parser.add_argument("--ner-batch", type=int, default=16,
                         help="Batch size for the HuggingFace NER pipeline (default: 16).")
+    parser.add_argument("--no-prefilter", action="store_true",
+                        help="Disable regex/dictionary prefiltering before NER (slower).")
+    parser.add_argument("--log-every", type=int, default=10,
+                        help="Log progress every N papers inside a batch (default: 10).")
 
     args = parser.parse_args()
 
@@ -440,15 +567,14 @@ def main():
 
     mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
 
-    # ---- filtering by topic/mod ----
     wanted_topics = set(args.topic) if args.topic else None
     wanted_mods = {m.upper() for m in (args.mod or [])} if args.mod else None
     _mod_cache = {}
 
-    def mod_id_to_abbr(mod_id):
-        if mod_id not in _mod_cache:
-            _mod_cache[mod_id] = get_cached_mod_abbreviation_from_id(mod_id).upper()
-        return _mod_cache[mod_id]
+    def mod_id_to_abbr(mid):
+        if mid not in _mod_cache:
+            _mod_cache[mid] = get_cached_mod_abbreviation_from_id(mid).upper()
+        return _mod_cache[mid]
 
     filtered = {}
     for (mod_id, topic), jobs in mod_topic_jobs.items():
@@ -463,11 +589,10 @@ def main():
         logger.warning("No jobs matched the provided filters (topic/mod). Exiting.")
         return
 
-    # ---- tune threshold path ----
     if args.tune_threshold:
         for (mod_id, topic), jobs in mod_topic_jobs.items():
-            TARGET_ENTITIES = STRAIN_TARGET_ENTITIES if topic == 'ATP:0000027' else GENE_TARGET_ENTITIES
-            best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET_ENTITIES)
+            TARGET = STRAIN_TARGET_ENTITIES if topic == 'ATP:0000027' else GENE_TARGET_ENTITIES
+            best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET)
             logger.info("Best TF-IDF threshold for %s/%s: %s", mod_id, topic, best)
         logger.info("Threshold tuning complete.")
         return
@@ -483,6 +608,8 @@ def main():
                 test_mode=test_mode,
                 test_fh=test_fh,
                 ner_batch_size=args.ner_batch,
+                prefilter=not args.no_prefilter,
+                log_every=args.log_every,
             )
     finally:
         if test_fh:
