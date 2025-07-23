@@ -21,17 +21,14 @@ import os
 import argparse
 import configparser
 import sys
-import csv
 import logging
 import subprocess
-# import tqdm
 import requests
 import xmltodict
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from retry import retry
-# from gene_finding import (get_genes)
 from gene_finding import deep_learning
 from utils.abc_utils import load_all_jobs, get_tet_source_id, \
     set_job_started, set_job_success, send_entity_tag_to_abc, \
@@ -324,7 +321,6 @@ def main():  # noqa C901
                     os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
                     gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 if results:
-                    print(f"results {results}")
                     for fbgn in results:
                         print(f"fbgn {fbgn}")
                         # send_entity_tag_to_abc(reference_curie=pmid,
@@ -366,24 +362,6 @@ def main():  # noqa C901
             logging.warning(f"Error processing {pmcid}: No ftp file available")
             print("Start Failed No ftp file available")
             set_job_failure(job_id)
-    with open(config_parser.get('PATHS', 'output'), 'w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f, delimiter='\t', quotechar='"', quoting=csv.QUOTE_MINIMAL, escapechar='\\')
-        # write data to file
-        # if we're using deep learning
-        if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
-            for pmid in results:
-                for fbgn in results[pmid]:
-                    # when using deep learning, we only output the pmid, fbgn, and confidence
-                    writer.writerow([pmid, fbgn, results[pmid][fbgn]])
-                    #send_entity_tag_to_abc(reference_curie=pmid,
-                    #                       species=species,
-                    #                       topic=args.topic,
-                    #                       entity_type=args.topic,
-                    #                       entity=fbgn,
-                    #                       confidence_score=round(results[pmid][fbgn], 2),
-                    #                       tet_source_id=tet_source_id,
-                    #                       novel_data=False)
-                    print(f"MATCH: reference_curie={pmid}, entity={fbgn}, confidence_score={round(results[pmid][fbgn], 2)}")
 
 
 if __name__ == '__main__':

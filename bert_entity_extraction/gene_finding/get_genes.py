@@ -151,7 +151,6 @@ def get_genes(paper_file: str, gene_dict: typing.Dict[str, str], snippet_type: s
                     relevant_gene_mentions += 1
 
     output = dict()
-    print(f"tags: {tags}")
     for gene, occurrences in tags.items():
         confidences = {}
         if gene_freq:
