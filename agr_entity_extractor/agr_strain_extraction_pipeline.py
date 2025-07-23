@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 """
-Speedups:
-- Cache curated entities (names+CURIEs) per (MOD, entity_type) on disk & RAM.
-- Pre-filter fulltext to only likely-entity sentences before NER.
-- Batch NER safely; fallback if tokenizer lacks pad_token_id.
-- Log timing/progress during each batch.
-- Skip/quiet HuggingFace pipeline for unsupported custom models.
-
-CLI:
-    --tune-threshold          Tune TF-IDF threshold (slow)
-    -t PATH / --test-output   Write "<curie>\t<entities>" to PATH instead of sending tags
-    -T CURIE --topic CURIE    Filter topics (repeatable) eg -T ATP:0000027
-    -m MOD   --mod MOD        Filter MODs (repeatable) eg -m WB
-    --ner-batch INT           HF NER batch size (default 16)
-    --no-prefilter            Disable regex/dictionary prefilter (slower)
-    --log-every INT           Log progress every N papers (default 10)
+args → load jobs → filter jobs
+    └─ for (mod, topic):
+        ↓ download model & entity lists
+        ↓ build cache/pipeline
+        ↓ while jobs left:
+            - download TEIs
+            - prefilter
+            - batch NER
+            - merge hits & send/write
+            - mark jobs done
 """
 import argparse
 import copy
