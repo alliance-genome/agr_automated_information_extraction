@@ -280,17 +280,17 @@ def main():  # noqa C901
     # If we do other mods this will need changing to a look up
     species = 'NCBITaxon:7227'
     for job in jobs:
+        print(f"Start Job {job}")
+        set_job_started(job)
         ref_id = job['reference_id']
         if ref_id not in ref_to_pmc:
-            set_job_failure(job)
             print(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
+            set_job_failure(job)
             continue
         pmcid = ref_to_pmc[ref_id]
         print(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
         ftp = getFtpPath(pmcid)
         if ftp is not None:
-            print("Start Job")
-            set_job_started(job)
             download(ftp)
             getXmlFromTar(pmcid)
             try:
@@ -299,6 +299,7 @@ def main():  # noqa C901
                     gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 if results:
                     for fbgn in results:
+                        print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                         send_entity_tag_to_abc(reference_curie=ref_id,
                                                species=species,
                                                topic=args.topic,
@@ -307,7 +308,6 @@ def main():  # noqa C901
                                                confidence_score=round(results[fbgn], 2),
                                                tet_source_id=tet_source_id,
                                                novel_data=False)
-                        print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                     print("Finished successfully but with results :-)")
                     set_job_success(job)
                 else:
@@ -320,16 +320,16 @@ def main():  # noqa C901
                             tet_source_id=tet_source_id,
                             novel_data=False
                         )
-                        set_job_success(job)
                         print(f"Job finished BUT No data. reference_curie={ref_id}")
+                        set_job_success(job)
                     else:
-                        set_job_failure(job)
                         print("job failed NO nxml")
+                        set_job_failure(job)
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
-                set_job_failure(job)
                 print("job failed somat went pear shaped")
+                set_job_failure(job)
                 logging.warning(f"Error processing {pmcid}: {str(e)}")
         else:
             logging.warning(f"Error processing {pmcid}: No ftp file available")
