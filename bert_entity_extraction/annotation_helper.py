@@ -196,7 +196,7 @@ def get_ateam_dicts() -> (dict[str, str], dict[str, str]):
 def get_pmcids_for_references(jobs):
     """Look up pmc_ids for the reference in the jobs."""
     refs = [str(j['reference_id']) for j in jobs]
-    pmc_to_ref = {}
+    ref_to_pmc = {}
     if refs:
         db_session = create_postgres_session('PSQL')
         print(f"refs is {refs[:5]}")
@@ -212,10 +212,10 @@ def get_pmcids_for_references(jobs):
             # PMCID:PMC11238292
             print(f"sql res: {row}")
             pmcid = row[1][6:]
-            pmc_to_ref[pmcid] = row[0]
+            ref_to_pmc[row[0]] = pmcid
     else:
         print("No jobs to process")
-    return pmc_to_ref
+    return ref_to_pmc
 
 
 def get_data_from_alliance_db():
@@ -223,16 +223,15 @@ def get_data_from_alliance_db():
     Get jobs to run.
     Get pmc to reference_id for those jobs
     """
-    input_list = []
     jobs = {}
     print(f"ARGS: {args}")
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
-    pmc_to_ref = {}
+    ref_to_pmc = {}
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         print(f"mod_id = {mod_id}, topic = {topic}, first job {jobs[0]}")
-        pmc_to_ref = get_pmcids_for_references(jobs)
-        print(f"pmc_to_ref = {pmc_to_ref}")
-    return input_list, jobs, pmc_to_ref
+        ref_to_pmc = get_pmcids_for_references(jobs)
+        print(f"ref_to_pmc = {ref_to_pmc}")
+    return jobs, ref_to_pmc
 
 
 def removeFiles(pmcid: str):
@@ -268,7 +267,7 @@ def main():  # noqa C901
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    input_list, jobs, pmc_to_ref = get_data_from_alliance_db()
+    jobs, ref_to_pmc = get_data_from_alliance_db()
     # need ref_id to job_id
     ref_to_job = {item['reference_id']: item['reference_workflow_tag_id'] for item in jobs}
     print(ref_to_job)
@@ -304,35 +303,41 @@ def main():  # noqa C901
         source_description="Alliance entity extraction pipeline using machine learning "
                            "to identify papers of interest for curation data types")
     species = 'NCBITaxon:7227'
-    for pmcid in pmc_to_ref.keys():
-        ref_id = pmc_to_ref[pmcid]
-        job_id = ref_to_job[ref_id]
+    # for pmcid in pmc_to_ref.keys():
+    for job in jobs:
+        ref_id = job['reference_id']
+        job_id = job['reference_workflow_tag_id']
+        pmcid = ref_to_pmc[ref_id]
         print(f"pmcid -> {pmcid} job_id-> {job_id} ref_id -> {ref_id}")
         ftp = getFtpPath(pmcid)
         if ftp is not None:
             print("Start Job")
+            # set_job_started(job_id)
             download(ftp)
             getXmlFromTar(pmcid)
-            result = None
             try:
-                if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
-                    result, status = deep_learning.get_genes_with_dl(
-                        os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
-                        gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
+                results, status = deep_learning.get_genes_with_dl(
+                    os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
+                    gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
+                if results:
+                    print(f"results {results}")
+                    for fbgn in results:
+                        print(f"fbgn {fbgn}")
+                        # send_entity_tag_to_abc(reference_curie=pmid,
+                        #                       species=species,
+                        #                       topic=args.topic,
+                        #                       entity_type=args.topic,
+                        #                       entity=fbgn,
+                        #                       confidence_score=round(results[pmid][fbgn], 2),
+                        #                       tet_source_id=tet_source_id,
+                        #                       novel_data=False)
+                        print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[ref_id][fbgn], 2)}")
+                        # results[ref_id] = result
+                    print("Finished successfully but with results :-)")
+                    # set_job_success(job_id)
                 else:
-                    result = get_genes.get_genes(
-                        os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
-                        gene_dict, config_parser.get('PARAMETERS', 'snippet_type'),
-                        config_parser.getboolean('PARAMETERS', 'output_gene_occurence'),
-                        config_parser.getboolean('PARAMETERS', 'output_gene_frequency'),
-                        config_parser.getboolean('PARAMETERS', 'output_word_frequency'),
-                        config_parser.getboolean('PARAMETERS', 'output_raw_occurence'),
-                        EXCEPTIONS_PATH)
-                if result:
-                    results[ref_id] = result
-                else:
-                    if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
-                        if status == 0:
+                    if status == 0:
+                            print("Finished successfully but no results")
                             #send_entity_tag_to_abc(
                             #    reference_curie=ref_id,
                             #    species=species,
@@ -341,18 +346,22 @@ def main():  # noqa C901
                             #    tet_source_id=tet_source_id,
                             #    novel_data=False
                             #)
-                            print(f"No data reference_curie={ref_id}")
-                        else:
-                            results[ref_id] = {'No_nxml': 0.000000000000000}
-                    else:
-                        results[ref_id] = [[], []]
+                            #set_job_success(job_id)
+                            print(f"Job finished BUT No data. reference_curie={ref_id}")
+                     else:
+                            # set_job_failure(job_id)
+                            print("job failed NO nxml")
+                            # results[ref_id] = {'No_nxml': 0.000000000000000}
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
+                set_job_failure(job_id)
+                print("job failed somat went pear shaped")
                 logging.warning(f"Error processing {pmcid}: {str(e)}")
         else:
             logging.warning(f"Error processing {pmcid}: No ftp file available")
-
+            print("Start Failed No ftp file available")
+            set_job_failure(job_id)
     with open(config_parser.get('PATHS', 'output'), 'w', newline='', encoding='utf-8') as f:
         writer = csv.writer(f, delimiter='\t', quotechar='"', quoting=csv.QUOTE_MINIMAL, escapechar='\\')
         # write data to file
@@ -371,29 +380,6 @@ def main():  # noqa C901
                     #                       tet_source_id=tet_source_id,
                     #                       novel_data=False)
                     print(f"MATCH: reference_curie={pmid}, entity={fbgn}, confidence_score={round(results[pmid][fbgn], 2)}")
-        else:
-            for pmid in results:
-                confidences = results[pmid][0]
-                occurrences = results[pmid][1]
-                for fbgn in confidences:
-                    scores = []
-                    if get_genes.GENES in confidences[fbgn]:
-                        scores.append(confidences[fbgn][get_genes.GENES])
-                    if get_genes.WORD in confidences[fbgn]:
-                        scores.append(confidences[fbgn][get_genes.WORD])
-                    if get_genes.RAW in confidences[fbgn]:
-                        scores.append(confidences[fbgn][get_genes.RAW])
-                    snippet_type = config_parser.get('PARAMETERS', 'snippet_type')
-                    if snippet_type != 'none' and config_parser.getboolean('PARAMETERS', 'output_gene_occurence'):
-                        for _, occurrences_for_gene in enumerate(occurrences[fbgn]):
-                            genes_occurrence = occurrences_for_gene[0]
-                            snippet = occurrences_for_gene[1]
-                            writer.writerow([pmid, fbgn, genes_occurrence, snippet] + scores)
-                    elif snippet_type != 'none' or config_parser.getboolean('PARAMETERS', 'output_gene_occurence'):
-                        for occurrence in occurrences[fbgn]:
-                            writer.writerow([pmid, fbgn, occurrence] + scores)
-                    else:
-                        writer.writerow([pmid, fbgn] + scores)
 
 
 if __name__ == '__main__':
