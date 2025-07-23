@@ -17,6 +17,8 @@ from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
 
+_MODEL_CACHE = {}
+_PIPE_CACHE = {}
 
 STRAIN_TARGET_ENTITIES = {
     "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
@@ -221,6 +223,8 @@ def process_entity_extraction_jobs(
             os.remove(os.path.join("/data/agr_entity_extraction/to_extract", file))
         download_tei_files_for_references(list(reference_curie_job_map.keys()),
                                           "/data/agr_entity_extraction/to_extract", mod_abbr)
+
+        texts, metas = [], []
         for file in os.listdir("/data/agr_entity_extraction/to_extract"):
             curie = file.split(".")[0].replace("_", ":")
             job = reference_curie_job_map[curie]
@@ -247,29 +251,28 @@ def process_entity_extraction_jobs(
                 title = tei_obj.get_title()
             except Exception as e:
                 logger.warning(f"Error getting title for {curie}: {str(e)}. Ignoring field.")
-            if topic in ['ATP:0000027', 'ATP:0000110']:
-                all_entities = extract_all_entities(fulltext=fulltext,
-                                                    model_path=entity_extraction_model_file_path,
-                                                    title=title,
-                                                    abstract=abstract)
-            else:
-                entity_extraction_model.load_entities_dynamically()
-                nlp_pipeline = pipeline("ner", model=entity_extraction_model,
-                                        tokenizer=entity_extraction_model.tokenizer)
-                all_entities = extract_all_entities_with_loaded_model(
-                    nlp_pipeline=nlp_pipeline,
-                    fulltext=fulltext,
-                    title=title,
-                    abstract=abstract,
-                    entity_extraction_model=entity_extraction_model
-                )
+            texts.append(fulltext)
+            metas.append((curie, job, title, abstract))
+
+        model = get_model(mod_abbr, topic, entity_extraction_model_file_path)
+        ner_pipe = get_pipe(mod_abbr, topic, model)
+        # one call for many docs
+        results_list = ner_pipe(texts, batch_size=16, truncation=True)
+
+        for (curie, job, title, abstract), results in zip(metas, results_list):
+            all_entities = extract_all_entities(
+                fulltext=fulltext,
+                title=title,
+                abstract=abstract,
+                model=model,
+                ner_pipe=ner_pipe
+            )
 
             if test_mode:
                 ents_str = " | ".join(sorted(all_entities))
                 line = f"{curie}\t{ents_str}\n"
                 test_fh.write(line)
                 test_fh.flush()
-                logger.info(f"[TEST] wrote: {line.strip()}")
             else:
                 logger.info("Sending 'no data' tag to ABC.")
                 if not all_entities:
@@ -304,17 +307,36 @@ def process_entity_extraction_jobs(
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
 
 
-def extract_entities_from_title_abstract(entity_extraction_model, title, abstract):
+def get_model(mod_abbr, topic, path):
+    k = (mod_abbr, topic)
+    if k not in _MODEL_CACHE:
+        _MODEL_CACHE[k] = dill.load(open(path, "rb"))
+    return _MODEL_CACHE[k]
+
+
+def get_pipe(mod_abbr, topic, model):
+    k = (mod_abbr, topic)
+    if k not in _PIPE_CACHE:
+        _PIPE_CACHE[k] = pipeline(
+            "ner",
+            model=model,
+            tokenizer=model.tokenizer,
+            aggregation_strategy="simple"
+        )
+    return _PIPE_CACHE[k]
+
+
+def extract_entities_from_title_abstract(model, title, abstract):
     """
     prepare gold sets (mixed‐case and uppercase)
     gold: the set of all valid entity names in their original case
     gold_up: an uppercase copy, so we can match case-insensitively later
     """
-    gold = set(entity_extraction_model.entities_to_extract)
+    gold = set(model.entities_to_extract)
     gold_up = {g.upper() for g in gold}
 
     # tokenize title
-    tokenized_title = entity_extraction_model.tokenizer.tokenize(title or "")
+    tokenized_title = model.tokenizer.tokenize(title or "")
     # take any tokens that exactly match an entry in gold
     entities_in_title = set(tokenized_title) & gold
     # uppercase all tokens and intersect with gold_up, adding any new matches
@@ -328,7 +350,7 @@ def extract_entities_from_title_abstract(entity_extraction_model, title, abstrac
             entities_in_title.add(m)
 
     # tokenize abstract
-    tokenized_abstract = entity_extraction_model.tokenizer.tokenize(abstract or "")
+    tokenized_abstract = model.tokenizer.tokenize(abstract or "")
     entities_in_abstract = set(tokenized_abstract) & gold
     entities_in_abstract |= {t.upper() for t in tokenized_abstract} & gold_up
 
@@ -341,20 +363,9 @@ def extract_entities_from_title_abstract(entity_extraction_model, title, abstrac
     return list(entities_in_title), list(entities_in_abstract)
 
 
-def extract_all_entities(fulltext, model_path, title, abstract):
-    # load model & gold list
-    entity_extraction_model = dill.load(open(model_path, "rb"))
-    gold_up = {e.upper() for e in entity_extraction_model.entities_to_extract}
-
-    # 1) NER on fulltext
-    ner = pipeline(
-        "ner",
-        model=entity_extraction_model,
-        tokenizer=entity_extraction_model.tokenizer,
-        aggregation_strategy="simple"
-    )
-    # run NER on the full text (or empty string)
-    results = ner(fulltext or "")
+def extract_all_entities(fulltext, title, abstract, model, ner_pipe):
+    gold_up = {e.upper() for e in model.entities_to_extract}
+    results = ner_pipe(fulltext or "")
     # collect every recognized entity, uppercase it, and keep only those in gold_up
     entities_in_fulltext = {
         ent["word"].upper()
@@ -388,18 +399,6 @@ def extract_all_entities(fulltext, model_path, title, abstract):
                 strains.add(part)
 
     return sorted(strains)
-
-
-def extract_all_entities_with_loaded_model(nlp_pipeline, fulltext, entity_extraction_model, title, abstract):
-    results = nlp_pipeline(fulltext)
-    entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
-    entities_in_title, entities_in_abstract = extract_entities_from_title_abstract(entity_extraction_model, title, abstract)
-    all_entities = set(entities_in_fulltext + entities_in_title + entities_in_abstract)
-    upper_counter = Counter([entity.upper() for entity in all_entities])
-    for upper_entity, count in upper_counter.items():
-        if count > 1:
-            all_entities.remove(upper_entity)
-    return all_entities
 
 
 def main():
