@@ -259,19 +259,15 @@ def main():  # noqa C901
         stream=sys.stdout
     )
     jobs, ref_to_pmc = get_data_from_alliance_db()
-    # need ref_id to job_id
-    ref_to_job = {item['reference_id']: item['reference_workflow_tag_id'] for item in jobs}
     print(f"Number of jobs: {len(jobs)}")
 
-    # unpickle gene dictionary
-    # gene_dict = get_gene_dict()
     gene_dict, fbid_to_symbol = get_ateam_dicts()
-    print(f"gene_dict -> {len(gene_dict)}")
+    print(f"gene_dict has {len(gene_dict)} keys")
     key = list(gene_dict.keys())[0]
     print(f"gene_dict Example: key -> {key} {gene_dict[key]}")
     key = list(fbid_to_symbol.keys())[0]
+    print(f"fbid_to_symbol has {len(fbid_to_symbol)} keys")
     print(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
-    print(f"fbid_to_symbol -> {len(fbid_to_symbol)}")
 
     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
         deep_learning.initialize(config_parser.get('PATHS', 'deep_learning_model'))
@@ -288,7 +284,7 @@ def main():  # noqa C901
         job_id = job['reference_workflow_tag_id']
         if ref_id not in ref_to_pmc:
             # set_job_failure(job_id)
-            print(f"job failed NO PMCID for {ref_id} and job {job_id}")
+            print(f"job failed NO PMCID for reference: {ref_id} and job: {job_id}")
             continue
         pmcid = ref_to_pmc[ref_id]
         print(f"pmcid -> {pmcid} job_id-> {job_id} ref_id -> {ref_id}")
