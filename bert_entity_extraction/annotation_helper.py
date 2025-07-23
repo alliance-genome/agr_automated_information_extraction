@@ -31,7 +31,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from retry import retry
-from gene_finding import (get_genes)
+# from gene_finding import (get_genes)
 from gene_finding import deep_learning
 from utils.abc_utils import load_all_jobs, get_tet_source_id, \
     set_job_started, set_job_success, send_entity_tag_to_abc, \
@@ -307,6 +307,10 @@ def main():  # noqa C901
     for job in jobs:
         ref_id = job['reference_id']
         job_id = job['reference_workflow_tag_id']
+        if ref_id not in ref_to_pmc:
+            # set_job_failure(job_id)
+            print(f"job failed NO PMCID for {ref_id} and job {job_id}")
+            continue
         pmcid = ref_to_pmc[ref_id]
         print(f"pmcid -> {pmcid} job_id-> {job_id} ref_id -> {ref_id}")
         ftp = getFtpPath(pmcid)
