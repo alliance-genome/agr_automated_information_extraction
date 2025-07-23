@@ -126,7 +126,6 @@ def getFtpPath(pmcid: str):
                 ftplink = link['@href']
             assert (".tar.gz" in ftplink)
         time.sleep(config_parser.getint('PARAMETERS', 'sleep_time_between_requests'))
-        print(f"Link is '{ftplink}'")
         return ftplink
     except (requests.exceptions.RequestException, KeyError, AssertionError) as e:
         logging.warning(f"Failed to get FTP path for {pmcid}: {str(e)}")
@@ -281,7 +280,8 @@ def main():  # noqa C901
     species = 'NCBITaxon:7227'
     for job in jobs:
         print(f"Start Job {job}")
-        set_job_started(job)
+        if not set_job_started(job):
+            print(f"Problem setting to job started {job}!!!")
         ref_id = job['reference_id']
         if ref_id not in ref_to_pmc:
             print(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
