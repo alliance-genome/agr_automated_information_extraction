@@ -337,21 +337,21 @@ def main():  # noqa C901
                     # set_job_success(job_id)
                 else:
                     if status == 0:
-                            print("Finished successfully but no results")
-                            #send_entity_tag_to_abc(
-                            #    reference_curie=ref_id,
-                            #    species=species,
-                            #    topic=args.topic,
-                            #    negated=True,
-                            #    tet_source_id=tet_source_id,
-                            #    novel_data=False
-                            #)
-                            #set_job_success(job_id)
-                            print(f"Job finished BUT No data. reference_curie={ref_id}")
-                     else:
-                            # set_job_failure(job_id)
-                            print("job failed NO nxml")
-                            # results[ref_id] = {'No_nxml': 0.000000000000000}
+                        print("Finished successfully but no results")
+                        #send_entity_tag_to_abc(
+                        #    reference_curie=ref_id,
+                        #    species=species,
+                        #    topic=args.topic,
+                        #    negated=True,
+                        #    tet_source_id=tet_source_id,
+                        #    novel_data=False
+                        #)
+                        #set_job_success(job_id)
+                        print(f"Job finished BUT No data. reference_curie={ref_id}")
+                    else:
+                        # set_job_failure(job_id)
+                        print("job failed NO nxml")
+                        # results[ref_id] = {'No_nxml': 0.000000000000000}
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
