@@ -1,25 +1,42 @@
+#!/usr/bin/env python3
 import argparse
 import copy
 import logging
 import os
-import sys
 import re
+import sys
 from collections import Counter
+from typing import List, Tuple, Set
 
 import dill
 import requests
 from transformers import pipeline
 
-from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
-    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
-    set_job_failure
+from utils.abc_utils import (
+    load_all_jobs,
+    get_cached_mod_abbreviation_from_id,
+    get_tet_source_id,
+    download_abc_model,
+    download_tei_files_for_references,
+    set_job_started,
+    set_job_success,
+    send_entity_tag_to_abc,
+    get_model_data,
+    set_job_failure,
+)
 from utils.tei_utils import AllianceTEI
 
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------- #
+# Caches                                                                #
+# --------------------------------------------------------------------- #
 _MODEL_CACHE = {}
 _PIPE_CACHE = {}
 
+# --------------------------------------------------------------------- #
+# Target entities (for threshold tuning)                                #
+# --------------------------------------------------------------------- #
 STRAIN_TARGET_ENTITIES = {
     "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
     "AGRKB:101000000641132": ["EG4322", "GE24"],
@@ -76,103 +93,171 @@ GENE_TARGET_ENTITIES = {
                               "fat-7", "fzo-1", "pcyt-1", "seip-1"],
 }
 
-# generic alphanumeric+colon+underscore+dash tokens with ≥1 letter & ≥1 digit
+# regex tokens with ≥1 letter & ≥1 digit
 GENERIC_NAME_PATTERN = re.compile(
-    r'\b'                # word boundary
-    r'(?=.*[A-Za-z])'    # at least one letter
-    r'(?=.*\d)'          # at least one digit
-    r'[A-Za-z0-9:_\-]+'  # allowed chars
-    r'\b'
+    r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9:_\-]+\b'
 )
 
+# --------------------------------------------------------------------- #
+# Helpers                                                               #
+# --------------------------------------------------------------------- #
+def get_model(mod_abbr: str, topic: str, path: str):
+    k = (mod_abbr, topic)
+    if k not in _MODEL_CACHE:
+        _MODEL_CACHE[k] = dill.load(open(path, "rb"))
+    return _MODEL_CACHE[k]
 
+
+def get_pipe(mod_abbr: str, topic: str, model):
+    k = (mod_abbr, topic)
+    if k not in _PIPE_CACHE:
+        _PIPE_CACHE[k] = pipeline(
+            "ner",
+            model=model,
+            tokenizer=model.tokenizer,
+            aggregation_strategy="simple"
+        )
+    return _PIPE_CACHE[k]
+
+
+def extract_entities_from_title_abstract(model, title: str, abstract: str) -> Tuple[List[str], List[str]]:
+    gold = set(model.entities_to_extract)
+    gold_up = {g.upper() for g in gold}
+
+    tok_title = model.tokenizer.tokenize(title or "")
+    ents_title = (set(tok_title) & gold) | ({t.upper() for t in tok_title} & gold_up)
+    for m in GENERIC_NAME_PATTERN.findall(title or ""):
+        mu = m.upper()
+        if mu in gold_up:
+            ents_title.add(mu)
+
+    tok_abs = model.tokenizer.tokenize(abstract or "")
+    ents_abs = (set(tok_abs) & gold) | ({t.upper() for t in tok_abs} & gold_up)
+    for m in GENERIC_NAME_PATTERN.findall(abstract or ""):
+        mu = m.upper()
+        if mu in gold_up:
+            ents_abs.add(mu)
+
+    return list(ents_title), list(ents_abs)
+
+
+def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model) -> List[str]:
+    """Combine NER hits + title/abstract tokens + regex fallback."""
+    gold_up = {e.upper() for e in model.entities_to_extract}
+
+    ents_full = {
+        r["word"].upper()
+        for r in results
+        if r.get("entity_group") == "ENTITY" and r["word"].upper() in gold_up
+    }
+
+    t_ents, a_ents = extract_entities_from_title_abstract(model, title, abstract)
+    ents_title = {e.upper() for e in t_ents}
+    ents_abs = {e.upper() for e in a_ents}
+
+    regex_hits = {
+        m.upper()
+        for m in GENERIC_NAME_PATTERN.findall(fulltext or "")
+        if m.upper() in gold_up
+    }
+
+    all_up = ents_full | ents_title | ents_abs | regex_hits
+
+    out = set()
+    for tok in all_up:
+        for part in tok.split():
+            if part in gold_up:
+                out.add(part)
+
+    return sorted(out)
+
+
+# --------------------------------------------------------------------- #
+# Threshold tuning                                                      #
+# --------------------------------------------------------------------- #
 def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    entity_extraction_model_file_path = (f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_"
-                                         f"{topic.replace(':', '_')}.dpkl")
+    model_fp = f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_{topic.replace(':', '_')}.dpkl"
     try:
-        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
+        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=model_fp,
                            task_type="biocuration_entity_extraction")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        logger.info("Classification model downloaded for mod=%s, topic=%s.", mod_abbr, topic)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            logger.warning("Classification model not found for mod=%s, topic=%s. Skipping.", mod_abbr, topic)
             return None
-        else:
-            raise
+        raise
 
-    classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
+    batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
-    entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))
-    entity_extraction_model.alliance_entities_loaded = True
+    entity_model = dill.load(open(model_fp, "rb"))
+    entity_model.alliance_entities_loaded = True
 
     best_threshold = 0.1
-    best_similarity = -1
+    best_similarity = -1.0
     thresholds = [i / 10.0 for i in range(1, 51)]
 
     while jobs_to_process:
-        job_batch = jobs_to_process[:classification_batch_size]
-        reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
-        jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
-                    f"Jobs remaining to process: {str(len(jobs_to_process))}")
+        batch = jobs_to_process[:batch_size]
+        ref_map = {job["reference_curie"]: job for job in batch}
+        jobs_to_process = jobs_to_process[batch_size:]
+        logger.info("Processing a batch of %d jobs. Remaining: %d", len(batch), len(jobs_to_process))
 
-        os.makedirs("/data/agr_entity_extraction/to_extract", exist_ok=True)
-        for file in os.listdir("/data/agr_entity_extraction/to_extract"):
-            os.remove(os.path.join("/data/agr_entity_extraction/to_extract", file))
-        download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                          "/data/agr_entity_extraction/to_extract", mod_abbr)
+        out_dir = "/data/agr_entity_extraction/to_extract"
+        os.makedirs(out_dir, exist_ok=True)
+        for f in os.listdir(out_dir):
+            os.remove(os.path.join(out_dir, f))
+        download_tei_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
 
-        for threshold in thresholds:
-            entity_extraction_model.tfidf_threshold = threshold
-            total_similarity = 0
+        for th in thresholds:
+            entity_model.tfidf_threshold = th
+            total_sim = 0.0
+            count = 0
 
-            for file in os.listdir("/data/agr_entity_extraction/to_extract"):
-                curie = file.split(".")[0].replace("_", ":")
+            for f in os.listdir(out_dir):
+                curie = f.split(".")[0].replace("_", ":")
                 try:
-                    tei_obj = AllianceTEI()
-                    tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
+                    tei = AllianceTEI()
+                    tei.load_from_file(os.path.join(out_dir, f))
                 except Exception as e:
-                    logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
+                    logger.warning("Error loading TEI for %s: %s. Skipping.", curie, e)
                     continue
 
-                nlp_pipeline = pipeline("ner", model=entity_extraction_model,
-                                        tokenizer=entity_extraction_model.tokenizer)
+                nlp = pipeline("ner", model=entity_model, tokenizer=entity_model.tokenizer)
                 try:
-                    fulltext = tei_obj.get_fulltext()
+                    fulltext = tei.get_fulltext()
                 except Exception as e:
-                    logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
+                    logger.error("Error getting fulltext for %s: %s. Skipping.", curie, e)
                     continue
 
-                results = nlp_pipeline(fulltext)
-                entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
-                entities_to_extract = set(entity_extraction_model.entities_to_extract)
-                entities_in_title = set(
-                    entity_extraction_model.tokenizer.tokenize(tei_obj.get_title() or "")).intersection(
-                    entities_to_extract)
-                entities_in_abstract = set(
-                    entity_extraction_model.tokenizer.tokenize(tei_obj.get_abstract() or "")).intersection(
-                    entities_to_extract)
-                all_entities = set(entities_in_fulltext).union(entities_in_title).union(entities_in_abstract)
+                results = nlp(fulltext)
+                ents_ft = [r['word'] for r in results if r.get('entity') == "ENTITY"]
+                ents_to_extract = set(entity_model.entities_to_extract)
+                ents_title = set(entity_model.tokenizer.tokenize(tei.get_title() or "")) & ents_to_extract
+                ents_abs = set(entity_model.tokenizer.tokenize(tei.get_abstract() or "")) & ents_to_extract
+                all_ents = set(ents_ft) | ents_title | ents_abs
 
-                # Compute Jaccard similarity
-                all_entities_lower = set(entity.lower() for entity in all_entities)
-                target_set_lower = set(entity.lower() for entity in target_entities.get(curie, []))
-                similarity = len(all_entities_lower.intersection(target_set_lower)) / len(
-                    all_entities_lower.union(target_set_lower))
-                total_similarity += similarity
+                all_low = {e.lower() for e in all_ents}
+                gold_low = {e.lower() for e in target_entities.get(curie, [])}
+                if all_low or gold_low:
+                    sim = len(all_low & gold_low) / len(all_low | gold_low)
+                    total_sim += sim
+                    count += 1
 
-            avg_similarity = total_similarity / len(reference_curie_job_map)
-            logger.info(f"Threshold {threshold}: Average Jaccard similarity {avg_similarity}")
+            avg_sim = (total_sim / count) if count else 0.0
+            logger.info("Threshold %.1f: Average Jaccard %.4f", th, avg_sim)
 
-            if avg_similarity > best_similarity:
-                best_similarity = avg_similarity
-                best_threshold = threshold
+            if avg_sim > best_similarity:
+                best_similarity = avg_sim
+                best_threshold = th
 
-    logger.info(f"Best TFIDF threshold: {best_threshold} with Jaccard similarity {best_similarity}")
+    logger.info("Best TFIDF threshold: %.1f (Jaccard %.4f)", best_threshold, best_similarity)
     return best_threshold
 
 
+# --------------------------------------------------------------------- #
+# Core processing                                                       #
+# --------------------------------------------------------------------- #
 def process_entity_extraction_jobs(
     mod_id,
     topic,
@@ -181,7 +266,12 @@ def process_entity_extraction_jobs(
     test_fh=None,
     ner_batch_size: int = 16,
 ):  # noqa: C901
+    """
+    If test_mode=True, DO NOT call send_entity_tag_to_abc.
+    Instead write: "<curie>\t<pipe_separated_entities>\\n" to test_fh immediately.
+    """
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
+
     tet_source_id = None
     if not test_mode:
         tet_source_id = get_tet_source_id(
@@ -193,7 +283,6 @@ def process_entity_extraction_jobs(
 
     model_fp = f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_{topic.replace(':', '_')}.dpkl"
 
-    # --- load metadata & model once ---
     try:
         meta = get_model_data(mod_abbreviation=mod_abbr,
                               task_type="biocuration_entity_extraction",
@@ -218,35 +307,6 @@ def process_entity_extraction_jobs(
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
 
-    def build_entities_from_results(results, title, abstract, fulltext):
-        """Combine NER hits + title/abstract tokens + regex fallback."""
-        gold_up = {e.upper() for e in model.entities_to_extract}
-
-        ents_full = {
-            r["word"].upper()
-            for r in results
-            if r.get("entity_group") == "ENTITY" and r["word"].upper() in gold_up
-        }
-
-        t_ents, a_ents = extract_entities_from_title_abstract(model, title, abstract)
-        ents_title = {e.upper() for e in t_ents}
-        ents_abs = {e.upper() for e in a_ents}
-
-        regex_hits = {
-            m.upper()
-            for m in GENERIC_NAME_PATTERN.findall(fulltext or "")
-            if m.upper() in gold_up
-        }
-
-        all_up = ents_full | ents_title | ents_abs | regex_hits
-
-        out = set()
-        for tok in all_up:
-            for part in tok.split():
-                if part in gold_up:
-                    out.add(part)
-        return sorted(out)
-
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
         jobs_to_process = jobs_to_process[classification_batch_size:]
@@ -255,7 +315,7 @@ def process_entity_extraction_jobs(
         logger.info("Processing batch of %d jobs. Remaining: %d",
                     len(job_batch), len(jobs_to_process))
 
-        # Prep TEI directory
+        # Prep TEI dir
         out_dir = "/data/agr_entity_extraction/to_extract"
         os.makedirs(out_dir, exist_ok=True)
         for f in os.listdir(out_dir):
@@ -263,8 +323,9 @@ def process_entity_extraction_jobs(
 
         download_tei_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
 
-        texts = []
-        metas = []  # (curie, job, title, abstract, fulltext)
+        texts: List[str] = []
+        metas: List[Tuple[str, dict, str, str, str]] = []  # (curie, job, title, abstract, fulltext)
+
         for fname in os.listdir(out_dir):
             curie = fname.split(".")[0].replace("_", ":")
             job = ref_map.get(curie)
@@ -305,19 +366,17 @@ def process_entity_extraction_jobs(
             logger.info("No valid TEIs in this batch.")
             continue
 
-        # batched NER
+        # Batched NER inference
         results_list = ner_pipe(texts, batch_size=ner_batch_size, truncation=True)
 
         for (curie, job, title, abstract, fulltext), results in zip(metas, results_list):
-            all_entities = build_entities_from_results(results, title, abstract, fulltext)
+            all_entities = build_entities_from_results(results, title, abstract, fulltext, model)
 
             if test_mode:
-                ents_str = " | ".join(all_entities)
-                test_fh.write(f"{curie}\t{ents_str}\n")
+                test_fh.write(f"{curie}\t{' | '.join(all_entities)}\n")
                 test_fh.flush()
             else:
                 if not all_entities:
-                    # send negated tag
                     send_entity_tag_to_abc(
                         reference_curie=curie,
                         species=species,
@@ -327,7 +386,6 @@ def process_entity_extraction_jobs(
                         novel_data=novel_data
                     )
                 else:
-                    # send entities
                     for ent in all_entities:
                         if ent in model.name_to_curie_mapping:
                             ent_curie = model.name_to_curie_mapping[ent]
@@ -352,62 +410,9 @@ def process_entity_extraction_jobs(
         logger.info("Finished processing batch of %d jobs.", len(job_batch))
 
 
-def get_model(mod_abbr, topic, path):
-    k = (mod_abbr, topic)
-    if k not in _MODEL_CACHE:
-        _MODEL_CACHE[k] = dill.load(open(path, "rb"))
-    return _MODEL_CACHE[k]
-
-
-def get_pipe(mod_abbr, topic, model):
-    k = (mod_abbr, topic)
-    if k not in _PIPE_CACHE:
-        _PIPE_CACHE[k] = pipeline(
-            "ner",
-            model=model,
-            tokenizer=model.tokenizer,
-            aggregation_strategy="simple"
-        )
-    return _PIPE_CACHE[k]
-
-
-def extract_entities_from_title_abstract(model, title, abstract):
-    """
-    prepare gold sets (mixed‐case and uppercase)
-    gold: the set of all valid entity names in their original case
-    gold_up: an uppercase copy, so we can match case-insensitively later
-    """
-    gold = set(model.entities_to_extract)
-    gold_up = {g.upper() for g in gold}
-
-    # tokenize title
-    tokenized_title = model.tokenizer.tokenize(title or "")
-    # take any tokens that exactly match an entry in gold
-    entities_in_title = set(tokenized_title) & gold
-    # uppercase all tokens and intersect with gold_up, adding any new matches
-    entities_in_title |= {t.upper() for t in tokenized_title} & gold_up
-
-    # regex fallback: find every generic token (letters+digits) in the raw title
-    # uppercase it, and if it’s in gold_up, add it to our title entities
-    for match in GENERIC_NAME_PATTERN.findall(title or ""):
-        m = match.upper()
-        if m in gold_up:
-            entities_in_title.add(m)
-
-    # tokenize abstract
-    tokenized_abstract = model.tokenizer.tokenize(abstract or "")
-    entities_in_abstract = set(tokenized_abstract) & gold
-    entities_in_abstract |= {t.upper() for t in tokenized_abstract} & gold_up
-
-    # regex fallback on abstract
-    for match in GENERIC_NAME_PATTERN.findall(abstract or ""):
-        m = match.upper()
-        if m in gold_up:
-            entities_in_abstract.add(m)
-
-    return list(entities_in_title), list(entities_in_abstract)
-
-
+# --------------------------------------------------------------------- #
+# CLI / main                                                            #
+# --------------------------------------------------------------------- #
 def main():
     parser = argparse.ArgumentParser(description='Extract biological entities from documents')
     parser.add_argument("--tune-threshold", action="store_true",
@@ -421,6 +426,8 @@ def main():
                         help="Only process these topic CURIE(s). Repeatable.")
     parser.add_argument("-m", "--mod", action="append",
                         help="Only process these MOD abbreviations (e.g. WB, ZFIN). Repeatable.")
+    parser.add_argument("--ner-batch", type=int, default=16,
+                        help="Batch size for the HuggingFace NER pipeline (default: 16).")
 
     args = parser.parse_args()
 
@@ -461,7 +468,7 @@ def main():
         for (mod_id, topic), jobs in mod_topic_jobs.items():
             TARGET_ENTITIES = STRAIN_TARGET_ENTITIES if topic == 'ATP:0000027' else GENE_TARGET_ENTITIES
             best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET_ENTITIES)
-            logger.info(f"Best TF-IDF threshold for {mod_id}/{topic}: {best}")
+            logger.info("Best TF-IDF threshold for %s/%s: %s", mod_id, topic, best)
         logger.info("Threshold tuning complete.")
         return
 
@@ -475,6 +482,7 @@ def main():
                 jobs,
                 test_mode=test_mode,
                 test_fh=test_fh,
+                ner_batch_size=args.ner_batch,
             )
     finally:
         if test_fh:
@@ -484,5 +492,4 @@ def main():
 
 
 if __name__ == '__main__':
-
     main()
