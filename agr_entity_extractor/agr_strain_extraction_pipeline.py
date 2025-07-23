@@ -177,105 +177,147 @@ def process_entity_extraction_jobs(
     mod_id,
     topic,
     jobs,
-    test_mode: bool = False,    
+    test_mode: bool = False,
     test_fh=None,
+    ner_batch_size: int = 16,
 ):  # noqa: C901
-    """
-    If test_mode=True, append "<curie>\t<pipe_separated_entities>" to out_lines instead of calling ABC.
-    """
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = None
     if not test_mode:
         tet_source_id = get_tet_source_id(
             mod_abbreviation=mod_abbr,
             source_method="abc_entity_extractor",
-            source_description="Alliance entity extraction pipeline using machine learning "
-            "to identify papers of interest for curation data types")
+            source_description=("Alliance entity extraction pipeline using machine learning "
+                                "to identify papers of interest for curation data types")
+        )
 
-    entity_extraction_model_file_path = (f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_"
-                                         f"{topic.replace(':', '_')}.dpkl")
+    model_fp = f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_{topic.replace(':', '_')}.dpkl"
+
+    # --- load metadata & model once ---
     try:
-        model_metadata = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_entity_extraction",
-                                        topic=topic)
-        species = model_metadata['species']
-        novel_data = model_metadata['novel_topic_data']
-        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
+        meta = get_model_data(mod_abbreviation=mod_abbr,
+                              task_type="biocuration_entity_extraction",
+                              topic=topic)
+        species = meta["species"]
+        novel_data = meta["novel_topic_data"]
+
+        download_abc_model(mod_abbreviation=mod_abbr,
+                           topic=topic,
+                           output_path=model_fp,
                            task_type="biocuration_entity_extraction")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        logger.info("Classification model downloaded for mod=%s, topic=%s", mod_abbr, topic)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            logger.warning("Model not found for mod=%s, topic=%s. Skipping.", mod_abbr, topic)
             return
-        else:
-            raise
+        raise
+
+    model = get_model(mod_abbr, topic, model_fp)
+    ner_pipe = get_pipe(mod_abbr, topic, model)
+
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
-    entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))
+
+    def build_entities_from_results(results, title, abstract, fulltext):
+        """Combine NER hits + title/abstract tokens + regex fallback."""
+        gold_up = {e.upper() for e in model.entities_to_extract}
+
+        ents_full = {
+            r["word"].upper()
+            for r in results
+            if r.get("entity_group") == "ENTITY" and r["word"].upper() in gold_up
+        }
+
+        t_ents, a_ents = extract_entities_from_title_abstract(model, title, abstract)
+        ents_title = {e.upper() for e in t_ents}
+        ents_abs = {e.upper() for e in a_ents}
+
+        regex_hits = {
+            m.upper()
+            for m in GENERIC_NAME_PATTERN.findall(fulltext or "")
+            if m.upper() in gold_up
+        }
+
+        all_up = ents_full | ents_title | ents_abs | regex_hits
+
+        out = set()
+        for tok in all_up:
+            for part in tok.split():
+                if part in gold_up:
+                    out.add(part)
+        return sorted(out)
+
     while jobs_to_process:
         job_batch = jobs_to_process[:classification_batch_size]
-        reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
         jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
-                    f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        os.makedirs("/data/agr_entity_extraction/to_extract", exist_ok=True)
-        logger.info("Cleaning up existing files in the to_extract directory")
-        for file in os.listdir("/data/agr_entity_extraction/to_extract"):
-            os.remove(os.path.join("/data/agr_entity_extraction/to_extract", file))
-        download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                          "/data/agr_entity_extraction/to_extract", mod_abbr)
 
-        texts, metas = [], []
-        for file in os.listdir("/data/agr_entity_extraction/to_extract"):
-            curie = file.split(".")[0].replace("_", ":")
-            job = reference_curie_job_map[curie]
-            try:
-                tei_obj = AllianceTEI()
-                tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
-            except Exception as e:
-                logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
+        ref_map = {j["reference_curie"]: j for j in job_batch}
+        logger.info("Processing batch of %d jobs. Remaining: %d",
+                    len(job_batch), len(jobs_to_process))
+
+        # Prep TEI directory
+        out_dir = "/data/agr_entity_extraction/to_extract"
+        os.makedirs(out_dir, exist_ok=True)
+        for f in os.listdir(out_dir):
+            os.remove(os.path.join(out_dir, f))
+
+        download_tei_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
+
+        texts = []
+        metas = []  # (curie, job, title, abstract, fulltext)
+        for fname in os.listdir(out_dir):
+            curie = fname.split(".")[0].replace("_", ":")
+            job = ref_map.get(curie)
+            if job is None:
                 continue
 
-            title = ""
-            abstract = ""
             try:
-                fulltext = tei_obj.get_fulltext()
+                tei = AllianceTEI()
+                tei.load_from_file(os.path.join(out_dir, fname))
             except Exception as e:
-                logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
+                logger.warning("TEI load failed for %s: %s. Skipping.", curie, e)
+                continue
+
+            try:
+                fulltext = tei.get_fulltext() or ""
+            except Exception as e:
+                logger.error("Fulltext error for %s: %s. Marking failure.", curie, e)
                 set_job_started(job)
                 set_job_failure(job)
+                continue
+
             try:
-                abstract = tei_obj.get_abstract()
+                abstract = tei.get_abstract() or ""
             except Exception as e:
-                logger.warning(f"Error getting abstract for {curie}: {str(e)}. Ignoring field.")
+                logger.warning("Abstract error for %s: %s. Ignoring.", curie, e)
+                abstract = ""
+
             try:
-                title = tei_obj.get_title()
+                title = tei.get_title() or ""
             except Exception as e:
-                logger.warning(f"Error getting title for {curie}: {str(e)}. Ignoring field.")
+                logger.warning("Title error for %s: %s. Ignoring.", curie, e)
+                title = ""
+
             texts.append(fulltext)
-            metas.append((curie, job, title, abstract))
+            metas.append((curie, job, title, abstract, fulltext))
 
-        model = get_model(mod_abbr, topic, entity_extraction_model_file_path)
-        ner_pipe = get_pipe(mod_abbr, topic, model)
-        # one call for many docs
-        results_list = ner_pipe(texts, batch_size=16, truncation=True)
+        if not texts:
+            logger.info("No valid TEIs in this batch.")
+            continue
 
-        for (curie, job, title, abstract), results in zip(metas, results_list):
-            all_entities = extract_all_entities(
-                fulltext=fulltext,
-                title=title,
-                abstract=abstract,
-                model=model,
-                ner_pipe=ner_pipe
-            )
+        # batched NER
+        results_list = ner_pipe(texts, batch_size=ner_batch_size, truncation=True)
+
+        for (curie, job, title, abstract, fulltext), results in zip(metas, results_list):
+            all_entities = build_entities_from_results(results, title, abstract, fulltext)
 
             if test_mode:
-                ents_str = " | ".join(sorted(all_entities))
-                line = f"{curie}\t{ents_str}\n"
-                test_fh.write(line)
+                ents_str = " | ".join(all_entities)
+                test_fh.write(f"{curie}\t{ents_str}\n")
                 test_fh.flush()
             else:
-                logger.info("Sending 'no data' tag to ABC.")
                 if not all_entities:
+                    # send negated tag
                     send_entity_tag_to_abc(
                         reference_curie=curie,
                         species=species,
@@ -284,27 +326,30 @@ def process_entity_extraction_jobs(
                         tet_source_id=tet_source_id,
                         novel_data=novel_data
                     )
+                else:
+                    # send entities
+                    for ent in all_entities:
+                        if ent in model.name_to_curie_mapping:
+                            ent_curie = model.name_to_curie_mapping[ent]
+                        else:
+                            ent_curie = model.name_to_curie_mapping[
+                                model.upper_to_original_mapping[ent]
+                            ]
+                        send_entity_tag_to_abc(
+                            reference_curie=curie,
+                            species=species,
+                            topic=topic,
+                            entity_type=topic,
+                            entity=ent_curie,
+                            tet_source_id=tet_source_id,
+                            novel_data=novel_data
+                        )
 
-                logger.info("Sending extracted entities as tags to ABC.")
-                for entity in all_entities:
-                    if entity in entity_extraction_model.name_to_curie_mapping:
-                        entity_curie = entity_extraction_model.name_to_curie_mapping[entity]
-                    else:
-                        entity_curie = entity_extraction_model.name_to_curie_mapping[
-                            entity_extraction_model.upper_to_original_mapping[entity]]
-                    send_entity_tag_to_abc(
-                        reference_curie=curie,
-                        species=species,
-                        topic=topic,
-                        entity_type=topic,
-                        entity=entity_curie,
-                        tet_source_id=tet_source_id,
-                        novel_data=novel_data
-                    )
-            logger.info(f"{curie} = {all_entities}")
+            logger.info("%s = %s", curie, all_entities)
             set_job_started(job)
             set_job_success(job)
-        logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
+
+        logger.info("Finished processing batch of %d jobs.", len(job_batch))
 
 
 def get_model(mod_abbr, topic, path):
@@ -361,44 +406,6 @@ def extract_entities_from_title_abstract(model, title, abstract):
             entities_in_abstract.add(m)
 
     return list(entities_in_title), list(entities_in_abstract)
-
-
-def extract_all_entities(fulltext, title, abstract, model, ner_pipe):
-    gold_up = {e.upper() for e in model.entities_to_extract}
-    results = ner_pipe(fulltext or "")
-    # collect every recognized entity, uppercase it, and keep only those in gold_up
-    entities_in_fulltext = {
-        ent["word"].upper()
-        for ent in results
-        if ent.get("entity_group") == "ENTITY"
-        and ent["word"].upper() in gold_up
-    }
-
-    # 2) title & abstract extraction
-    entities_in_title, entities_in_abstract = extract_entities_from_title_abstract(
-        entity_extraction_model, title, abstract
-    )
-    entities_in_title = {e.upper() for e in entities_in_title}
-    entities_in_abstract = {e.upper() for e in entities_in_abstract}
-
-    # 3) regex fallback on fulltext
-    regex_hits = {
-        match.upper()
-        for match in GENERIC_NAME_PATTERN.findall(fulltext or "")
-        if match.upper() in gold_up
-    }
-
-    # combine all
-    all_entities = entities_in_fulltext | entities_in_title | entities_in_abstract | regex_hits
-
-    # split multi‐token strings and dedupe
-    strains = set()
-    for token in all_entities:
-        for part in token.split():
-            if part in gold_up:
-                strains.add(part)
-
-    return sorted(strains)
 
 
 def main():
