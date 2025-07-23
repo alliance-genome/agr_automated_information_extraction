@@ -140,7 +140,7 @@ def download(ftp: str):
         ftp, str
             The ftp path to the paper
     """
-    wget = f"wget -nc --timeout=10 -P {config_parser.get('PATHS', 'corpus')} {ftp}"
+    wget = f"wget -nc --timeout=10 --no-verbose -P {config_parser.get('PATHS', 'corpus')} {ftp}"
     try:
         subprocess.run(wget, shell=True, check=True)
     except subprocess.CalledProcessError as e:
@@ -285,7 +285,8 @@ def main():  # noqa C901
         ref_id = job['reference_id']
         if ref_id not in ref_to_pmc:
             print(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
-            set_job_failure(job)
+            if not set_job_failure(job):
+                print(f"Problem setting to job failed {job}!!!")
             continue
         pmcid = ref_to_pmc[ref_id]
         print(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
@@ -309,7 +310,8 @@ def main():  # noqa C901
                                                tet_source_id=tet_source_id,
                                                novel_data=False)
                     print("Finished successfully but with results :-)")
-                    set_job_success(job)
+                    if not set_job_success(job):
+                        print(f"Problem setting to job success {job}!!!")
                 else:
                     if status == 0:
                         send_entity_tag_to_abc(
@@ -321,15 +323,18 @@ def main():  # noqa C901
                             novel_data=False
                         )
                         print(f"Job finished BUT No data. reference_curie={ref_id}")
-                        set_job_success(job)
+                        if not set_job_success(job):
+                            print(f"Problem setting to job success {job}!!!")
                     else:
                         print("job failed NO nxml")
-                        set_job_failure(job)
+                        if not set_job_failure(job):
+                            print(f"Problem setting to job failure {job}!!!")
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
                 print("job failed somat went pear shaped")
-                set_job_failure(job)
+                if not set_job_failure(job):
+                    print(f"Problem setting to job started {job}!!!")
                 logging.warning(f"Error processing {pmcid}: {str(e)}")
         else:
             logging.warning(f"Error processing {pmcid}: No ftp file available")
