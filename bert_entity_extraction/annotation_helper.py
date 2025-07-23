@@ -53,7 +53,7 @@ parser.add_argument("-c", "---config_file", type=str,
                     help="Config file for FlyBert")
 
 args = parser.parse_args()
-print(args)
+logger.debug(args)
 config_parser = configparser.ConfigParser()
 config_parser.read(args.config_file)
 
@@ -77,7 +77,7 @@ def create_postgres_engine(db):
     user = os.environ.get(f'{db}_USERNAME', 'postgres')
     password = os.environ.get(f'{db}_PASSWORD')
     if not password:
-        print(f"No password for env {db}_PASSWORD")
+        logger.debug(f"No password for env {db}_PASSWORD")
     port = os.environ.get(f'{db}_PORT', '5432')
     db = os.environ.get(f'{db}_DATABASE', 'literature')
 
@@ -207,7 +207,7 @@ def get_pmcids_for_references(jobs):
             pmcid = row[1][6:]
             ref_to_pmc[row[0]] = pmcid
     else:
-        print("No jobs to process")
+        logger.debug("No jobs to process")
     return ref_to_pmc
 
 
@@ -258,15 +258,15 @@ def main():  # noqa C901
         stream=sys.stdout
     )
     jobs, ref_to_pmc = get_data_from_alliance_db()
-    print(f"Number of jobs: {len(jobs)}")
+    logger.debug(f"Number of jobs: {len(jobs)}")
 
     gene_dict, fbid_to_symbol = get_ateam_dicts()
-    print(f"gene_dict has {len(gene_dict)} keys")
+    logger.debug(f"gene_dict has {len(gene_dict)} keys")
     key = list(gene_dict.keys())[0]
-    print(f"gene_dict Example: key -> {key} {gene_dict[key]}")
+    logger.debug(f"gene_dict Example: key -> {key} {gene_dict[key]}")
     key = list(fbid_to_symbol.keys())[0]
-    print(f"fbid_to_symbol has {len(fbid_to_symbol)} keys")
-    print(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
+    logger.debug(f"fbid_to_symbol has {len(fbid_to_symbol)} keys")
+    logger.debug(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
 
     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
         deep_learning.initialize(config_parser.get('PATHS', 'deep_learning_model'))
@@ -279,17 +279,17 @@ def main():  # noqa C901
     # If we do other mods this will need changing to a look up
     species = 'NCBITaxon:7227'
     for job in jobs:
-        print(f"Start Job {job}")
+        logger.debug(f"Start Job {job}")
         if not set_job_started(job):
-            print(f"Problem setting to job started {job}!!!")
+            logger.error(f"Problem setting to job started {job}!!!")
         ref_id = job['reference_id']
         if ref_id not in ref_to_pmc:
-            print(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
+            logger.debug(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
             if not set_job_failure(job):
-                print(f"Problem setting to job failed {job}!!!")
+                logger.error(f"Problem setting to job failed {job}!!!")
             continue
         pmcid = ref_to_pmc[ref_id]
-        print(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
+        logger.debug(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
         ftp = getFtpPath(pmcid)
         if ftp is not None:
             download(ftp)
@@ -306,8 +306,7 @@ def main():  # noqa C901
                             confidence_level = 'High'
                         elif results[fbgn] > 0.5:
                             confidence_level = 'Med'
-                        print(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
-
+                        logger.debug(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                         try:
                             stat = send_entity_tag_to_abc(
                                 reference_curie=str(ref_id),
@@ -320,7 +319,7 @@ def main():  # noqa C901
                                 tet_source_id=tet_source_id,
                                 novel_data=False)
                             if not stat:
-                                print(f"""reference_curie={str(ref_id)},
+                                logger.debug(f"""reference_curie={str(ref_id)},
                                 species={species},
                                 topic={job['topic_id']},
                                 entity_type={job['topic_id']},
@@ -332,11 +331,11 @@ def main():  # noqa C901
                                 okay = False
                         except Exception as e:
                             okay = False
-                            print(f"Problem sending entity tag to abc: {e}")
+                            logger.error(f"Problem sending entity tag to abc: {e}")
                     if okay:
-                        print("Finished successfully but with results :-)")
+                        logger.debug("Finished successfully but with results :-)")
                         if not set_job_success(job):
-                            print(f"Problem setting to job success {job}!!!")
+                            logger.error(f"Problem setting to job success {job}!!!")
                 else:
                     if status == 0:
                         stat = send_entity_tag_to_abc(
@@ -348,24 +347,23 @@ def main():  # noqa C901
                             novel_data=False
                         )
                         if not stat:
-                            print(f"PROBLEM sending negated job data {job}!!!")
-                        print(f"Job finished BUT No data. reference_curie={ref_id}")
+                            logger.error(f"PROBLEM sending negated job data {job}!!!")
+                        logger.debug(f"Job finished BUT No data. reference_curie={ref_id}")
                         if not set_job_success(job):
-                            print(f"Problem setting to job success {job}!!!")
+                            logger.error(f"Problem setting to job success {job}!!!")
                     else:
-                        print("job failed NO nxml")
+                        logger.debug("job failed NO nxml")
                         if not set_job_failure(job):
-                            print(f"Problem setting to job failure {job}!!!")
+                            logger.error(f"Problem setting to job failure {job}!!!")
                 if config_parser.getboolean('PARAMETERS', 'remove_files'):
                     removeFiles(pmcid)
             except Exception as e:
-                print("job failed somat went pear shaped")
+                logger.error(f"job failed some thing went pear shaped. {e}")
                 if not set_job_failure(job):
-                    print(f"Problem setting to job started {job}!!!")
-                logging.warning(f"Error processing {pmcid}: {str(e)}")
+                    logger.debug(f"Problem setting to job started {job}!!!")
+                logging.error(f"Error processing {pmcid}: {str(e)}")
         else:
             logging.warning(f"Error processing {pmcid}: No ftp file available")
-            print("Start Failed No ftp file available")
             set_job_failure(job)
 
 

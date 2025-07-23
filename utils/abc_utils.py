@@ -180,7 +180,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
     try:
         token = get_authentication_token()
     except Exception as exc:
-        print(f"Error getting token: {str(exc)}")
+        logger.error(f"Error getting token: {str(exc)}")
     try:
         tet_data = json.dumps({
             "created_by": "default_user",
@@ -199,7 +199,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
             "force_insertion": True
         }).encode('utf-8')
     except Exception as e:
-        print(f"PROBLEM with json dumps. Exception: {e}")
+        logger.error(f"PROBLEM with json dumps. Exception: {e}")
     headers = generate_headers(token)
     try:
         create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
@@ -222,7 +222,6 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
 
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
-    print(f"jobs irl is {jobs_url}")
     if args and args.mod_abbreviation:
         jobs_url += f'&mod_abbreviation={args.mod_abbreviation}'
     if args and args.reference_curie:
