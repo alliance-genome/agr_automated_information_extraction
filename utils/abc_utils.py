@@ -215,6 +215,9 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
     except requests.exceptions.RequestException as e:
         logger.error(f"Error occurred during TET upload: {e}")
         return False
+    except Exception as e:
+        logger.error(f"Diff Error occurred during TET upload: {e}")
+        return False
 
 
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
