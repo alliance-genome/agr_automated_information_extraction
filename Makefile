@@ -23,3 +23,14 @@ classify:
 
 extract_entities:
 	docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_entity_extractor.py
+
+doc_classifier_full_build:
+	docker build . -f Dockerfile_Base -t agr_document_classifier_base
+	docker build . -t agr_document_classifier
+
+doc_classifier_build:
+	docker build . -t agr_document_classifier
+
+flybert_build:
+	docker build . -f Dockerfile_Base -t agr_document_classifier_base
+	docker build . -t flybert

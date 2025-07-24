@@ -175,25 +175,31 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
-    token = get_authentication_token()
-    tet_data = json.dumps({
-        "created_by": "default_user",
-        "updated_by": "default_user",
-        "topic": topic,
-        "entity_type": entity_type,
-        "entity_id_validation": "alliance" if entity else None,
-        "entity": entity,
-        "species": species,
-        "topic_entity_tag_source_id": tet_source_id,
-        "negated": negated,
-        "novel_topic_data": novel_data,
-        "confidence_score": None,
-        "confidence_level": None,
-        "reference_curie": reference_curie,
-        "force_insertion": True
-    }).encode('utf-8')
+    try:
+        token = get_authentication_token()
+    except Exception as exc:
+        logger.error(f"Error getting token: {str(exc)}")
+    try:
+        tet_data = json.dumps({
+            "created_by": "default_user",
+            "updated_by": "default_user",
+            "topic": topic,
+            "entity_type": entity_type,
+            "entity_id_validation": "alliance" if entity else None,
+            "entity": entity,
+            "species": species,
+            "topic_entity_tag_source_id": tet_source_id,
+            "negated": negated,
+            "novel_topic_data": novel_data,
+            "confidence_score": confidence_score,
+            "confidence_level": confidence_level,
+            "reference_curie": reference_curie,
+            "force_insertion": True
+        }).encode('utf-8')
+    except Exception as e:
+        logger.error(f"PROBLEM with json dumps. Exception: {e}")
     headers = generate_headers(token)
     try:
         create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
@@ -209,12 +215,15 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
     except requests.exceptions.RequestException as e:
         logger.error(f"Error occurred during TET upload: {e}")
         return False
+    except Exception as e:
+        logger.error(f"Diff Error occurred during TET upload: {e}")
+        return False
 
 
 def get_jobs_batch(job_label: str = "classification_job", limit: int = 1000, offset: int = 0, args: Namespace = None):
     jobs_url = f'{blue_api_base_url}/workflow_tag/jobs/{job_label}?limit={limit}&offset={offset}'
     if args and args.mod_abbreviation:
-        jobs_url += f'&mod={args.mod_abbreviation}'
+        jobs_url += f'&mod_abbreviation={args.mod_abbreviation}'
     if args and args.reference_curie:
         jobs_url += f'&reference={args.reference_curie}'
     if args and args.topic:
@@ -246,6 +255,8 @@ def set_job_started(job):
             return True
         except HTTPError:
             time.sleep(attempts)
+        except Exception as e:
+            logger.error(f"Error attempt {attempts} setting to started for : {str(job)}: {e}")
     logger.error(f"Error setting job started after 3 attempts: {str(job)}")
     return False
 
@@ -267,7 +278,8 @@ def set_job_success(job):
         except HTTPError as e:
             logger.warning(f"Error setting to success for : {str(job)}: {e}")
             time.sleep(attempts)
-
+        except Exception as e:
+            logger.error(f"Error attempt {attempts} setting to success for : {str(job)}: {e}")
     logger.error(f"Error setting job success after 3 attempts: {str(job)}")
     return False
 
@@ -683,9 +695,13 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
         request.add_header("Content-type", "application/json")
         request.add_header("Accept", "application/json")
 
-        with urllib.request.urlopen(request) as response:
-            resp_obj = json.loads(response.read().decode("utf8"))
-
+        try:
+            with urllib.request.urlopen(request) as response:
+                resp_obj = json.loads(response.read().decode("utf8"))
+        except (requests.exceptions.RequestException, urllib.error.HTTPError) as e:
+            logger.error(f"Error occurred for accessing/retrieving curated entities data from {url}")
+            logger.error(f"error={e}")
+            exit(-1)
         if resp_obj['returnedRecords'] < 1:
             break
 
