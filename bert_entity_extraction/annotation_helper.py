@@ -18,6 +18,7 @@
 # along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
 import time
 import os
+import re
 import argparse
 import configparser
 import sys
@@ -118,7 +119,7 @@ def getFtpPath(pmcid: str):
         ftplink = ""
         if "error" in dict_data['OA']:
             error_code = dict_data['OA']['error']['@code']
-            logging.warning(f"ERROR: {error_code} {pmcid}")
+            logging.warning(f"ERROR: Could not find FTP path for {pmcid}: {error_code}")
         else:
             link = dict_data['OA']['records']['record']['link']
             if isinstance(link, list):
@@ -185,6 +186,9 @@ def get_ateam_dicts() -> (dict[str, str], dict[str, str]):
     gene_dict = {}
     fbid_to_symbol = {}
     for row in rows:
+        # if just a number then ignore
+        if re.search(r"^\d+$", row[1]):
+            continue
         gene_dict[row[1]] = row[0]
         fbid_to_symbol[row[0]] = row[1]
     return gene_dict, fbid_to_symbol
