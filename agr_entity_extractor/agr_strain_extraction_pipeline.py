@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
 """
-args → load jobs → filter jobs
-    └─ for (mod, topic):
-        ↓ download model & entity lists
-        ↓ build cache/pipeline
-        ↓ while jobs left:
-            - download TEIs
-            - prefilter
-            - batch NER
-            - merge hits & send/write
-            - mark jobs done
+Speedups:
+- Cache curated entities (names+CURIEs) per (MOD, entity_type) on disk & RAM.
+- Pre-filter fulltext to only likely-entity sentences before NER.
+- Batch NER safely; fallback if tokenizer lacks pad_token_id.
+- Log timing/progress during each batch.
+- Skip/quiet HuggingFace pipeline for unsupported custom models.
+
+CLI:
+    --tune-threshold          Tune TF-IDF threshold (slow)
+    -t PATH / --test-output   Write "<curie>\t<entities>" to PATH instead of sending tags
+    -T CURIE --topic CURIE    Filter topics (repeatable) eg -T ATP:0000027
+    -m MOD   --mod MOD        Filter MODs (repeatable) eg -m WB
+    --ner-batch INT           HF NER batch size (default 16)
+    --no-prefilter            Disable regex/dictionary prefilter (slower)
+    --log-every INT           Log progress every N papers (default 10)
 """
 import argparse
 import copy
@@ -56,7 +61,12 @@ _ENTITY_CACHE = {}  # (mod_abbr, entity_type) -> (names, mapping)
 ENTITY_CACHE_DIR = Path("/data/agr_entity_extraction/cache")
 ENTITY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-GENERIC_NAME_PATTERN = re.compile(r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9:_\-]+\b')
+# strain names must contain both a letter and a digit
+STRAIN_NAME_PATTERN = re.compile(r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9:_\-]+\b')
+
+# generic entity names contain at least 2 characters; allows letters, digits, :, _, ., -
+# uses word boundaries to capture names like "kyEx926" in kyEx926(Punc-86::MIG-10::YFP)
+GENERIC_NAME_PATTERN = re.compile(r'\b[A-Za-z0-9:_.\-]{2,}\b')
 
 TOPIC2TYPE = {
     "ATP:0000027": "strain",
@@ -124,6 +134,10 @@ GENE_TARGET_ENTITIES = {
 }
 
 
+def get_generic_name_pattern(topic: str) -> re.Pattern:
+    return STRAIN_NAME_PATTERN if topic == "ATP:0000027" else GENERIC_NAME_PATTERN
+
+
 # --------------------------------------------------------------------- #
 # Entity list caching / priming                                         #
 # --------------------------------------------------------------------- #
@@ -173,7 +187,9 @@ def get_model(mod_abbr: str, topic: str, path: str):
     k = (mod_abbr, topic)
     if k not in _MODEL_CACHE:
         _MODEL_CACHE[k] = dill.load(open(path, "rb"))
-    return _MODEL_CACHE[k]
+    model = _MODEL_CACHE[k]
+    model.topic = topic  # <-- Ensure topic is always set
+    return model
 
 
 def get_pipe(mod_abbr: str, topic: str, model):
@@ -217,17 +233,18 @@ def _run_ner_batched(pipe, texts: List[str], batch_size: int):
 def extract_entities_from_title_abstract(model, title: str, abstract: str) -> Tuple[List[str], List[str]]:
     gold = set(model.entities_to_extract)
     gold_up = {g.upper() for g in gold}
+    pattern = get_generic_name_pattern(model.topic)
 
     tok_title = model.tokenizer.tokenize(title or "")
-    ents_title = (set(tok_title) & gold) | ({t.upper() for t in tok_title} & gold_up)
-    for m in GENERIC_NAME_PATTERN.findall(title or ""):
+    ents_title = (set(tok_title) & gold) | ({t.upper() for t in tok_title if t is not None} & gold_up)
+    for m in pattern.findall(title or ""):
         mu = m.upper()
         if mu in gold_up:
             ents_title.add(mu)
 
     tok_abs = model.tokenizer.tokenize(abstract or "")
-    ents_abs = (set(tok_abs) & gold) | ({t.upper() for t in tok_abs} & gold_up)
-    for m in GENERIC_NAME_PATTERN.findall(abstract or ""):
+    ents_abs = (set(tok_abs) & gold) | ({t.upper() for t in tok_abs if t is not None} & gold_up)
+    for m in pattern.findall(abstract or ""):
         mu = m.upper()
         if mu in gold_up:
             ents_abs.add(mu)
@@ -244,11 +261,12 @@ def prefilter_text(fulltext: str, model) -> str:
     """
     if not fulltext:
         return ""
+    pattern = get_generic_name_pattern(model.topic)
     gold_up = {e.upper() for e in model.entities_to_extract}
     pieces = re.split(r'(?<=[\.\?\!])\s+', fulltext)
     kept = []
     for p in pieces:
-        if GENERIC_NAME_PATTERN.search(p):
+        if pattern.search(p):
             kept.append(p)
             continue
         up = p.upper()
@@ -271,9 +289,10 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     ents_title = {e.upper() for e in t_ents}
     ents_abs = {e.upper() for e in a_ents}
 
+    pattern = get_generic_name_pattern(model.topic)
     regex_hits = {
         m.upper()
-        for m in GENERIC_NAME_PATTERN.findall(fulltext or "")
+        for m in pattern.findall(fulltext or "")
         if m.upper() in gold_up
     }
 
@@ -476,11 +495,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             logger.info("No valid TEIs in this batch.")
             continue
 
-        # ---- Run NER (or stub) ----
+        # ---- Run NER ----
         t0 = time.perf_counter()
         results_list = _run_ner_batched(ner_pipe, texts_for_ner, ner_batch_size)
         total_time = time.perf_counter() - t0
-        logger.info("NER (or stub) on %d docs took %.1fs (%.2fs/doc)",
+        logger.info("NER on %d docs took %.1fs (%.2fs/doc)",
                     len(texts_for_ner), total_time, total_time / len(texts_for_ner))
 
         # ---- Post-process ----
