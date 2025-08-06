@@ -133,7 +133,8 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
-                                   novel_flag: bool, confidence_score: float, confidence_level: str, tet_source_id):
+                                   novel_flag: bool, novel_topic_qualifier:str, confidence_score: float,
+                                   confidence_level: str, tet_source_id):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
@@ -145,6 +146,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "novel_topic_data": novel_flag,
+        "novel_topic_qualifier": novel_topic_qualifier,
         "confidence_score": float(confidence_score),
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
@@ -175,7 +177,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, novel_topic_qualifier:str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     try:
         token = get_authentication_token()
@@ -193,6 +195,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
             "topic_entity_tag_source_id": tet_source_id,
             "negated": negated,
             "novel_topic_data": novel_data,
+            "novel_topic_qualifier": novel_topic_qualifier,
             "confidence_score": confidence_score,
             "confidence_level": confidence_level,
             "reference_curie": reference_curie,
