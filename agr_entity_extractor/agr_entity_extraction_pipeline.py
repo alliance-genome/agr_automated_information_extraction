@@ -141,6 +141,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                                         topic=topic)
         species = model_metadata['species']
         novel_data = model_metadata['novel_topic_data']
+        novel_topic_qualifier = model_metadata['novel_topic_qualifier']
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
                            task_type="biocuration_entity_extraction")
         logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
@@ -204,7 +205,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                     topic=topic,
                     negated=True,
                     tet_source_id=tet_source_id,
-                    novel_data=novel_data
+                    novel_data=novel_data,
+                    novel_topic_qualifier=novel_topic_qualifier
                 )
 
             logger.info("Sending extracted entities as tags to ABC.")
@@ -215,7 +217,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                     entity_curie = entity_extraction_model.name_to_curie_mapping[
                         entity_extraction_model.upper_to_original_mapping[entity]]
                 send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic, entity_type=topic,
-                                       entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data)
+                                       entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data,
+                                       novel_topic_qualifier=novel_topic_qualifier)
             set_job_started(job)
             set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")
