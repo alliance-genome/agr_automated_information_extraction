@@ -223,7 +223,7 @@ def parse_arguments():
                         help="Whether to set novel_data to true on positive result. Default False",
                         required=False)
     parser.add_argument("-Q", "--novel_topic_qualifier", type=str, required=False, default='ATP:0000335',
-                        help="Qualifier to be used for novelty. Default 'ATP:0000335'",)
+                        help="Qualifier to be used for novelty. Default 'ATP:0000335'")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)
