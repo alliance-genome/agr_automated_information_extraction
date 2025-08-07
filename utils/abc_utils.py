@@ -152,7 +152,6 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "reference_curie": reference_curie,
         "force_insertion": True
     }).encode('utf-8')
-    logger.debug(tet_data)
     headers = generate_headers(token)
     attempts = 0
     while attempts < 3:
