@@ -322,7 +322,8 @@ def main():  # noqa C901
                                 confidence_score=round(results[fbgn], 2),
                                 confidence_level=confidence_level,
                                 tet_source_id=tet_source_id,
-                                novel_data=False)
+                                novel_data=False,
+                                novel_topic_qualifier='ATP:0000334')
                             if not stat:
                                 logger.debug(f"""reference_curie={str(ref_id)},
                                 species={species},
@@ -349,7 +350,8 @@ def main():  # noqa C901
                             topic=job['topic_id'],
                             negated=True,
                             tet_source_id=tet_source_id,
-                            novel_data=False
+                            novel_data=False,
+                            novel_topic_qualifier='ATP:0000335'
                         )
                         if not stat:
                             logger.error(f"PROBLEM sending negated job data {job}!!!")
