@@ -443,7 +443,7 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
             writer.writerow(row)
             priority_name = label_mapping.get(label, 'unknown')
             ref_curie = reference_id
-            set_indexing_priority(ref_curie, mod_abbr, priority_name)
+            set_indexing_priority(ref_curie, mod_abbr, priority_name, round(score, 2))
 
     logger.info(f"Classification complete. Results saved to {results_file}")
 

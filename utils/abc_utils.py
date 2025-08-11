@@ -613,11 +613,17 @@ def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, v
         response.raise_for_status()
 
 
-def set_indexing_priority(ref_curie, mod_abbr, priority_name):
-    indexing_url = f"{blue_api_base_url}/workflow_tag/set_priority/{ref_curie}/{mod_abbr}/{priority_name}"
+def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
+    indexing_url = f"{blue_api_base_url}/indexing_priority/set_priority/"
     token = get_authentication_token()
     headers = generate_headers(token)
-    response = requests.post(indexing_url, headers=headers)
+    payload = {
+        "reference_curie": ref_curie,
+        "mod_abbreviation": mod_abbr,
+        "indexing_priority": priority_name,
+        "confidence_score": confidence_score
+    }
+    response = requests.post(indexing_url, json=payload, headers=headers)
     if response.status_code == 200:
         logger.info(f"{ref_curie} is successfully set to {priority_name}")
     else:
