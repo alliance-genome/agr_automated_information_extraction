@@ -414,7 +414,7 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
     classifier_model_path = f"{root_data_path}training/{mod_abbr}_{topic.replace(':', '_')}_classifier.joblib"
     download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_model_path,
                        task_type="biocuration_pretriage_priority_classification")
-    logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+    logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
 
     classifier_model = joblib.load(classifier_model_path)
     embedding_model = load_embedding_model(model_path=embedding_model_path)
@@ -515,10 +515,10 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     try:
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
                            task_type="biocuration_pretriage_priority_classification")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            logger.warning(f"Priority classifier model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
             return
         else:
             raise

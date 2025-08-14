@@ -144,10 +144,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
         novel_topic_qualifier = model_metadata['novel_topic_qualifier']
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
                            task_type="biocuration_entity_extraction")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        logger.info(f"Extraction model downloaded for mod: {mod_abbr}, topic: {topic}.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            logger.warning(f"Extraction model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
             return
         else:
             raise

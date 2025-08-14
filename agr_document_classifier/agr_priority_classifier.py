@@ -451,10 +451,10 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     try:
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
                            task_type="biocuration_pretriage_priority_classification")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            logger.warning(f"Priority classifier model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
             return
         else:
             raise
