@@ -1,28 +1,32 @@
 import io
 import json
+import time
+import random
 import logging
 import os
 import html
-import time
-import urllib.request
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union, Optional
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from argparse import Namespace
 import psycopg2
 import requests
+import urllib.request
 import numpy as np
-from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
+from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
     blue_api_base_url = f"https://{blue_api_base_url}"
 curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
-
 logger = logging.getLogger(__name__)
 
 cache = {}
+
+_CURATED_ENTITY_CACHE: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {}
+
+_RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 def set_blue_api_base_url(value):
@@ -676,77 +680,190 @@ def get_entity_name(entity_type, a_team_api_search_result_obj, mod_abbreviation:
         return a_team_api_search_result_obj['name']
 
 
-def get_all_curated_entities(mod_abbreviation: str, entity_type_str):
-    all_curated_entity_names = []
-    entity_name_curie_mappings = {}
-    params = {
-        "searchFilters": {
-            "dataProviderFilter": {
-                "dataProvider.abbreviation": {
-                    "queryString": mod_abbreviation,
-                    "tokenOperator": "OR"
-                }
-            }
-        },
+def species_to_exclude():
+    return {
+        "NCBITaxon:4853",
+        "NCBITaxon:30023",
+        "NCBITaxon:8805",
+        "NCBITaxon:216498",
+        "NCBITaxon:1420681",
+        "NCBITaxon:10231",
+        "NCBITaxon:156766",
+        "NCBITaxon:80388",
+        "NCBITaxon:101142",
+        "NCBITaxon:31138",
+        "NCBITaxon:88086",
+        "NCBITaxon:34245",
+        "NCBITaxon:5482"
+    }
+
+
+def _post_json_with_retries(url: str, body: dict, headers: dict,
+                            *, max_retries: int = 5, base_sleep: float = 0.8):
+    """POST JSON with exponential backoff + jitter; returns parsed JSON."""
+    data = json.dumps(body).encode("utf-8")
+    attempt = 0
+    while True:
+        req = urllib.request.Request(url, data=data)
+        for k, v in headers.items():
+            req.add_header(k, v)
+        # Some gateways behave better if we set UA explicitly
+        req.add_header("User-Agent", "AGR-Client/1.0")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except HTTPError as e:
+            # Log a bit of context
+            try:
+                detail = e.read().decode("utf-8")[:500]
+            except Exception:
+                detail = ""
+            logger.warning(f"POST {url} -> HTTP {e.code}. Attempt {attempt+1}/{max_retries}. {detail}")
+            if e.code in _RETRY_STATUS and attempt < max_retries:
+                sleep = base_sleep * (2 ** attempt) + random.uniform(0, 0.25)
+                time.sleep(sleep)
+                attempt += 1
+                continue
+            raise
+        except URLError as e:
+            logger.warning(f"POST {url} -> URLError {e}. Attempt {attempt+1}/{max_retries}.")
+            if attempt < max_retries:
+                sleep = base_sleep * (2 ** attempt) + random.uniform(0, 0.25)
+                time.sleep(sleep)
+                attempt += 1
+                continue
+            raise
+
+
+def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, force_refresh: bool = False):  # noqa: C901
+    """
+    Return (all_curated_entity_names, entity_name_curie_mappings)
+    Results are cached per (mod_abbreviation, original_entity_type_str)
+    """
+    cache_key = (mod_abbreviation, entity_type_str)
+
+    if not force_refresh and cache_key in _CURATED_ENTITY_CACHE:
+        names, mapping = _CURATED_ENTITY_CACHE[cache_key]
+        # return copies so callers can't accidentally mutate the cache
+        return names.copy(), mapping.copy()
+
+    all_curated_entity_names: list[str] = []
+    entity_name_curie_mappings: dict[str, str] = {}
+
+    etype_logical = entity_type_str
+    etype_api = entity_type_str
+
+    base_filters = {
+        "searchFilters": {},
         "sortOrders": [],
         "aggregations": [],
         "nonNullFieldsTable": []
     }
-    if entity_type_str in ["strain", "genotype", "fish"]:
-        params["searchFilters"]["subtypeFilter"] = {
-            "subtype.name": {
-                "queryString": entity_type_str,
+
+    if etype_logical not in {"species"}:
+        base_filters["searchFilters"]["dataProviderFilter"] = {
+            "dataProvider.abbreviation": {
+                "queryString": mod_abbreviation,
                 "tokenOperator": "OR"
             }
         }
-        entity_type_str = "agm"
 
-    # primaryExternalId
-    if entity_type_str == 'transgenic_allele':
-        entity_type_str = 'allele'
-        if mod_abbreviation == 'WB':
-            params["searchFilters"]["primaryExternalIdFilter"] = {
+    # Map subtypes to AGM search
+    if etype_logical in {"strain", "genotype", "fish"}:
+        base_filters["searchFilters"]["subtypeFilter"] = {
+            "subtype.name": {
+                "queryString": etype_logical,
+                "tokenOperator": "OR"
+            }
+        }
+        etype_api = "agm"
+
+    # WB transgenic_allele
+    if etype_logical == "transgenic_allele":
+        etype_api = "allele"
+        if mod_abbreviation == "WB":
+            base_filters["searchFilters"]["primaryExternalIdFilter"] = {
                 "primaryExternalId": {
-                    "queryString": 'WB:WBTransgene',
+                    "queryString": "WB:WBTransgene",
                     "tokenOperator": "OR"
                 }
             }
 
+    if etype_logical == "species":
+        etype_api = "ncbitaxonterm"
+        base_filters = {
+            "searchFilters": {},  # keep empty for ncbitaxonterm
+            "sortOrders": [],
+            "aggregations": [],
+            "nonNullFieldsTable": []
+        }
+        species_to_exclude_set = species_to_exclude()
+
+    auth_header = f"Bearer {get_authentication_token()}"
+    headers = {
+        "Authorization": auth_header,
+        "Content-type": "application/json",
+        "Accept": "application/json",
+    }
+
     current_page = 0
     while True:
-        logger.info(f"Fetching page {current_page} of entities from A-team API")
-        url = f"{curation_api_base_url}{entity_type_str}/search?limit=2000&page={current_page}"
-        request_data_encoded = json.dumps(params).encode('utf-8')
-        request = urllib.request.Request(url, data=request_data_encoded)
-        request.add_header("Authorization", f"Bearer {get_authentication_token()}")
-        request.add_header("Content-type", "application/json")
-        request.add_header("Accept", "application/json")
+        url = f"{curation_api_base_url}{etype_api}/search?limit=1000&page={current_page}"
+        logger.info(f"Fetching page {current_page} from {etype_api} (logical: {etype_logical})")
+        print(f"url={url}")
 
         try:
-            with urllib.request.urlopen(request) as response:
-                resp_obj = json.loads(response.read().decode("utf8"))
-        except (requests.exceptions.RequestException, urllib.error.HTTPError) as e:
-            logger.error(f"Error occurred for accessing/retrieving curated entities data from {url}")
-            logger.error(f"error={e}")
-            exit(-1)
-        if resp_obj['returnedRecords'] < 1:
+            resp_obj = _post_json_with_retries(url, base_filters, headers, max_retries=5, base_sleep=1.0)
+        except HTTPError as e:
+            logger.error(f"{etype_api} search failed (HTTP {e.code}) on page {current_page}")
+            raise
+        except URLError as e:
+            logger.error(f"{etype_api} search network error on page {current_page}: {e}")
+            raise
+        returned = resp_obj.get("returnedRecords", 0)
+        results = resp_obj.get("results", []) or []
+        if returned < 1 or not results:
             break
 
-        for result in resp_obj['results']:
-            if result['obsolete'] or result['internal']:
+        for result in results:
+            if result.get("obsolete") or result.get("internal"):
                 continue
-            entity_name = None
-            if entity_type_str == "agm":
-                if 'agmFullName' in result and 'displayText' in result['agmFullName']:
-                    entity_name = result['agmFullName']['displayText']
+
+            if etype_api == "ncbitaxonterm":
+                entity_name = result.get("name")
+                curie = result.get("curie")
+                if not entity_name or not curie:
+                    continue
+                if curie in species_to_exclude_set:
+                    continue
+
+            elif etype_api == "agm":
+                if "agmFullName" in result and isinstance(result["agmFullName"], dict):
+                    entity_name = result["agmFullName"].get("displayText") or result["agmFullName"].get("name")
                 else:
-                    entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
+                    entity_name = get_entity_name(etype_api, result, mod_abbreviation)
+                curie = result.get("primaryExternalId")
+
             else:
-                entity_name = get_entity_name(entity_type_str, result, mod_abbreviation)
-            if entity_name:
+                entity_name = get_entity_name(etype_api, result, mod_abbreviation)
+                curie = result.get("primaryExternalId")
+
+            if not entity_name or not curie:
+                continue
+
+            if entity_name not in entity_name_curie_mappings:
                 all_curated_entity_names.append(entity_name)
-                entity_name_curie_mappings[entity_name] = result['primaryExternalId']
+            entity_name_curie_mappings[entity_name] = curie
+
         current_page += 1
+
+    # Deduplicate + stable sort output names
+    all_curated_entity_names = sorted(set(all_curated_entity_names), key=str.lower)
+
+    _CURATED_ENTITY_CACHE[cache_key] = (
+        all_curated_entity_names.copy(),
+        entity_name_curie_mappings.copy()
+    )
     return all_curated_entity_names, entity_name_curie_mappings
 
 
