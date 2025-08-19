@@ -11,6 +11,7 @@ from urllib.error import HTTPError
 from argparse import Namespace
 import psycopg2
 import requests
+import numpy as np
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
 
@@ -613,6 +614,20 @@ def add_entry_to_dataset(mod_abbreviation: str, topic: str, dataset_type: str, v
         response.raise_for_status()
 
 
+def _jsonable(o):
+    if isinstance(o, (np.floating, np.integer)):
+        return o.item()
+    if isinstance(o, np.bool_):
+        return bool(o)
+    if isinstance(o, np.ndarray):
+        return o.tolist()
+    if isinstance(o, dict):
+        return {k: _jsonable(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [_jsonable(x) for x in o]
+    return o
+
+
 def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
     indexing_url = f"{blue_api_base_url}/indexing_priority/set_priority/"
     token = get_authentication_token()
@@ -621,8 +636,9 @@ def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
         "reference_curie": ref_curie,
         "mod_abbreviation": mod_abbr,
         "indexing_priority": priority_name,
-        "confidence_score": confidence_score
+        "confidence_score": float(confidence_score) if confidence_score is not None else None,
     }
+    payload = _jsonable(payload)  # ensure everything is serializable
     response = requests.post(indexing_url, json=payload, headers=headers)
     if response.status_code == 200:
         logger.info(f"{ref_curie} is successfully set to {priority_name}")

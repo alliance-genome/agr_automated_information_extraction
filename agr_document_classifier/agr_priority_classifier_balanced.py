@@ -364,10 +364,10 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
         predicted_probas = classifier_model.predict_proba(X)
         # zip() function takes the two lists, classifications and predicted_probas,
         # and pairs up their corresponding elements to iterate over both lists simultaneously
-        confidence_scores = [probas[pred] for pred, probas in zip(classifications, predicted_probas)]
+        confidence_scores = [float(probas[int(pred)]) for pred, probas in zip(classifications, predicted_probas)]
     except AttributeError:
         # fallback if classifier doesn't support predict_proba
-        confidence_scores = [1 / (1 + np.exp(-decision_value))
+        confidence_scores = [float(1 / (1 + np.exp(-float(decision_value))))
                              for decision_value in classifier_model.decision_function(X)]
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
@@ -436,14 +436,15 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
 
         for path, label, score, valid in zip(files_loaded, classifications, conf_scores, valid_embeddings):
             reference_id = Path(path).stem.replace('_', ':')
+            py_score = float(score)  # ensure native float
             row = [reference_id]
             if ref_curie_to_mod_curie:
                 row.append(ref_curie_to_mod_curie.get(reference_id, ''))
-            row.extend([label_mapping.get(label, 'unknown'), round(score, 4), valid])
+            row.extend([label_mapping.get(label, 'unknown'), round(py_score, 4), bool(valid)])
             writer.writerow(row)
             priority_name = label_mapping.get(label, 'unknown')
             ref_curie = reference_id
-            set_indexing_priority(ref_curie, mod_abbr, priority_name, round(score, 2))
+            set_indexing_priority(ref_curie, mod_abbr, priority_name, round(py_score, 2))
 
     logger.info(f"Classification complete. Results saved to {results_file}")
 
