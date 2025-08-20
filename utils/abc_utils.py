@@ -632,22 +632,43 @@ def _jsonable(o):
     return o
 
 
+def map_priority_name_to_atpid(priority_name):
+    if priority_name == 'priority_1':
+        return "ATP:0000211"
+    if priority_name == 'priority_2':
+        return "ATP:0000212"
+    if priority_name == 'priority_3':
+        return "ATP:0000213"
+
+
 def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
-    indexing_url = f"{blue_api_base_url}/indexing_priority/set_priority/"
+    priority_atp = map_priority_name_to_atpid(priority_name)
+    base = blue_api_base_url.rstrip("/")
+    indexing_url = f"{base}/indexing_priority/set_priority"
     token = get_authentication_token()
     headers = generate_headers(token)
+
     payload = {
         "reference_curie": ref_curie,
         "mod_abbreviation": mod_abbr,
-        "indexing_priority": priority_name,
-        "confidence_score": float(confidence_score) if confidence_score is not None else None,
+        "indexing_priority": priority_atp,
+        "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
     }
-    payload = _jsonable(payload)  # ensure everything is serializable
-    response = requests.post(indexing_url, json=payload, headers=headers)
-    if response.status_code == 200:
-        logger.info(f"{ref_curie} is successfully set to {priority_name}")
-    else:
-        logger.error(f"Failed to set the indexing priority: {response.text}")
+
+    try:
+        resp = requests.post(indexing_url, json=_jsonable(payload), headers=headers, timeout=30)
+        if resp.status_code == 200:
+            logger.info(f"{ref_curie} is successfully set to {priority_name}")
+            return True
+
+        logger.error(
+            "set_priority failed: %s %s\nURL=%s\npayload=%s",
+            resp.status_code, resp.text, indexing_url, payload
+        )
+    except requests.RequestException as e:
+        logger.exception("HTTP error calling set_priority: %s", e)
+
+    return False
 
 
 def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False):
