@@ -3,7 +3,7 @@
 Speedups:
 - Cache curated entities (names+CURIEs) per (MOD, entity_type) on disk & RAM.
 - Pre-filter fulltext to only likely-entity sentences before NER.
-- Batch NER safely; fallback if tokenizer lacks pad_token_id.
+- cache model/pipeline
 - Log timing/progress during each batch.
 - Skip/quiet HuggingFace pipeline for unsupported custom models.
 
@@ -44,7 +44,7 @@ from utils.abc_utils import (
     send_entity_tag_to_abc,
     get_model_data,
     set_job_failure,
-    get_all_curated_entities,  # wrapped by cache
+    get_all_curated_entities,
 )
 from utils.tei_utils import AllianceTEI
 from utils.species_text_norm import (
@@ -184,7 +184,7 @@ def get_generic_name_pattern(topic: str) -> re.Pattern:
 
 
 # --------------------------------------------------------------------- #
-# Entity list caching / priming                                         #
+# Entity list caching                                                   #
 # --------------------------------------------------------------------- #
 def _entity_cache_path(mod_abbr: str, entity_type: str) -> Path:
     return ENTITY_CACHE_DIR / f"{mod_abbr}_{entity_type}.json"
@@ -226,14 +226,14 @@ def prime_model_entities(model, mod_abbr: str, topic: str):
 
 
 # --------------------------------------------------------------------- #
-# Model / pipeline helpers                                              #
+# model/pipeline helpers                                                #
 # --------------------------------------------------------------------- #
 def get_model(mod_abbr: str, topic: str, path: str):
     k = (mod_abbr, topic)
     if k not in _MODEL_CACHE:
         _MODEL_CACHE[k] = dill.load(open(path, "rb"))
     model = _MODEL_CACHE[k]
-    model.topic = topic  # <-- Ensure topic is always set
+    model.topic = topic  # make sure the topic is always set
     return model
 
 
@@ -568,8 +568,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     )
                 else:
                     for ent in all_entities:
-                        # ent should already be canonical; be defensive anyway
                         ent_key = ent
+                        # the entity name should be in the right form, but just in case
                         if ent_key not in model.name_to_curie_mapping:
                             ent_key = getattr(model, "upper_to_original_mapping", {}).get(ent.upper(), ent)
                         ent_curie = model.name_to_curie_mapping.get(ent_key)
@@ -580,7 +580,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             reference_curie=curie,
                             species=species,
                             topic=topic,
-                            entity_type=topic,  # matches your API usage
+                            entity_type=topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             novel_data=novel_data,
@@ -592,7 +592,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         return
 
     # --------------------------------------------------------------------- #
-    # job-based processing                                                 #
+    # job-based processing                                                  #
     # --------------------------------------------------------------------- #
 
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
