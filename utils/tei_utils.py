@@ -6,97 +6,193 @@ import html
 from grobid_client.models import TextWithRefs
 from grobid_client.types import TEI
 
-
 logger = logging.getLogger(__name__)
 
 
 def _normalize_text(text: str) -> str:
-    """
-    Unescape HTML entities and replace brackets/parentheses with spaces to aid tokenization.
-    """
-    # Unescape HTML entities (e.g. &gt; -> >)
     text = html.unescape(text)
-    # Replace parentheses and square brackets with spaces
-    """
-    so entities next to this special characters can also be extracted
-    some example below:
-    ieSi57(eft-3p&gt;TIR1::mRuby)           // "ieSi57": transgenic allele
-    muIs32[pmec-7::GFP, lin-15( + )]        // "muIs32": transgenic allele
-    mRuby (ieSi57 [eft-3pro::TIR1-mRuby])   // "ieSi57": transgenic allele
-    """
-    text = re.sub(r"[()\[\]]+", " ", text)
+    # replace only angle‐brackets and square‐brackets; keep parentheses for e.g. “HT115(DE3)”
+    text = re.sub(r"[<>\[\]]+", " ", text)
+    # collapse any run of whitespace into a single space
+    text = re.sub(r"\s+", " ", text).strip()
     return text
 
 
+def get_sentences_from_tei_section(section):
+    """
+    Extract cleaned sentences from a TEI section, ensuring each ends with a period.
+    Returns (sentences, num_errors).
+    """
+    sentences = []
+    num_errors = 0
+    for paragraph in section.paragraphs:
+        paras = [paragraph] if isinstance(paragraph, TextWithRefs) else paragraph
+        for sentence in paras:
+            try:
+                clean = re.sub(r'<[^<]+>', '', sentence.text or '').strip()
+                if clean:
+                    sentences.append(clean)
+            except Exception:
+                num_errors += 1
+
+    # Ensure each sentence ends with a period
+    sentences = [s if s.endswith('.') else f"{s}." for s in sentences if s.strip()]
+    return sentences, num_errors
+
+
+def get_fulltext_from_tei(tei_obj):
+    """
+    Build full text by concatenating all section sentences with spaces.
+    """
+    sentences = []
+    for section in tei_obj.sections:
+        sec_sentences, _ = get_sentences_from_tei_section(section)
+        sentences.extend(sec_sentences)
+    return ' '.join(sentences)
+
+
 class AllianceTEI:
+    """
+    Wrapper around a GROBID-parsed TEI document to extract title, abstract, and full text,
+    including table cells and formulas from raw XML.
+    """
     def __init__(self):
         self.tei_obj = None
-        self.raw_xml = None           # <-- store raw XML for later <formula> extraction
+        self.raw_xml = None
 
-    def load_from_file(self, file_path):
-        # Read entire file as bytes/string so that we can extract <formula> blocks later
-        with open(file_path, "rb") as file_stream:
-            raw_bytes = file_stream.read()
+    def load_from_file(self, file_path: str):
+        # Cache raw XML for formula and cell extraction
+        with open(file_path, 'rb') as f:
+            raw_bytes = f.read()
             try:
                 self.raw_xml = raw_bytes.decode('utf-8')
             except UnicodeDecodeError:
-                # if not UTF-8, fall back to latin-1 or replace errors
                 self.raw_xml = raw_bytes.decode('latin-1', errors='replace')
 
-        # Now parse with grobid's TEI parser
-        # (Note: we reopen in binary mode for TEI.parse, since parse expects a file‐like in bytes)
-        with open(file_path, "rb") as file_stream:
-            self.tei_obj = TEI.parse(file_stream, figures=True)
+        # Parse TEI content via GROBID
+        with open(file_path, 'rb') as f:
+            self.tei_obj = TEI.parse(f, figures=True)
 
-    def get_title(self):
-        if self.tei_obj is None:
-            return None
+    def get_title(self) -> str:
+        """
+        Return the document title, normalized (always a string).
+        """
+        if not self.tei_obj:
+            return ""
         title = self.tei_obj.title or ""
         return _normalize_text(title)
 
-    def get_abstract(self):
-        if self.tei_obj is None:
-            return None
-
-        abstract = ""
+    def get_abstract(self) -> str:
+        """
+        Return the abstract text from the first 'abstract' section, normalized.
+        """
+        if not self.tei_obj:
+            return ""
+        abstract_parts = []
         for section in self.tei_obj.sections:
-            if section.name and section.name.lower() == "abstract":
+            if section.name and section.name.lower() == 'abstract':
                 for paragraph in section.paragraphs:
-                    if isinstance(paragraph, TextWithRefs):
-                        paragraph = [paragraph]
-                    for sentence in paragraph:
-                        # strip any inline tags (e.g. <hi>, <formula>, etc.)
-                        cleaned = re.sub(r'<[^<]+>', '', sentence.text)
-                        abstract += cleaned + " "
+                    paras = [paragraph] if isinstance(paragraph, TextWithRefs) else paragraph
+                    for sentence in paras:
+                        cleaned = re.sub(r'<[^<]+>', '', sentence.text or '')
+                        abstract_parts.append(cleaned)
                 break
-        return _normalize_text(abstract.strip())
+        abstract = ' '.join(abstract_parts).strip()
+        return _normalize_text(abstract)
 
-    def get_fulltext(self):
-        if self.tei_obj is None:
-            return None
-        # Build the “sentences” version of full text:
-        base_fulltext = get_fulltext_from_tei(self.tei_obj)
+    def get_fulltext(self) -> str:  # noqa: C901
+        """
+        Return the full text of the document, including sentences, table cells,
+        formulas, figure/table captions, list items, and notes/footnotes,
+        normalized and space-separated.
+        """
+        if not self.tei_obj:
+            return ""
 
-        # Now also pull out every <formula>…</formula> occurrence from the raw XML,
-        # strip tags inside it, and append to the end.
-        if self.raw_xml:
-            # Find all <formula ...> inner content blocks (DOTALL so newlines are OK)
-            formula_blocks = re.findall(r'<formula[^>]*>(.*?)</formula>', self.raw_xml, flags=re.DOTALL)
-            for block in formula_blocks:
-                # Strip any tags inside <formula> (e.g. if there are nested <hi> or <xref>)
-                cleaned = re.sub(r'<[^<]+>', '', block).strip()
-                if cleaned:
-                    # Append a period if missing, so it doesn't run into the previous sentence
-                    if not cleaned.endswith("."):
-                        cleaned = cleaned + "."
-                    base_fulltext += " " + cleaned
+        # 1) Base sentences from TEI structure
+        text = get_fulltext_from_tei(self.tei_obj)
 
-        return _normalize_text(base_fulltext)
+        if not self.raw_xml:
+            return _normalize_text(text)
+
+        def _clean_block(s: str) -> str:
+            s = re.sub(r'<[^<]+>', '', s or '').strip()
+            if not s:
+                return ''
+            # ensure terminal period for sentence boundary stability
+            return s if s.endswith('.') else (s + '.')
+
+        rx = re.compile  # shorthand
+        xml = self.raw_xml
+
+        # 2) Table cells
+        cells = rx(r'<cell[^>]*>(.*?)</cell>', re.DOTALL).findall(xml)
+        for block in cells:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        # 3) Formulas
+        formulas = rx(r'<formula[^>]*>(.*?)</formula>', re.DOTALL).findall(xml)
+        for block in formulas:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        # 4) Figure captions/descriptions
+        #    - <figDesc> ... </figDesc>
+        #    - <figure> ... <head>Caption</head> ... </figure>
+        fig_descs = rx(r'<figDesc[^>]*>(.*?)</figDesc>', re.DOTALL).findall(xml)
+        for block in fig_descs:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        fig_heads = rx(r'<figure[^>]*>.*?<head[^>]*>(.*?)</head>.*?</figure>', re.DOTALL).findall(xml)
+        for block in fig_heads:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        # 5) Table captions/heads
+        tbl_heads = rx(r'<table[^>]*>.*?<head[^>]*>(.*?)</head>.*?</table>', re.DOTALL).findall(xml)
+        for block in tbl_heads:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        # 6) List items (e.g., <list> … <item>Text</item> … </list>)
+        # list_items = rx(r'<list[^>]*>.*?(?:<item[^>]*>(.*?)</item>)+.*?</list>', re.DOTALL).findall(xml)
+        # re.findall with a single capture returns only the LAST capture per list,
+        # so also directly capture all items:
+        all_items = rx(r'<item[^>]*>(.*?)</item>', re.DOTALL).findall(xml)
+        for block in all_items:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        # 7) Notes / footnotes (often carry species mentions)
+        notes = rx(r'<note[^>]*>(.*?)</note>', re.DOTALL).findall(xml)
+        for block in notes:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        # 8) Section heads (titles inside body divs)
+        sec_heads = rx(r'<div[^>]*>.*?<head[^>]*>(.*?)</head>', re.DOTALL).findall(xml)
+        for block in sec_heads:
+            cleaned = _clean_block(block)
+            if cleaned:
+                text += ' ' + cleaned
+
+        return _normalize_text(text)
 
     def get_sentences(self):
-        if self.tei_obj is None:
-            return None
-
+        """
+        Return a list of all sentences in the document, normalized.
+        """
+        if not self.tei_obj:
+            return []
         sentences = []
         for section in self.tei_obj.sections:
             sec_sentences, _ = get_sentences_from_tei_section(section)
@@ -104,61 +200,20 @@ class AllianceTEI:
         return [_normalize_text(s) for s in sentences]
 
 
-def get_sentences_from_tei_section(section):
-    sentences = []
-    num_errors = 0
-    for paragraph in section.paragraphs:
-        if isinstance(paragraph, TextWithRefs):
-            paragraph = [paragraph]
-        for sentence in paragraph:
-            try:
-                # Just strip tags and keep any non‐empty text
-                clean = re.sub(r'<[^<]+>', '', sentence.text).strip()
-                if clean:
-                    sentences.append(clean)
-            except Exception:
-                num_errors += 1
-
-    # Guarantee each sentence ends with a period
-    sentences = [
-        s if s.endswith(".") else f"{s}."
-        for s in sentences
-        if s.strip()
-    ]
-    return sentences, num_errors
-
-
-def get_fulltext_from_tei(tei_object):
-    sentences = []
-    for section in tei_object.sections:
-        sec_sentences, _ = get_sentences_from_tei_section(section)
-        sentences.extend(sec_sentences)
-    # Join with a single space between sentences
-    return " ".join(sentences)
-
-
-def convert_all_tei_files_in_dir_to_txt(dir_path):
-    file_paths = [
-        os.path.join(dir_path, f)
-        for f in os.listdir(dir_path)
-        if f.endswith(".tei")
-    ]
-
-    for tei_file in file_paths:
+def convert_all_tei_files_in_dir_to_txt(dir_path: str):
+    """
+    Convert each .tei in a directory to a .txt containing its full text.
+    """
+    for fname in os.listdir(dir_path):
+        if not fname.endswith('.tei'):
+            continue
+        tei_file = os.path.join(dir_path, fname)
         try:
-            # Load and parse
             alliance = AllianceTEI()
             alliance.load_from_file(tei_file)
-
-            # Build combined fulltext (including <formula> content at the end)
             article_text = alliance.get_fulltext()
-
-            # Write out to .txt
-            txt_path = tei_file.replace(".tei", ".txt")
-            with open(txt_path, "w", encoding="utf-8") as text_file:
-                text_file.write(article_text)
-
+            txt_path = tei_file.replace('.tei', '.txt')
+            with open(txt_path, 'w', encoding='utf-8') as out:
+                out.write(article_text)
         except Exception as e:
             logger.error(f"Error parsing TEI file {tei_file}: {e}")
-        # Optionally remove the original .tei if desired:
-        # os.remove(tei_file)
