@@ -6,8 +6,9 @@ Speedups:
 - cache model/pipeline
 - Log timing/progress during each batch.
 - Skip/quiet HuggingFace pipeline for unsupported custom models.
-
-CLI:
+- Adding topic specific
+- Adding test mode
+Options:
     --tune-threshold          Tune TF-IDF threshold (slow)
     -t PATH / --test-output   Write "<curie>\t<entities>" to PATH instead of sending tags
     -T CURIE --topic CURIE    Filter topics (repeatable) eg -T ATP:0000027
