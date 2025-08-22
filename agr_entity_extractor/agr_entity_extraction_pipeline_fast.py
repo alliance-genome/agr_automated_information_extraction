@@ -478,9 +478,12 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     return best_threshold
 
 
-# --------------------------------------------------------------------- #
-# Core processing                                                       #
-# --------------------------------------------------------------------- #
+# ------------------------------------------------------------------------- #
+# Core processing: This function drives the entity extraction workflow for  #
+# biocuration, processing TEI (Text Encoding Initiative) XML files and      #
+# applying an NER (Named Entity Recognition) model to extract entities      #
+# for a specific mod_id and topic.                                          #
+# ------------------------------------------------------------------------- #
 def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10, combined_tei_dir: bool = False):  # noqa: C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
 
@@ -518,6 +521,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         logger.info("Priming Alliance entity lists for %s/%s", mod_abbr, topic)
         prime_model_entities(model, mod_abbr, topic)
 
+    # get HF token-classification pipeline
     ner_pipe = get_pipe(mod_abbr, topic, model)
 
     # ---------------- NEW combined TEI DIR handling -------------------- #
