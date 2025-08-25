@@ -1,0 +1,3 @@
+abc_pipeline_vs_wb_pipeline.py: compares ABC pipeline results with WB pipeline results.
+
+abc_pipeline_vs_abc_db.py: compares ABC pipeline results with what’s stored in the ABC database.
