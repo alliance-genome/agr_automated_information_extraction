@@ -238,7 +238,5 @@ def main():
     classify_mode(args)
 
 
-
-
 if __name__ == '__main__':
     main()

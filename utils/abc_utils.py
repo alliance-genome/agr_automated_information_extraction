@@ -508,7 +508,7 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
         topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
-    on_production = os.environ.get("ON_PRODUCTION", False)
+    on_production = os.environ.get("ON_PRODUCTION", "no")
     if on_production and on_production == 'yes':
         download_url += '/production'
     token = get_authentication_token()
