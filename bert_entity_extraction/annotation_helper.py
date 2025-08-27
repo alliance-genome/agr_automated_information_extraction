@@ -55,9 +55,9 @@ parser.add_argument("-c", "---config_file", type=str,
 
 args = parser.parse_args()
 if args.stage:
-    os.environ("ON_PRODUCTION", "no")
+    os.environ["ON_PRODUCTION"] = "no"
 else:
-    os.environ("ON_PRODUCTION", "yes")
+    os.environ["ON_PRODUCTION"] = "yes"
 
 config_parser = configparser.ConfigParser()
 config_parser.read(args.config_file)

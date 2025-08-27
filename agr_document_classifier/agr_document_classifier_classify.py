@@ -231,11 +231,13 @@ def main():
         set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
     if args.stage:
-        os.environ("ON_PRODUCTION", "no")
+        os.environ["ON_PRODUCTION"] = "no"
     else:
-        os.environ("ON_PRODUCTION", "yes")
+        os.environ["ON_PRODUCTION"] = "yes"
 
     classify_mode(args)
+
+
 
 
 if __name__ == '__main__':

@@ -485,7 +485,7 @@ def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
     get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}/{topic}"
 
     # If we are not on stage then we want to get the production version of models
-    on_production = os.environ.get("ON_PRODUCTION", False)
+    on_production = os.environ.get("ON_PRODUCTION", "no")
     if on_production and on_production == 'yes':
         get_model_url += '/production'
 
