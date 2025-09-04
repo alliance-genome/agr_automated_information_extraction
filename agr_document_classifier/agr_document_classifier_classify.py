@@ -17,8 +17,8 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
-    get_cached_mod_species_map, set_blue_api_base_url
-from utils.get_documents import get_documents
+    get_cached_mod_species_map, set_blue_api_base_url, get_cached_mod_id_from_abbreviation
+from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, get_document_embedding
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -56,7 +56,9 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
     for _, (file_path, fulltext, _, _) in enumerate(documents):
-        doc_embedding = get_document_embedding(embedding_model, fulltext, word_to_index=word_to_index)
+        text = remove_stopwords(fulltext)
+        text = text.lower()
+        doc_embedding = get_document_embedding(embedding_model, text, word_to_index=word_to_index)
         X.append(doc_embedding)
         files_loaded.append(file_path)
         valid_embeddings.append(not np.all(doc_embedding == np.zeros_like(doc_embedding)))
@@ -77,15 +79,18 @@ def parse_arguments():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
-    parser.add_argument("-f", "--reference_curie", type=str, help="Only run for this reference.", required=False)
+    parser.add_argument("-f", "--reference_curies", type=str, nargs="+", help="Only run for this references.", required=False)
     parser.add_argument("-m", "--mod_abbreviation", type=str, help="Only run for this mod.", required=False)
     parser.add_argument("-t", "--topic", type=str, help="Only run for this topic.", required=False)
     parser.add_argument("-s", "--stage", action="store_true", help="Only run for on stage.", required=False)
+    parser.add_argument("--test_mode", action="store_true", help="Run in test mode (directly on provided"
+                                                                 " references and mod - do not store results nor send "
+                                                                 "emails).", required=False)
 
     return parser.parse_args()
 
 
-def process_classification_jobs(mod_id, topic, jobs, embedding_model):
+def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
                                       source_description="Alliance document classification pipeline using machine "
@@ -93,18 +98,22 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
                                                          "types")
     classifier_file_path = (f"/data/agr_document_classifier/biocuration_topic_classification_{mod_abbr}_"
                             f"{topic.replace(':', '_')}_classifier.joblib")
+    if test_mode and os.path.exists(classifier_file_path):
+        logger.info(f"Test mode: using existing classifier model for mod: {mod_abbr}, topic: {topic}.")
+    else:
+        try:
+            download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
+                               task_type="biocuration_topic_classification")
+            logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        except requests.exceptions.HTTPError as e:
+            if e.response.status_code == 404:
+                logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+                return
+            else:
+                raise
     try:
-        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
-                           task_type="biocuration_topic_classification")
-        logger.info(f"Classification model downloaded for mod: {mod_abbr}, topic: {topic}.")
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
-        else:
-            raise
-    try:
-        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_topic_classification", topic=topic)
+        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_topic_classification",
+                                         topic=topic)
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
@@ -123,10 +132,12 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data)
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
+                          test_mode)
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data):
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
+                      test_mode):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_tei_files_for_references(list(reference_curie_job_map.keys()),
@@ -135,8 +146,23 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         embedding_model=embedding_model,
         classifier_model=classifier_model,
         input_docs_dir="/data/agr_document_classifier/to_classify")
-    send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id, model_meta_data)
+    if test_mode:
+        for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
+                                                                          valid_embeddings):
+            reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
+            if not valid_embedding:
+                logger.warning(f"Invalid embedding for file: {file_path}. Skipping.")
+                continue
+            confidence_level = get_confidence_level(classification, conf_score)
+            logger.info(f"reference_curie: '{reference_curie}', species: '{mod_abbr}', topic: '{topic}', "
+                        f"classification: '{classification}', confidence_score: '{conf_score}', "
+                        f"confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' "
+                        f"novel_topic_qualifier: '{model_meta_data['novel_topic_qualifier']}'")
+        logger.info(f"Finished processing batch of {len(files_loaded)} jobs in test mode. Positive: "
+                    f"{sum(classifications)}. Negative: {len(classifications)-sum(classifications)}")
+    else:
+        send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings,
+                                    reference_curie_job_map, mod_abbr, topic, tet_source_id, model_meta_data)
 
 
 def prepare_classification_directory():
@@ -181,9 +207,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 def get_confidence_level(classification, conf_score):
     if classification == 0:
         return "NEG"
-    elif conf_score < 0.5:
+    elif conf_score < 0.667:
         return "Low"
-    elif conf_score < 0.75:
+    elif conf_score < 0.833:
         return "Med"
     else:
         return "High"
@@ -224,13 +250,50 @@ def classify_mode(args: Namespace):
         exit(-1)
 
 
+def direct_classify_mode(args: Namespace):
+    logger.info(f"Direct classification started for mod={args.mod_abbreviation}, topic={args.topic}")
+
+    if not args.reference_curies:
+        logger.error("No references provided for direct classification.")
+        return
+
+    reference_curies = args.reference_curies
+    if not reference_curies:
+        logger.error("No valid reference curies found in input.")
+        return
+
+    # Build fake jobs in the same shape as load_all_jobs would return
+    jobs = [{"reference_curie": ref} for ref in reference_curies]
+
+    embedding_model = load_embedding_model(args.embedding_model_path)
+
+    try:
+        process_classification_jobs(
+            mod_id=get_cached_mod_id_from_abbreviation(args.mod_abbreviation),
+            topic=args.topic,
+            jobs=jobs,
+            embedding_model=embedding_model,
+            test_mode=True
+        )
+    except Exception as e:
+        logger.error(f"Error in direct classification: {e}")
+        formatted_traceback = traceback.format_tb(e.__traceback__)
+        message = f"Direct classification failed for references {reference_curies}<br>"
+        message += f"Exception: {str(e)}<br>\nStacktrace:<br>{''.join(formatted_traceback)}"
+        send_report("Direct classification failed", message)
+        exit(-1)
+
+
 def main():
     args: Namespace = parse_arguments()
     configure_logging(args.log_level)
-    if args.stage:
-        set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
-        os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
-    classify_mode(args)
+    if args.test_mode:
+        direct_classify_mode(args)
+    else:
+        if args.stage:
+            set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
+            os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
+        classify_mode(args)
 
 
 if __name__ == '__main__':
