@@ -3,16 +3,15 @@ import json
 import logging
 import os
 import os.path
+import re
 import shutil
 import sys
-import re
+from typing import List, Union
 
 import joblib
 import nltk
 import numpy as np
 from gensim.models import KeyedVectors
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
@@ -21,8 +20,6 @@ from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.get_documents import get_documents, remove_stopwords
-from typing import List, Union
-
 
 nltk.download('stopwords')
 nltk.download('punkt')
