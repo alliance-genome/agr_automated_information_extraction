@@ -327,8 +327,7 @@ def main():  # noqa C901
                                 entity_type=job['topic_id'],
                                 entity=fbgn,
                                 confidence_score=round(results[fbgn], 2),
-                                confidence_level=confidence_level
-                                )
+                                confidence_level=confidence_level)
                             if not stat:
                                 logger.debug(f"""reference_curie={str(ref_id)},
                                 species={species},
@@ -356,8 +355,7 @@ def main():  # noqa C901
                             novel_topic_qualifier='ATP:0000335',
                             topic=job['topic_id'],
                             tet_source_id=tet_source_id,
-                            negated=True
-                        )
+                            negated=True)
                         if not stat:
                             logger.error(f"PROBLEM sending negated job data {job}!!!")
                         logger.debug(f"Job finished BUT No data. reference_curie={ref_id}")
