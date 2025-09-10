@@ -3,12 +3,11 @@
 Speedups:
 - Cache curated entities (names+CURIEs) per (MOD, entity_type) on disk & RAM.
 - Pre-filter fulltext to only likely-entity sentences before NER.
-- cache model/pipeline
+- Batch NER safely; fallback if tokenizer lacks pad_token_id.
 - Log timing/progress during each batch.
 - Skip/quiet HuggingFace pipeline for unsupported custom models.
-- Adding topic specific
-- Adding test mode
-Options:
+
+CLI:
     --tune-threshold          Tune TF-IDF threshold (slow)
     -t PATH / --test-output   Write "<curie>\t<entities>" to PATH instead of sending tags
     -T CURIE --topic CURIE    Filter topics (repeatable) eg -T ATP:0000027
@@ -25,7 +24,6 @@ import os
 import re
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 from typing import List, Tuple
 import dill
@@ -45,15 +43,9 @@ from utils.abc_utils import (
     send_entity_tag_to_abc,
     get_model_data,
     set_job_failure,
-    get_all_curated_entities,
+    get_all_curated_entities,  # wrapped by cache
 )
 from utils.tei_utils import AllianceTEI
-from utils.species_text_norm import (
-    is_species_topic,
-    normalize_species_aliases,
-    expand_species_abbreviations,
-)
-
 
 # Silence HF info/warnings entirely
 set_verbosity_error()
@@ -69,6 +61,8 @@ _ENTITY_CACHE = {}  # (mod_abbr, entity_type) -> (names, mapping)
 ENTITY_CACHE_DIR = Path("/data/agr_entity_extraction/cache")
 ENTITY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# STRAIN_NAME_PATTERN = re.compile(r'\b(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9:_\-]+\b')
+# GENERIC_NAME_PATTERN = re.compile(r'\b[A-Za-z0-9:_.\-]{2,}\b')
 STRAIN_NAME_PATTERN = re.compile(
     r'''
     (?<![A-Za-z0-9])              # left-boundary: not preceded by a letter or digit
@@ -85,21 +79,6 @@ STRAIN_NAME_PATTERN = re.compile(
     ''',
     re.VERBOSE
 )
-
-SPECIES_NAME_PATTERN = re.compile(
-    r'''
-    (?<![A-Za-z0-9])                # left boundary: not preceded by letter/digit
-    (?:[A-Z][a-z]+|[A-Z][a-z]*[a-z]) # genus or family name (capitalized word)
-    (?:                              # optionally followed by:
-        \s(?:[a-z]{2,}|sp\.|[A-Z][a-z]+)   # lowercase epithet, 'sp.', or second capitalized word
-        (?:\s(?:[a-z]{2,}|sp\.|[A-Z][a-z]+))*  # optional more words
-    )?
-    (?:\s[A-Za-z0-9-]{1,})*          # optional strain/variant/alphanumeric parts
-    (?![A-Za-z0-9])                  # right boundary: not followed by letter/digit
-    ''',
-    re.VERBOSE | re.IGNORECASE
-)
-
 GENERIC_NAME_PATTERN = re.compile(
     r'(?<![A-Za-z0-9_.\-])'          # left-delimiter: not letter/digit/._-
     r'(?=[A-Za-z0-9_.\-]*[A-Za-z])'  # must contain ≥1 letter
@@ -116,8 +95,7 @@ TOPIC2TYPE = {
     "ATP:0000005": "gene",
 }
 
-# Only used for threshold tuning path, but we set TF-IDF = 0; Threshold = 1 for
-# strain extraction so we don't really need to set the TARGET_ENTITIES for strain
+# Only used for threshold tuning path
 STRAIN_TARGET_ENTITIES = {
     "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
     "AGRKB:101000000641132": ["EG4322", "GE24"],
@@ -176,16 +154,11 @@ GENE_TARGET_ENTITIES = {
 
 
 def get_generic_name_pattern(topic: str) -> re.Pattern:
-    if topic == "ATP:0000027":
-        return STRAIN_NAME_PATTERN
-    elif topic == "ATP:0000123":
-        return SPECIES_NAME_PATTERN
-    else:
-        return GENERIC_NAME_PATTERN
+    return STRAIN_NAME_PATTERN if topic == "ATP:0000027" else GENERIC_NAME_PATTERN
 
 
 # --------------------------------------------------------------------- #
-# Entity list caching                                                   #
+# Entity list caching / priming                                         #
 # --------------------------------------------------------------------- #
 def _entity_cache_path(mod_abbr: str, entity_type: str) -> Path:
     return ENTITY_CACHE_DIR / f"{mod_abbr}_{entity_type}.json"
@@ -227,14 +200,14 @@ def prime_model_entities(model, mod_abbr: str, topic: str):
 
 
 # --------------------------------------------------------------------- #
-# model/pipeline helpers                                                #
+# Model / pipeline helpers                                              #
 # --------------------------------------------------------------------- #
 def get_model(mod_abbr: str, topic: str, path: str):
     k = (mod_abbr, topic)
     if k not in _MODEL_CACHE:
         _MODEL_CACHE[k] = dill.load(open(path, "rb"))
     model = _MODEL_CACHE[k]
-    model.topic = topic  # make sure the topic is always set
+    model.topic = topic  # <-- Ensure topic is always set
     return model
 
 
@@ -307,9 +280,6 @@ def prefilter_text(fulltext: str, model) -> str:
     """
     if not fulltext:
         return ""
-    if is_species_topic(model.topic):
-        fulltext = normalize_species_aliases(fulltext)
-        fulltext = expand_species_abbreviations(fulltext)
     pattern = get_generic_name_pattern(model.topic)
     gold_up = {e.upper() for e in model.entities_to_extract}
     pieces = re.split(r'(?<=[\.\?\!])\s+', fulltext)
@@ -319,80 +289,41 @@ def prefilter_text(fulltext: str, model) -> str:
             kept.append(p)
             continue
         up = p.upper()
+        # cheap substring check (can still be heavy if gold_up huge; remove if too slow)
         if any(g in up for g in gold_up):
             kept.append(p)
     return " ".join(kept) if kept else fulltext
 
 
-def _count_curated_mentions(text: str, model) -> "Counter[str]":
-    """
-    Count occurrences of curated entities in text using the model.tokenizer.pattern.
-    Returns a Counter keyed by UPPERCASE entity string.
-    """
-    if not text:
-        return Counter()
-    pat = getattr(model.tokenizer, "pattern", None)
-    if pat is None:
-        return Counter()
-    counts = Counter()
-    for m in pat.finditer(text):
-        tok = m.group(1) if m.lastindex else m.group(0)
-        key = tok.upper()
-        counts[key] += 1
-    return counts
-
-
 def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model) -> List[str]:
-    # Species topic: normalize all three fields before any matching/counting
-    if is_species_topic(model.topic):
-        title_norm = expand_species_abbreviations(normalize_species_aliases(title or ""))
-        abstract_norm = expand_species_abbreviations(normalize_species_aliases(abstract or ""))
-        fulltext_norm = expand_species_abbreviations(normalize_species_aliases(fulltext or ""))
-    else:
-        title_norm, abstract_norm, fulltext_norm = (title or ""), (abstract or ""), (fulltext or "")
-
     gold_up = {e.upper() for e in model.entities_to_extract}
 
-    # Optional HF NER results (likely empty for the custom model)
-    ents_full_hf = {
+    ents_full = {
         r["word"].upper()
         for r in results
-        if r.get("entity_group") == "ENTITY" and r["word"] and r["word"].upper() in gold_up
+        if r.get("entity_group") == "ENTITY" and r["word"].upper() in gold_up
     }
 
-    # Title/Abstract dictionary + pattern
-    t_ents, a_ents = extract_entities_from_title_abstract(model, title_norm, abstract_norm)
+    t_ents, a_ents = extract_entities_from_title_abstract(model, title, abstract)
     ents_title = {e.upper() for e in t_ents}
     ents_abs = {e.upper() for e in a_ents}
 
-    # Generic regex on normalized fulltext (captures multi-word species names)
     pattern = get_generic_name_pattern(model.topic)
     regex_hits = {
         m.upper()
-        for m in pattern.findall(fulltext_norm or "")
-        if m and m.upper() in gold_up
+        for m in pattern.findall(fulltext or "")
+        if m.upper() in gold_up
     }
 
-    # Curated tokenizer over normalized fulltext
-    tok_full = model.tokenizer.tokenize(fulltext_norm or "")
-    ents_full_tok = {t.upper() for t in tok_full if t and t.upper() in gold_up}
+    all_up = ents_full | ents_title | ents_abs | regex_hits
 
-    # Union of all uppercase candidates
-    all_up = ents_full_hf | ents_title | ents_abs | regex_hits | ents_full_tok
+    out = set()
+    for tok in all_up:
+        for part in tok.split():
+            if part in gold_up:
+                out.add(part)
 
-    # Count occurrences across title/abstract/fulltext (normalized)
-    counts = _count_curated_mentions(title_norm, model)
-    counts += _count_curated_mentions(abstract_norm, model)
-    counts += _count_curated_mentions(fulltext_norm, model)
-
-    # Apply min_matches gate (default 1 if not present)
-    min_hits = int(getattr(model, "min_matches", 1))
-    passed_up = {u for u in all_up if counts.get(u, 0) >= min_hits}
-
-    # Map back to original casing using the precomputed mapping (fallback to uppercase token)
-    u2o = getattr(model, "upper_to_original_mapping", {}) or {}
-    out = [u2o.get(u, u) for u in sorted(passed_up)]
-    return out
+    return sorted(out)
 
 
 # --------------------------------------------------------------------- #
@@ -478,12 +409,9 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     return best_threshold
 
 
-# ------------------------------------------------------------------------- #
-# Core processing: This function drives the entity extraction workflow for  #
-# biocuration, processing TEI (Text Encoding Initiative) XML files and      #
-# applying an NER (Named Entity Recognition) model to extract entities      #
-# for a specific mod_id and topic.                                          #
-# ------------------------------------------------------------------------- #
+# --------------------------------------------------------------------- #
+# Core processing                                                       #
+# --------------------------------------------------------------------- #
 def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10, combined_tei_dir: bool = False):  # noqa: C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
 
@@ -521,9 +449,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         logger.info("Priming Alliance entity lists for %s/%s", mod_abbr, topic)
         prime_model_entities(model, mod_abbr, topic)
 
-    # get HF token-classification pipeline
     ner_pipe = get_pipe(mod_abbr, topic, model)
-
     # ---------------- NEW combined TEI DIR handling -------------------- #
     if combined_tei_dir:
         logger.info(
@@ -546,15 +472,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 continue
 
             text_for_ner = prefilter_text(fulltext, model) if prefilter else fulltext
-            results = _run_ner_batched(ner_pipe, [text_for_ner], ner_batch_size)[0]
 
-            # Build final entities with min_matches gating and normalization
+            results = _run_ner_batched(ner_pipe, [text_for_ner], ner_batch_size)[0]
             all_entities = build_entities_from_results(
-                results=results,
-                title=title,
-                abstract=abstract,
-                fulltext=fulltext,
-                model=model
+                results, title, abstract, fulltext, model
             )
 
             if test_mode:
@@ -573,14 +494,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     )
                 else:
                     for ent in all_entities:
-                        ent_key = ent
-                        # the entity name should be in the right form, but just in case
-                        if ent_key not in model.name_to_curie_mapping:
-                            ent_key = getattr(model, "upper_to_original_mapping", {}).get(ent.upper(), ent)
-                        ent_curie = model.name_to_curie_mapping.get(ent_key)
-                        if not ent_curie:
-                            logger.warning("No CURIE mapping found for entity '%s' (curie=%s)", ent, curie)
-                            continue
+                        ent_curie = model.name_to_curie_mapping.get(ent) \
+                            or model.name_to_curie_mapping[model.upper_to_original_mapping[ent]]
                         send_entity_tag_to_abc(
                             reference_curie=curie,
                             species=species,
@@ -597,7 +512,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         return
 
     # --------------------------------------------------------------------- #
-    # job-based processing                                                  #
+    # job-based processing remains unchanged below this line
     # --------------------------------------------------------------------- #
 
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
@@ -690,13 +605,12 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     )
                 else:
                     for ent in all_entities:
-                        ent_key = ent
-                        if ent_key not in model.name_to_curie_mapping:
-                            ent_key = getattr(model, "upper_to_original_mapping", {}).get(ent.upper(), ent)
-                        ent_curie = model.name_to_curie_mapping.get(ent_key)
-                        if not ent_curie:
-                            logger.warning("No CURIE mapping found for entity '%s' (curie=%s)", ent, curie)
-                            continue
+                        if ent in model.name_to_curie_mapping:
+                            ent_curie = model.name_to_curie_mapping[ent]
+                        else:
+                            ent_curie = model.name_to_curie_mapping[
+                                model.upper_to_original_mapping[ent]
+                            ]
                         send_entity_tag_to_abc(
                             reference_curie=curie,
                             species=species,
