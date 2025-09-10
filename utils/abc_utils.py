@@ -16,10 +16,12 @@ import numpy as np
 
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
 
+
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
     blue_api_base_url = f"https://{blue_api_base_url}"
 curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
+
 logger = logging.getLogger(__name__)
 
 cache = {}
@@ -481,6 +483,12 @@ def convert_pdf_with_grobid(file_content):
 def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
     model_data = None
     get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}/{topic}"
+
+    # If we are not on stage then we want to get the production version of models
+    on_production = os.environ.get("ON_PRODUCTION", "no")
+    if on_production and on_production == 'yes':
+        get_model_url += '/production'
+
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -496,9 +504,13 @@ def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
 
 
 def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
-    # TODO: Question, How can there be NO topic?
+    # We want to set version to 'production' if we are running in production else Null
+
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
         topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
+    on_production = os.environ.get("ON_PRODUCTION", "no")
+    if on_production and on_production == 'yes':
+        download_url += '/production'
     token = get_authentication_token()
     headers = generate_headers(token)
 

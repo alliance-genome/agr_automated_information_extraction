@@ -54,6 +54,10 @@ parser.add_argument("-c", "---config_file", type=str,
                     help="Config file for FlyBert")
 
 args = parser.parse_args()
+if args.stage:
+    os.environ["ON_PRODUCTION"] = "no"
+else:
+    os.environ["ON_PRODUCTION"] = "yes"
 
 config_parser = configparser.ConfigParser()
 config_parser.read(args.config_file)
@@ -322,7 +326,6 @@ def main():  # noqa C901
                                 confidence_score=round(results[fbgn], 2),
                                 confidence_level=confidence_level,
                                 tet_source_id=tet_source_id,
-                                novel_data=False,
                                 novel_topic_qualifier='ATP:0000334')
                             if not stat:
                                 logger.debug(f"""reference_curie={str(ref_id)},
@@ -345,7 +348,7 @@ def main():  # noqa C901
                 else:
                     if status == 0:
                         stat = send_entity_tag_to_abc(
-                            reference_curie=ref_id,
+                            reference_curie=str(ref_id),
                             species=species,
                             topic=job['topic_id'],
                             negated=True,
