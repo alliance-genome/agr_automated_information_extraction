@@ -207,7 +207,11 @@ def get_model(mod_abbr: str, topic: str, path: str):
     if k not in _MODEL_CACHE:
         _MODEL_CACHE[k] = dill.load(open(path, "rb"))
     model = _MODEL_CACHE[k]
-    model.topic = topic  # <-- Ensure topic is always set
+    model.topic = topic
+    ######## DEBUG check ##################################
+    print("DEBUG:", mod_abbr, topic, "->", type(model),
+          "is HF?", isinstance(model, PreTrainedModel))
+    #######################################################
     return model
 
 
