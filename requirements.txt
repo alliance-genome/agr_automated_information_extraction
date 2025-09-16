@@ -86,6 +86,6 @@ dill
 pandas
 # FlyBert extras
 xmltodict==0.13.0
-pubmed_parser
+pubmed_parser @ git+https://github.com/titipata/pubmed_parser
 retry==0.9.2
 matplotlib

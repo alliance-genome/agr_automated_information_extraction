@@ -65,8 +65,8 @@ def dump_tet():
     # Get the current date
     today = datetime.now()
 
-    # Subtract 7 days
-    seven_days_ago = today - timedelta(days=7)
+    # Subtract 6 days to get a week
+    seven_days_ago = today - timedelta(days=6)
 
     # Format the date for SQL (YYYY-MM-DD)
     sql_date = seven_days_ago.strftime('%Y-%m-%d')
