@@ -79,7 +79,7 @@ def parse_arguments():
     parser.add_argument("-l", "--log_level", type=str,
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
-    parser.add_argument("-f", "--reference_curies", type=str, nargs="+", help="Only run for this references.", required=False)
+    parser.add_argument("-f", "--reference_curie", type=str, help="Only run for this references.", required=False)
     parser.add_argument("-m", "--mod_abbreviation", type=str, help="Only run for this mod.", required=False)
     parser.add_argument("-t", "--topic", type=str, help="Only run for this topic.", required=False)
     parser.add_argument("-s", "--stage", action="store_true", help="Only run for on stage.", required=False)
@@ -253,11 +253,11 @@ def classify_mode(args: Namespace):
 def direct_classify_mode(args: Namespace):
     logger.info(f"Direct classification started for mod={args.mod_abbreviation}, topic={args.topic}")
 
-    if not args.reference_curies:
+    if not args.reference_curie:
         logger.error("No references provided for direct classification.")
         return
 
-    reference_curies = args.reference_curies
+    reference_curies = [ref_curie.strip() for ref_curie in args.reference_curie.split(",")]
     if not reference_curies:
         logger.error("No valid reference curies found in input.")
         return
