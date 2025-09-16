@@ -7,6 +7,8 @@ from grobid_client import Client
 from grobid_client.api.pdf import process_fulltext_document
 from grobid_client.models import Article, ProcessForm
 from grobid_client.types import TEI, File
+from nltk import word_tokenize
+from nltk.corpus import stopwords
 
 from utils.tei_utils import get_sentences_from_tei_section
 
@@ -52,3 +54,10 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
         if num_errors > 0:
             logger.debug(f"Couldn't read {str(num_errors)} sentence(s) from {str(file_path)}")
     return documents
+
+
+def remove_stopwords(text):
+    stop_words = set(stopwords.words('english'))
+    word_tokens = word_tokenize(text)
+    filtered_text = [word for word in word_tokens if word not in stop_words]
+    return ' '.join(filtered_text)

@@ -3,16 +3,15 @@ import json
 import logging
 import os
 import os.path
+import re
 import shutil
 import sys
-import re
+from typing import List, Union
 
 import joblib
 import nltk
 import numpy as np
 from gensim.models import KeyedVectors
-from nltk.corpus import stopwords
-from nltk.tokenize import word_tokenize
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
@@ -20,9 +19,7 @@ from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_o
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model
 from utils.embedding import load_embedding_model, get_document_embedding
-from utils.get_documents import get_documents
-from typing import List, Union
-
+from utils.get_documents import get_documents, remove_stopwords
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -152,20 +149,16 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     novel_data: Union[bool, None], novel_topic_qualifier: Union[str, None], production: Union[bool, None], no_data: Union[bool, None], species: Union[str, None],
-                    stats: dict, dataset_id: int):
+                    stats: dict, dataset_id: int, test_mode: bool = False):
     model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
-    upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
-                    novel_data=novel_data, novel_topic_qualifier=novel_topic_qualifier, production=production,
-                    no_data=no_data, species=species,
-                    model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
-
-
-def remove_stopwords(text):
-    stop_words = set(stopwords.words('english'))
-    word_tokens = word_tokenize(text)
-    filtered_text = [word for word in word_tokens if word not in stop_words]
-    return ' '.join(filtered_text)
+    if test_mode:
+        logger.info(f"Saved model to {model_path}, skipping upload because in test mode.")
+    else:
+        upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
+                        novel_data=novel_data, novel_topic_qualifier=novel_topic_qualifier, production=production,
+                        no_data=no_data, species=species,
+                        model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
 
 def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, version_num, file_extension,
@@ -227,6 +220,8 @@ def parse_arguments():
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)
+    parser.add_argument("--test_mode", action="store_true", help="Run in test mode and store model "
+                                                                 "locally.", required=False)
     return parser.parse_args()
 
 
@@ -267,6 +262,8 @@ def upload_pre_existing_model(args, training_set):
 
 
 def train_and_save_model(args, training_data_dir, training_set):
+    if args.test_mode:
+        logger.info("Running in test mode. Model will be saved locally and not uploaded to ABC.")
     classifier, stats = train_classifier(
         embedding_model_path=args.embedding_model_path,
         training_data_dir=training_data_dir,
@@ -278,7 +275,7 @@ def train_and_save_model(args, training_data_dir, training_set):
                     novel_data=args.flag_novel, novel_topic_qualifier=args.novel_topic_qualifier,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
-                    stats=stats, dataset_id=training_set["dataset_id"])
+                    stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode)
 
 
 def train_mode(args):
