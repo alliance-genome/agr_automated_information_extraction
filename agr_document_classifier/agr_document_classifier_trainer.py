@@ -13,7 +13,7 @@ import nltk
 import numpy as np
 from gensim.models import KeyedVectors
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
-from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split, cross_val_score
 
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
@@ -86,43 +86,139 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     X = np.array(X)
     y = np.array(y)
 
+    # Step 1: Split data into train+val (80%) and holdout test set (20%)
+    X_train_val, X_test, y_train_val, y_test = train_test_split(
+        X, y, test_size=0.20, stratify=y, random_state=42
+    )
+
+    logger.info(f"Dataset split - Total: {len(X)}, Train+Val: {len(X_train_val)}, Test: {len(X_test)}")
+    logger.info(f"Class distribution - Train+Val: {np.bincount(y_train_val)}, Test: {np.bincount(y_test)}")
+
     best_score = 0
+    best_penalized_score = 0
     best_classifier = None
     best_params = None
     best_classifier_name = ""
     best_results = {}
     best_index = 0
+    test_scores = {}
+    model_selection_scores = {}
 
-    stratified_k_folds = StratifiedKFold(n_splits=5)
+    # Use 10-fold cross-validation for more robust validation
+    stratified_k_folds = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
 
     scoring = {
-        'precision': make_scorer(precision_score),
-        'recall': make_scorer(recall_score),
-        'f1': make_scorer(f1_score)
+        'precision': make_scorer(precision_score, zero_division=0),
+        'recall': make_scorer(recall_score, zero_division=0),
+        'f1': make_scorer(f1_score, zero_division=0)
     }
 
     logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
+    logger.info("Using penalized scoring: weighted_score = 0.7 * test_f1 + 0.3 * cv_f1 - penalty")
+
     for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
         logger.info(f"Evaluating model {classifier_name}.")
-        random_search = RandomizedSearchCV(estimator=classifier_info['model'], n_iter=100,
-                                           param_distributions=classifier_info['params'], cv=stratified_k_folds,
-                                           scoring=scoring, refit='f1', verbose=1, n_jobs=-1)
-        random_search.fit(X, y)
 
-        logger.info(f"Finished training model and fitting best hyperparameters for {classifier_name}. F1 score: "
-                    f"{str(random_search.best_score_)}")
+        # Reduce n_iter for faster training with focus on regularization
+        n_iter = 50 if classifier_name in ['LogisticRegression', 'SGDClassifier'] else 30
 
-        if random_search.best_score_ > best_score:
-            best_score = random_search.best_score_
+        random_search = RandomizedSearchCV(
+            estimator=classifier_info['model'],
+            n_iter=n_iter,
+            param_distributions=classifier_info['params'],
+            cv=stratified_k_folds,
+            scoring=scoring,
+            refit='f1',
+            verbose=1,
+            n_jobs=-1,
+            random_state=42
+        )
+        random_search.fit(X_train_val, y_train_val)
+
+        # Evaluate on test set
+        test_pred = random_search.predict(X_test)
+        test_f1 = f1_score(y_test, test_pred, zero_division=0)
+        test_precision = precision_score(y_test, test_pred, zero_division=0)
+        test_recall = recall_score(y_test, test_pred, zero_division=0)
+        cv_f1 = random_search.best_score_
+
+        test_scores[classifier_name] = {
+            'f1': test_f1,
+            'precision': test_precision,
+            'recall': test_recall
+        }
+
+        # Calculate overfitting gap and penalty
+        overfitting_gap = cv_f1 - test_f1
+
+        # Penalize overfitting: penalty increases exponentially with gap
+        if overfitting_gap > 0.05:  # Start penalizing after 5% gap
+            overfitting_penalty = (overfitting_gap - 0.05) * 2.0  # Double the gap as penalty
+        else:
+            overfitting_penalty = 0.0
+
+        # Calculate penalized score that balances test and CV performance
+        # Prioritize test performance (70%) but also consider CV performance (30%)
+        penalized_score = (0.7 * test_f1 + 0.3 * cv_f1) - overfitting_penalty
+
+        model_selection_scores[classifier_name] = {
+            'cv_f1': cv_f1,
+            'test_f1': test_f1,
+            'gap': overfitting_gap,
+            'penalty': overfitting_penalty,
+            'penalized_score': penalized_score
+        }
+
+        logger.info(f"Model {classifier_name}:")
+        logger.info(f"  CV F1: {cv_f1:.3f}, Test F1: {test_f1:.3f}")
+        logger.info(f"  Generalization gap: {overfitting_gap:.3f}")
+        logger.info(f"  Overfitting penalty: {overfitting_penalty:.3f}")
+        logger.info(f"  Penalized score: {penalized_score:.3f}")
+
+        # Warn about severe overfitting
+        if overfitting_gap > 0.15:
+            logger.warning(f"⚠️ Severe overfitting detected for {classifier_name}: gap = {overfitting_gap:.3f}")
+        elif overfitting_gap > 0.1:
+            logger.warning(f"⚠️ Moderate overfitting detected for {classifier_name}: gap = {overfitting_gap:.3f}")
+
+        # Select best model based on penalized score
+        if penalized_score > best_penalized_score:
+            best_penalized_score = penalized_score
+            best_score = cv_f1
             best_classifier = random_search.best_estimator_
             best_params = random_search.best_params_
             best_classifier_name = classifier_name
             best_results = random_search.cv_results_
             best_index = random_search.best_index_
 
-    logger.info(f"Selected model {best_classifier_name}.")
+    # Log model selection summary
+    logger.info("\n" + "="*60)
+    logger.info("Model Selection Summary (sorted by penalized score):")
+    logger.info("-"*60)
 
-    # Retrieve the average precision, recall, and F1 score
+    sorted_models = sorted(model_selection_scores.items(),
+                          key=lambda x: x[1]['penalized_score'],
+                          reverse=True)
+
+    for rank, (name, scores) in enumerate(sorted_models, 1):
+        logger.info(f"{rank}. {name:25s} | Score: {scores['penalized_score']:.3f} | "
+                   f"CV: {scores['cv_f1']:.3f} | Test: {scores['test_f1']:.3f} | "
+                   f"Gap: {scores['gap']:.3f} | Penalty: {scores['penalty']:.3f}")
+
+    logger.info("="*60)
+    logger.info(f"Selected model: {best_classifier_name} with penalized score: {best_penalized_score:.3f}")
+
+    # Retrain best model on full train+val set for final model
+    logger.info("Retraining best model on full training set...")
+    best_classifier.fit(X_train_val, y_train_val)
+
+    # Final evaluation on test set
+    final_test_pred = best_classifier.predict(X_test)
+    final_test_f1 = f1_score(y_test, final_test_pred)
+    final_test_precision = precision_score(y_test, final_test_pred)
+    final_test_recall = recall_score(y_test, final_test_pred)
+
+    # Retrieve the average precision, recall, and F1 score from CV
     average_precision = best_results['mean_test_precision'][best_index]
     average_recall = best_results['mean_test_recall'][best_index]
     average_f1 = best_results['mean_test_f1'][best_index]
@@ -140,8 +236,26 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         "std_precision": round(float(std_precision), 3),
         "std_recall": round(float(std_recall), 3),
         "std_f1": round(float(std_f1), 3),
-        "best_params": best_params
+        "test_precision": round(float(final_test_precision), 3),
+        "test_recall": round(float(final_test_recall), 3),
+        "test_f1": round(float(final_test_f1), 3),
+        "best_params": best_params,
+        "all_models_test_scores": test_scores,
+        "model_selection": {
+            "penalized_score": round(best_penalized_score, 3),
+            "generalization_gap": round(average_f1 - final_test_f1, 3),
+            "selection_criteria": "0.7 * test_f1 + 0.3 * cv_f1 - overfitting_penalty",
+            "all_models_scores": model_selection_scores
+        }
     }
+
+    # Log comparison between CV and test performance
+    logger.info(f"\n{'='*60}")
+    logger.info(f"Final Model Performance Summary for {best_classifier_name}:")
+    logger.info(f"Cross-Validation (10-fold): F1={average_f1:.3f} (±{std_f1:.3f})")
+    logger.info(f"Holdout Test Set: F1={final_test_f1:.3f}, Precision={final_test_precision:.3f}, Recall={final_test_recall:.3f}")
+    logger.info(f"Generalization Gap (CV-Test): {average_f1 - final_test_f1:.3f}")
+    logger.info(f"{'='*60}\n")
 
     # Return the trained model and performance metrics
     return best_classifier, stats
