@@ -105,7 +105,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     model_selection_scores = {}
 
     # Use 10-fold cross-validation for more robust validation
-    stratified_k_folds = StratifiedKFold(n_splits=10, shuffle=True, random_state=42)
+    stratified_k_folds = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 
     scoring = {
         'precision': make_scorer(precision_score, zero_division=0),
