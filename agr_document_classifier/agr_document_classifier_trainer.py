@@ -6,6 +6,7 @@ import os.path
 import re
 import shutil
 import sys
+from datetime import datetime
 from typing import List, Union
 
 import joblib
@@ -17,7 +18,7 @@ from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_t
 
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
-from utils.abc_utils import get_training_set_from_abc, upload_ml_model
+from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.get_documents import get_documents, remove_stopwords
 
@@ -336,15 +337,74 @@ def parse_arguments():
                         required=False)
     parser.add_argument("--test_mode", action="store_true", help="Run in test mode and store model "
                                                                  "locally.", required=False)
+    parser.add_argument("--dataset_version", type=int, required=False,
+                        help="Specific dataset version to use for training (defaults to latest)")
+    parser.add_argument("--filter_date_before", type=str, required=False,
+                        help="Filter out references published before this date (YYYY-MM-DD format)")
     return parser.parse_args()
 
 
 def download_training_set(args, training_data_dir):
-    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train)
+    # Get training set with optional version
+    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                                             version=args.dataset_version)
+
     reference_ids_positive = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
                               classification_value == "positive"]
     reference_ids_negative = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
                               classification_value == "negative"]
+
+    # Apply date filtering if specified
+    if args.filter_date_before:
+        try:
+            filter_date = datetime.strptime(args.filter_date_before, "%Y-%m-%d")
+            logger.info(f"Filtering out references published before {args.filter_date_before}")
+
+            # Filter positive references
+            filtered_positive = []
+            for ref_id in reference_ids_positive:
+                ref_date_str = get_reference_date(ref_id)
+                if ref_date_str:
+                    try:
+                        ref_date = datetime.strptime(ref_date_str[:10], "%Y-%m-%d")  # Take only date part
+                        if ref_date >= filter_date:
+                            filtered_positive.append(ref_id)
+                        else:
+                            logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
+                    except ValueError:
+                        logger.warning(f"Could not parse date '{ref_date_str}' for reference {ref_id}, including it")
+                        filtered_positive.append(ref_id)
+                else:
+                    logger.debug(f"No date found for reference {ref_id}, including it")
+                    filtered_positive.append(ref_id)
+
+            # Filter negative references
+            filtered_negative = []
+            for ref_id in reference_ids_negative:
+                ref_date_str = get_reference_date(ref_id)
+                if ref_date_str:
+                    try:
+                        ref_date = datetime.strptime(ref_date_str[:10], "%Y-%m-%d")  # Take only date part
+                        if ref_date >= filter_date:
+                            filtered_negative.append(ref_id)
+                        else:
+                            logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
+                    except ValueError:
+                        logger.warning(f"Could not parse date '{ref_date_str}' for reference {ref_id}, including it")
+                        filtered_negative.append(ref_id)
+                else:
+                    logger.debug(f"No date found for reference {ref_id}, including it")
+                    filtered_negative.append(ref_id)
+
+            logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> {len(filtered_positive)}, "
+                       f"Negative: {len(reference_ids_negative)} -> {len(filtered_negative)}")
+            reference_ids_positive = filtered_positive
+            reference_ids_negative = filtered_negative
+
+        except ValueError:
+            logger.error(f"Invalid date format: {args.filter_date_before}. Expected YYYY-MM-DD")
+            raise
+
     shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
     os.makedirs(os.path.join(training_data_dir, "positive"), exist_ok=True)
@@ -397,7 +457,7 @@ def train_mode(args):
     if args.skip_training_set_download:
         logger.info("Skipping training set download")
         training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                                 metadata_only=True)
+                                                 metadata_only=True, version=args.dataset_version)
     else:
         training_set = download_training_set(args, training_data_dir)
     if args.skip_training:
