@@ -748,6 +748,10 @@ def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type:
 
 
 def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, force_refresh: bool = False):  # noqa: C901
+    """
+    Return (all_curated_entity_names, entity_name_curie_mappings)
+    Results are cached per (mod_abbreviation, original_entity_type_str)
+    """
     cache_key = (mod_abbreviation, entity_type_str)
 
     if not force_refresh and cache_key in _CURATED_ENTITY_CACHE:
