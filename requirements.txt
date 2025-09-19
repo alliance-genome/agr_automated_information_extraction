@@ -11,7 +11,7 @@ cmake==3.31.6
 Cython==3.0.10
 ecdsa==0.19.0
 fastapi==0.115.11
-fastapi-okta @ git+https://github.com/alliance-genome/agr_fastapi_okta@daeea0634ddd244e76fade7a53b4c97471613035
+fastapi-okta==1.4.0
 fasttext==0.9.3
 filelock==3.17.0
 fsspec==2025.2.0
@@ -89,3 +89,4 @@ xmltodict==0.13.0
 pubmed_parser @ git+https://github.com/titipata/pubmed_parser
 retry==0.9.2
 matplotlib
+agr-curation-api-client==0.6.0
