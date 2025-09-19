@@ -1,5 +1,4 @@
-import numpy as np
-from scipy.stats import loguniform, expon, randint, uniform
+from scipy.stats import loguniform, randint, uniform
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
@@ -8,106 +7,124 @@ from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
-
+# Simplified models with stronger regularization to prevent overfitting
 POSSIBLE_CLASSIFIERS = {
     'LogisticRegression': {
         'model': LogisticRegression(random_state=42, max_iter=1000),
-        'params': {
-            'C': loguniform(1e-4, 1e+4),
-            'solver': ['newton-cg', 'lbfgs', 'liblinear', 'sag', 'saga'],
-            'class_weight': [None, 'balanced'],
-            'warm_start': [True, False]
-        }
+        'params': [
+            {
+                'C': loguniform(1e-3, 10),
+                'solver': ['lbfgs'],
+                'penalty': ['l2'],
+                'class_weight': ['balanced'],
+                'warm_start': [False]
+            },
+            {
+                'C': loguniform(1e-3, 10),
+                'solver': ['liblinear', 'saga'],
+                'penalty': ['l1', 'l2'],
+                'class_weight': ['balanced'],
+                'warm_start': [False]
+            }
+        ]
     },
     'RandomForestClassifier': {
         'model': RandomForestClassifier(random_state=42),
         'params': {
-            'n_estimators': randint(5, 1000),
-            'max_depth': list(range(2, 20, 2)),
-            'min_samples_split': randint(2, 50),
-            'min_samples_leaf': randint(1, 20),
-            'max_features': list(range(1, 100)) + ['sqrt', 'log2', None],
+            'n_estimators': randint(50, 200),  # Reduced from 1000
+            'max_depth': list(range(3, 12, 2)),  # Shallower trees
+            'min_samples_split': randint(5, 30),  # Increased minimum
+            'min_samples_leaf': randint(3, 15),  # Increased minimum
+            'max_features': ['sqrt', 'log2', 0.3, 0.5],  # Limit features
             'criterion': ['gini', 'entropy'],
-            'min_impurity_decrease': np.linspace(0.0, 0.1, 10),
-            'bootstrap': [True, False]
+            'min_impurity_decrease': uniform(0.0, 0.05),  # Add min impurity
+            'bootstrap': [True],
+            'class_weight': ['balanced', None]
         }
     },
     'GradientBoostingClassifier': {
         'model': GradientBoostingClassifier(random_state=42),
         'params': {
-            'n_estimators': randint(10, 200),
-            'learning_rate': loguniform(0.1, 1),
-            'max_depth': list(range(2, 10, 2))
+            'n_estimators': randint(50, 150),  # Reduced iterations
+            'learning_rate': loguniform(0.01, 0.3),  # Lower learning rates
+            'max_depth': list(range(2, 8)),  # Shallower trees
+            'min_samples_split': randint(5, 20),
+            'min_samples_leaf': randint(3, 10),
+            'subsample': uniform(0.6, 0.4),  # Subsampling for regularization
+            'max_features': ['sqrt', 'log2', 0.5]
         }
     },
     'XGBClassifier': {
         'model': XGBClassifier(random_state=42, eval_metric='logloss'),
         'params': {
-            'n_estimators': randint(10, 200),
-            'learning_rate': loguniform(0.1, 0.5),
-            'max_depth': list(range(2, 10, 2))
+            'n_estimators': randint(50, 150),  # Reduced iterations
+            'learning_rate': loguniform(0.01, 0.3),  # Lower learning rates
+            'max_depth': list(range(2, 8)),  # Shallower trees
+            'min_child_weight': randint(1, 10),  # Minimum sum of instance weight
+            'subsample': uniform(0.6, 0.4),  # Subsampling
+            'colsample_bytree': uniform(0.5, 0.5),  # Feature subsampling
+            'reg_alpha': loguniform(1e-3, 10),  # L1 regularization
+            'reg_lambda': loguniform(1e-3, 10),  # L2 regularization
+            'gamma': uniform(0, 0.5)  # Minimum loss reduction
         }
     },
     'MLPClassifier': {
-        'model': MLPClassifier(max_iter=1000),
+        'model': MLPClassifier(max_iter=1000, early_stopping=True, validation_fraction=0.2, random_state=42),
         'params': {
-            'hidden_layer_sizes': [(50,), (100,), (500,),
-                                   (50, 50), (100, 100), (500, 500),
-                                   (50, 50, 50), (100, 100, 100), (500, 500, 500),
-                                   (50, 100, 50), (100, 500, 100), (500, 100, 500)],
-            'activation': ['tanh', 'relu', 'logistic', 'identity'],
-            'solver': ['sgd', 'adam'],
-            'alpha': loguniform(1e-5, 1e-1),
-            'learning_rate': ['constant', 'invscaling', 'adaptive'],
-            'learning_rate_init': loguniform(1e-4, 1e-1),
-            'beta_1': loguniform(1e-3, 0.9),
-            'beta_2': loguniform(1e-3, 0.999),
-            'epsilon': loguniform(1e-8, 1e-1)
+            'hidden_layer_sizes': [(50,), (100,), (50, 25), (100, 50)],  # Simpler architectures
+            'activation': ['relu', 'tanh'],
+            'solver': ['adam', 'lbfgs'],
+            'alpha': loguniform(1e-3, 1),  # Stronger L2 regularization
+            'learning_rate': ['adaptive'],
+            'learning_rate_init': loguniform(1e-4, 1e-2),
+            'batch_size': ['auto', 32, 64],
+            'beta_1': [0.9],  # Fixed Adam parameter
+            'beta_2': [0.999],  # Fixed Adam parameter
         }
     },
     'SVC': {
-        'model': SVC(probability=True),
+        'model': SVC(probability=True, cache_size=500, random_state=42),
         'params': {
-            'C': expon(scale=100),
-            'kernel': ['linear', 'poly', 'rbf', 'sigmoid'],
-            'gamma': ['scale', 'auto'] + list(expon(scale=0.001).rvs(200)),
-            'degree': randint(1, 10),  # Only used if kernel is 'poly'
-            'coef0': uniform(0.0, 5.0),  # Independent term in kernel function. Used in 'poly' and 'sigmoid'.
-            'shrinking': [True, False],
-            'tol': uniform(1e-4, 1e-2),
-            'class_weight': [None, 'balanced'],
-            'decision_function_shape': ['ovo', 'ovr'],
-            'random_state': randint(0, 100)
+            'C': loguniform(1e-2, 10),  # Stronger regularization
+            'kernel': ['linear', 'rbf'],  # Removed poly and sigmoid
+            'gamma': ['scale', 'auto'] + list(loguniform(1e-4, 1e-1).rvs(20)),
+            'shrinking': [True],
+            'class_weight': ['balanced'],  # Always balanced
+            'decision_function_shape': ['ovr']
         }
     },
     'DecisionTreeClassifier': {
         'model': DecisionTreeClassifier(random_state=42),
         'params': {
-            'criterion': ['gini', 'entropy'],  # Function to measure the quality of a split
-            'max_depth': [None, 10, 20, 30, 40, 50],  # Maximum depth of the tree
-            'min_samples_split': [2, 5, 10],  # Minimum number of samples required to split an internal node
-            'min_samples_leaf': [1, 2, 4],  # Minimum number of samples required to be at a leaf node
-            'max_features': [None, 'sqrt', 'log2']  # Number of features to consider when looking for the best split
+            'criterion': ['gini', 'entropy'],
+            'max_depth': [3, 5, 7, 10],  # Shallower trees
+            'min_samples_split': [10, 20, 30],  # Higher minimums
+            'min_samples_leaf': [5, 10, 15],  # Higher minimums
+            'max_features': ['sqrt', 'log2', 0.5],  # Limit features
+            'min_impurity_decrease': [0.0, 0.01, 0.02],  # Add min impurity
+            'class_weight': ['balanced', None]
         }
     },
     'KNeighborsClassifier': {
         'model': KNeighborsClassifier(),
         'params': {
-            'n_neighbors': [3, 5, 7, 9],  # Number of neighbors to use
-            'weights': ['uniform', 'distance'],  # Weight function used in prediction
-            'algorithm': ['auto', 'ball_tree', 'kd_tree', 'brute'],  # Algorithm used to compute the nearest neighbors
-            'p': [1, 2]  # Power parameter for the Minkowski metric
+            'n_neighbors': [5, 7, 9, 11, 15],  # More neighbors for smoother decision boundary
+            'weights': ['uniform', 'distance'],
+            'algorithm': ['auto'],
+            'p': [1, 2],  # Manhattan and Euclidean distance
+            'leaf_size': [30, 50]  # For tree-based algorithms
         }
     },
     'SGDClassifier': {
-        'model': SGDClassifier(random_state=42, max_iter=1000),
+        'model': SGDClassifier(random_state=42, max_iter=1000, early_stopping=True, validation_fraction=0.2),
         'params': {
-            'loss': ['hinge', 'modified_huber', 'squared_epsilon_insensitive', 'huber', 'log_loss', 'perceptron',
-                     'squared_hinge', 'squared_error', 'epsilon_insensitive'],  # Loss function to be used
-            'penalty': ['l2', 'l1', 'elasticnet'],  # The penalty (aka regularization term) to be used
-            'alpha': np.logspace(-6, -1, 10),  # Constant that multiplies the regularization term
-            'learning_rate': ['constant', 'optimal', 'invscaling', 'adaptive'],  # Learning rate schedule
-            'eta0': [0.01, 0.1, 1]  # Initial learning rate for the 'constant', 'invscaling' or 'adaptive' schedules
+            'loss': ['log_loss', 'modified_huber'],  # Only probabilistic losses
+            'penalty': ['l2', 'l1', 'elasticnet'],
+            'alpha': loguniform(1e-5, 1e-1),  # Regularization strength
+            'l1_ratio': uniform(0, 1),  # For elasticnet
+            'learning_rate': ['optimal', 'adaptive'],
+            'eta0': [0.01, 0.1],  # Initial learning rate
+            'class_weight': ['balanced']  # Always balanced
         }
     }
 }

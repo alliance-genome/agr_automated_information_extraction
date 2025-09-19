@@ -97,6 +97,29 @@ def get_curie_from_reference_id(reference_id):
         logger.error(e)
 
 
+def get_reference_date(reference_id):
+    """Get the publication date of a reference."""
+    url = f'{blue_api_base_url}/reference/{reference_id}'
+    request = urllib.request.Request(url=url)
+    request.add_header("Content-type", "application/json")
+    request.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(request) as response:
+            resp = response.read().decode("utf8")
+            resp_obj = json.loads(resp)
+            # Try different date fields that might be available
+            if "date_published" in resp_obj and resp_obj["date_published"]:
+                return resp_obj["date_published"]
+            elif "date_published_start" in resp_obj and resp_obj["date_published_start"]:
+                return resp_obj["date_published_start"]
+            elif "year" in resp_obj and resp_obj["year"]:
+                return f"{resp_obj['year']}-01-01"  # Use January 1st if only year is available
+            return None
+    except (HTTPError, KeyError) as e:
+        logger.debug(f"Could not get date for reference {reference_id}: {e}")
+        return None
+
+
 def get_tet_source_id(mod_abbreviation: str, source_method: str, source_description: str):
     url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/{source_method}/{mod_abbreviation}'
            f'/{mod_abbreviation}')
@@ -680,12 +703,19 @@ def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
     return False
 
 
-def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False):
+def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False, version: int = None):
     endpoint = "metadata" if metadata_only else "download"
-    response = requests.get(f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/")
+    if version:
+        url = f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/{version}/"
+    else:
+        url = f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/"
+    response = requests.get(url)
     if response.status_code == 200:
         dataset = response.json()
-        logger.info(f"Dataset {endpoint} downloaded successfully.")
+        if version:
+            logger.info(f"Dataset {endpoint} version {version} downloaded successfully.")
+        else:
+            logger.info(f"Dataset {endpoint} (latest version) downloaded successfully.")
         return dataset
     else:
         logger.error(f"Failed to download dataset {response.text}")
