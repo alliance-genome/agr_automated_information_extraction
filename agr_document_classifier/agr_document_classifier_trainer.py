@@ -15,6 +15,9 @@ import numpy as np
 from gensim.models import KeyedVectors
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split, cross_val_score
+from sklearn.ensemble import IsolationForest
+from sklearn.covariance import EllipticEnvelope
+from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
@@ -38,9 +41,56 @@ def configure_logging(log_level):
     )
 
 
+def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.1):
+    """
+    Detect and remove outliers from the training data.
+
+    Args:
+        X: Feature matrix
+        y: Labels
+        method: Outlier detection method ('isolation_forest', 'elliptic_envelope', 'lof')
+        contamination: Expected proportion of outliers in the dataset
+
+    Returns:
+        X_clean, y_clean: Data with outliers removed
+        outlier_mask: Boolean mask indicating which samples were considered outliers
+    """
+    logger.info(f"Detecting outliers using {method} method (contamination={contamination})")
+
+    if method == 'isolation_forest':
+        detector = IsolationForest(contamination=contamination, random_state=42)
+    elif method == 'elliptic_envelope':
+        detector = EllipticEnvelope(contamination=contamination, random_state=42)
+    elif method == 'lof':
+        detector = LocalOutlierFactor(contamination=contamination, novelty=False)
+    else:
+        logger.warning(f"Unknown outlier detection method: {method}. Skipping outlier removal.")
+        return X, y, np.ones(len(X), dtype=bool)
+
+    # Fit the detector and predict outliers
+    outlier_predictions = detector.fit_predict(X)
+
+    # Create mask for inliers (1) vs outliers (-1)
+    inlier_mask = outlier_predictions == 1
+    outlier_mask = outlier_predictions == -1
+
+    # Remove outliers
+    X_clean = X[inlier_mask]
+    y_clean = y[inlier_mask]
+
+    n_outliers = np.sum(outlier_mask)
+    logger.info(f"Removed {n_outliers} outliers ({n_outliers/len(X)*100:.1f}%) from {len(X)} samples")
+    logger.info(f"Remaining samples: {len(X_clean)} (Positive: {np.sum(y_clean)}, Negative: {np.sum(1-y_clean)})")
+
+    return X_clean, y_clean, outlier_mask
+
+
+
+
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
-                     sections_to_use: List[str] = None):
+                     sections_to_use: List[str] = None, remove_outliers: bool = False,
+                     outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1):
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
     X = []
@@ -94,6 +144,15 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 
     logger.info(f"Dataset split - Total: {len(X)}, Train+Val: {len(X_train_val)}, Test: {len(X_test)}")
     logger.info(f"Class distribution - Train+Val: {np.bincount(y_train_val)}, Test: {np.bincount(y_test)}")
+
+    # Step 2: Apply outlier detection and removal if requested
+    if remove_outliers:
+        X_train_val, y_train_val, outlier_mask = detect_and_remove_outliers(
+            X_train_val, y_train_val,
+            method=outlier_method,
+            contamination=outlier_contamination
+        )
+
 
     best_score = 0
     best_penalized_score = 0
@@ -263,9 +322,12 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str,
-                    novel_data: Union[bool, None], novel_topic_qualifier: Union[str, None], production: Union[bool, None], no_data: Union[bool, None], species: Union[str, None],
-                    stats: dict, dataset_id: int, test_mode: bool = False):
+                    novel_data: Union[bool, None], novel_topic_qualifier: Union[str, None],
+                    production: Union[bool, None], no_data: Union[bool, None],
+                    species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False):
     model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
+
+    # Save the classifier directly (compatible with existing classification pipeline)
     joblib.dump(classifier, model_path)
     if test_mode:
         logger.info(f"Saved model to {model_path}, skipping upload because in test mode.")
@@ -341,6 +403,14 @@ def parse_arguments():
                         help="Specific dataset version to use for training (defaults to latest)")
     parser.add_argument("--filter_date_before", type=str, required=False,
                         help="Filter out references published before this date (YYYY-MM-DD format)")
+    # Outlier detection arguments
+    parser.add_argument("--remove_outliers", action="store_true",
+                        help="Enable outlier detection and removal")
+    parser.add_argument("--outlier_method", type=str, default="isolation_forest",
+                        choices=['isolation_forest', 'elliptic_envelope', 'lof'],
+                        help="Outlier detection method (default: isolation_forest)")
+    parser.add_argument("--outlier_contamination", type=float, default=0.1,
+                        help="Expected proportion of outliers (default: 0.1)")
     return parser.parse_args()
 
 
@@ -396,8 +466,9 @@ def download_training_set(args, training_data_dir):
                     logger.debug(f"No date found for reference {ref_id}, including it")
                     filtered_negative.append(ref_id)
 
-            logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> {len(filtered_positive)}, "
-                       f"Negative: {len(reference_ids_negative)} -> {len(filtered_negative)}")
+            logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> "
+                        f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
+                        f"{len(filtered_negative)}")
             reference_ids_positive = filtered_positive
             reference_ids_negative = filtered_negative
 
@@ -442,8 +513,12 @@ def train_and_save_model(args, training_data_dir, training_set):
         embedding_model_path=args.embedding_model_path,
         training_data_dir=training_data_dir,
         weighted_average_word_embedding=args.weighted_average_word_embedding,
-        standardize_embeddings=args.standardize_embeddings, normalize_embeddings=args.normalize_embeddings,
-        sections_to_use=args.sections_to_use)
+        standardize_embeddings=args.standardize_embeddings,
+        normalize_embeddings=args.normalize_embeddings,
+        sections_to_use=args.sections_to_use,
+        remove_outliers=args.remove_outliers,
+        outlier_method=args.outlier_method,
+        outlier_contamination=args.outlier_contamination)
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     novel_data=args.flag_novel, novel_topic_qualifier=args.novel_topic_qualifier,

@@ -55,7 +55,7 @@ POSSIBLE_CLASSIFIERS = {
         }
     },
     'XGBClassifier': {
-        'model': XGBClassifier(random_state=42, eval_metric='logloss', use_label_encoder=False),
+        'model': XGBClassifier(random_state=42, eval_metric='logloss'),
         'params': {
             'n_estimators': randint(50, 150),  # Reduced iterations
             'learning_rate': loguniform(0.01, 0.3),  # Lower learning rates
