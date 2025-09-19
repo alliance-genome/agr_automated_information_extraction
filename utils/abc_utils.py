@@ -1,34 +1,31 @@
 import io
 import json
 import time
-import random
 import logging
 import os
 import html
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union, Optional
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from argparse import Namespace
 import psycopg2
 import requests
 import urllib.request
 import numpy as np
-
 from fastapi_okta.okta_utils import get_authentication_token, generate_headers
-
+from agr_curation_api import APIConfig, AGRCurationAPIClient  # type: ignore
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
     blue_api_base_url = f"https://{blue_api_base_url}"
 curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
-
 logger = logging.getLogger(__name__)
+
+PAGE_LIMIT = 1000
 
 cache = {}
 
 _CURATED_ENTITY_CACHE: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {}
-
-_RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 def set_blue_api_base_url(value):
@@ -504,13 +501,9 @@ def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
 
 
 def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, topic: str = None):
-    # We want to set version to 'production' if we are running in production else Null
-
+    # TODO: Question, How can there be NO topic?
     download_url = f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}/{topic}" if (
         topic is not None) else f"{blue_api_base_url}/ml_model/download/{task_type}/{mod_abbreviation}"
-    on_production = os.environ.get("ON_PRODUCTION", "no")
-    if on_production and on_production == 'yes':
-        download_url += '/production'
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -695,24 +688,6 @@ def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: 
         response.raise_for_status()
 
 
-def get_entity_name(entity_type, a_team_api_search_result_obj, mod_abbreviation: str = None):
-    if entity_type == 'gene':
-        gene_name = a_team_api_search_result_obj['geneSymbol']['formatText']
-        if mod_abbreviation and mod_abbreviation == 'WB':
-            return gene_name.lower()
-        return gene_name
-    elif entity_type == 'protein':
-        # currently just for WB
-        gene_name = a_team_api_search_result_obj['geneSymbol']['formatText']
-        return gene_name.upper()
-    elif entity_type == 'allele':
-        return a_team_api_search_result_obj['alleleSymbol']['formatText']
-    elif entity_type == 'fish':
-        if a_team_api_search_result_obj['subtype']['name'] != 'fish':
-            return None
-        return a_team_api_search_result_obj['name']
-
-
 def species_to_exclude():
     return {
         "NCBITaxon:4853",
@@ -731,163 +706,98 @@ def species_to_exclude():
     }
 
 
-def _post_json_with_retries(url: str, body: dict, headers: dict,
-                            *, max_retries: int = 5, base_sleep: float = 0.8):
-    """POST JSON with exponential backoff + jitter; returns parsed JSON."""
-    data = json.dumps(body).encode("utf-8")
-    attempt = 0
-    while True:
-        req = urllib.request.Request(url, data=data)
-        for k, v in headers.items():
-            req.add_header(k, v)
-        # Some gateways behave better if we set UA explicitly
-        req.add_header("User-Agent", "AGR-Client/1.0")
-        try:
-            with urllib.request.urlopen(req, timeout=60) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except HTTPError as e:
-            # Log a bit of context
-            try:
-                detail = e.read().decode("utf-8")[:500]
-            except Exception:
-                detail = ""
-            logger.warning(f"POST {url} -> HTTP {e.code}. Attempt {attempt+1}/{max_retries}. {detail}")
-            if e.code in _RETRY_STATUS and attempt < max_retries:
-                sleep = base_sleep * (2 ** attempt) + random.uniform(0, 0.25)
-                time.sleep(sleep)
-                attempt += 1
-                continue
-            raise
-        except URLError as e:
-            logger.warning(f"POST {url} -> URLError {e}. Attempt {attempt+1}/{max_retries}.")
-            if attempt < max_retries:
-                sleep = base_sleep * (2 ** attempt) + random.uniform(0, 0.25)
-                time.sleep(sleep)
-                attempt += 1
-                continue
-            raise
+def get_name_from_entity(entity_symbol):
+    if entity_symbol is None:
+        return None
+    if getattr(entity_symbol, "obsolete", False) or getattr(entity_symbol, "internal", False):
+        return None
+    if hasattr(entity_symbol, 'formatText'):
+        return entity_symbol.formatText
+    elif hasattr(entity_symbol, 'displayText'):
+        return entity_symbol.displayText
+    return None
+
+
+def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type: str, page: int):
+    """Fetch a single page of entities from the API."""
+    if entity_type == 'gene':
+        return api_client.get_genes(data_provider=mod, limit=PAGE_LIMIT, page=page)
+    elif entity_type == 'transgene':
+        return api_client.get_alleles(
+            data_provider=mod,
+            limit=PAGE_LIMIT,
+            page=page,
+            transgenes_only=True
+        )
+    elif entity_type in ['strain', 'genotype', 'fish']:
+        return api_client.get_agms(
+            data_provider=mod,
+            subtype=entity_type,
+            limit=PAGE_LIMIT,
+            page=page
+        )
+    elif entity_type == 'species':
+        return api_client.get_species(limit=PAGE_LIMIT, page=page)
+    else:
+        logger.info(f"Unknown entity_type '{entity_type}' requested; returning empty list.")
+        return []
 
 
 def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, force_refresh: bool = False):  # noqa: C901
-    """
-    Return (all_curated_entity_names, entity_name_curie_mappings)
-    Results are cached per (mod_abbreviation, original_entity_type_str)
-    """
     cache_key = (mod_abbreviation, entity_type_str)
 
     if not force_refresh and cache_key in _CURATED_ENTITY_CACHE:
         names, mapping = _CURATED_ENTITY_CACHE[cache_key]
-        # return copies so callers can't accidentally mutate the cache
         return names.copy(), mapping.copy()
 
     all_curated_entity_names: list[str] = []
     entity_name_curie_mappings: dict[str, str] = {}
 
-    etype_logical = entity_type_str
-    etype_api = entity_type_str
+    api_config = APIConfig()  # type: ignore
+    api_client = AGRCurationAPIClient(api_config)
 
-    base_filters = {
-        "searchFilters": {},
-        "sortOrders": [],
-        "aggregations": [],
-        "nonNullFieldsTable": []
-    }
+    if entity_type_str == 'transgenic_allele':
+        entity_type_str = 'transgene'
 
-    if etype_logical not in {"species"}:
-        base_filters["searchFilters"]["dataProviderFilter"] = {
-            "dataProvider.abbreviation": {
-                "queryString": mod_abbreviation,
-                "tokenOperator": "OR"
-            }
-        }
-
-    # Map subtypes to AGM search
-    if etype_logical in {"strain", "genotype", "fish"}:
-        base_filters["searchFilters"]["subtypeFilter"] = {
-            "subtype.name": {
-                "queryString": etype_logical,
-                "tokenOperator": "OR"
-            }
-        }
-        etype_api = "agm"
-
-    # WB transgenic_allele
-    if etype_logical == "transgenic_allele":
-        etype_api = "allele"
-        if mod_abbreviation == "WB":
-            base_filters["searchFilters"]["primaryExternalIdFilter"] = {
-                "primaryExternalId": {
-                    "queryString": "WB:WBTransgene",
-                    "tokenOperator": "OR"
-                }
-            }
-
-    if etype_logical == "species":
-        etype_api = "ncbitaxonterm"
-        base_filters = {
-            "searchFilters": {},  # keep empty for ncbitaxonterm
-            "sortOrders": [],
-            "aggregations": [],
-            "nonNullFieldsTable": []
-        }
-        species_to_exclude_set = species_to_exclude()
-
-    auth_header = f"Bearer {get_authentication_token()}"
-    headers = {
-        "Authorization": auth_header,
-        "Content-type": "application/json",
-        "Accept": "application/json",
-    }
+    species_to_exclude_set = species_to_exclude()
 
     current_page = 0
     while True:
-        url = f"{curation_api_base_url}{etype_api}/search?limit=1000&page={current_page}"
-        logger.info(f"Fetching page {current_page} from {etype_api} (logical: {etype_logical})")
-        print(f"url={url}")
-
-        try:
-            resp_obj = _post_json_with_retries(url, base_filters, headers, max_retries=5, base_sleep=1.0)
-        except HTTPError as e:
-            logger.error(f"{etype_api} search failed (HTTP {e.code}) on page {current_page}")
-            raise
-        except URLError as e:
-            logger.error(f"{etype_api} search network error on page {current_page}: {e}")
-            raise
-        returned = resp_obj.get("returnedRecords", 0)
-        results = resp_obj.get("results", []) or []
-        if returned < 1 or not results:
+        entities = fetch_entities_page(api_client, mod_abbreviation, entity_type_str, current_page)
+        if not entities:
+            logger.info(f"No entities returned for {entity_type_str} page {current_page}")
             break
 
-        for result in results:
-            if result.get("obsolete") or result.get("internal"):
-                continue
-
-            if etype_api == "ncbitaxonterm":
-                entity_name = result.get("name")
-                curie = result.get("curie")
-                if not entity_name or not curie:
-                    continue
-                if curie in species_to_exclude_set:
-                    continue
-
-            elif etype_api == "agm":
-                if "agmFullName" in result and isinstance(result["agmFullName"], dict):
-                    entity_name = result["agmFullName"].get("displayText") or result["agmFullName"].get("name")
-                else:
-                    entity_name = get_entity_name(etype_api, result, mod_abbreviation)
-                curie = result.get("primaryExternalId")
-
+        for entity in entities:
+            entity_name = None
+            curie = None
+            if entity_type_str == 'species':
+                if hasattr(entity, 'curie'):
+                    if entity.obsolete or entity.internal:
+                        continue
+                    curie = entity.curie
+                    entity_name = entity.name
+                    if curie in species_to_exclude_set:
+                        continue
             else:
-                entity_name = get_entity_name(etype_api, result, mod_abbreviation)
-                curie = result.get("primaryExternalId")
-
+                if hasattr(entity, 'primaryExternalId'):
+                    curie = entity.primaryExternalId
+                if not curie:
+                    continue
+                if entity_type_str == 'gene':
+                    if hasattr(entity, 'geneSymbol'):
+                        entity_symbol = entity.geneSymbol
+                elif entity_type_str == 'transgene':
+                    if hasattr(entity, 'alleleSymbol'):
+                        entity_symbol = entity.alleleSymbol
+                elif entity_type_str in ['fish', 'genotype', 'strain']:
+                    entity_symbol = entity.agmFullName
+                entity_name = get_name_from_entity(entity_symbol)
             if not entity_name or not curie:
                 continue
-
             if entity_name not in entity_name_curie_mappings:
                 all_curated_entity_names.append(entity_name)
             entity_name_curie_mappings[entity_name] = curie
-
         current_page += 1
 
     # Deduplicate + stable sort output names
