@@ -1,4 +1,4 @@
-from scipy.stats import loguniform, expon, randint, uniform
+from scipy.stats import loguniform, randint, uniform
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier

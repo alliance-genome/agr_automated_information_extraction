@@ -14,7 +14,7 @@ import nltk
 import numpy as np
 from gensim.models import KeyedVectors
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
-from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split, cross_val_score
+from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split
 from sklearn.ensemble import IsolationForest
 from sklearn.covariance import EllipticEnvelope
 from sklearn.neighbors import LocalOutlierFactor
@@ -85,8 +85,6 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     return X_clean, y_clean, outlier_mask
 
 
-
-
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
@@ -153,8 +151,6 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
             contamination=outlier_contamination
         )
 
-
-    best_score = 0
     best_penalized_score = 0
     best_classifier = None
     best_params = None
@@ -244,7 +240,6 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         # Select best model based on penalized score
         if penalized_score > best_penalized_score:
             best_penalized_score = penalized_score
-            best_score = cv_f1
             best_classifier = random_search.best_estimator_
             best_params = random_search.best_params_
             best_classifier_name = classifier_name
@@ -252,20 +247,20 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
             best_index = random_search.best_index_
 
     # Log model selection summary
-    logger.info("\n" + "="*60)
+    logger.info("\n" + "=" * 60)
     logger.info("Model Selection Summary (sorted by penalized score):")
-    logger.info("-"*60)
+    logger.info("-" * 60)
 
     sorted_models = sorted(model_selection_scores.items(),
-                          key=lambda x: x[1]['penalized_score'],
-                          reverse=True)
+                           key=lambda x: x[1]['penalized_score'],
+                           reverse=True)
 
     for rank, (name, scores) in enumerate(sorted_models, 1):
         logger.info(f"{rank}. {name:25s} | Score: {scores['penalized_score']:.3f} | "
-                   f"CV: {scores['cv_f1']:.3f} | Test: {scores['test_f1']:.3f} | "
-                   f"Gap: {scores['gap']:.3f} | Penalty: {scores['penalty']:.3f}")
+                    f"CV: {scores['cv_f1']:.3f} | Test: {scores['test_f1']:.3f} | "
+                    f"Gap: {scores['gap']:.3f} | Penalty: {scores['penalty']:.3f}")
 
-    logger.info("="*60)
+    logger.info("=" * 60)
     logger.info(f"Selected model: {best_classifier_name} with penalized score: {best_penalized_score:.3f}")
 
     # Retrain best model on full train+val set for final model
@@ -310,12 +305,13 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     }
 
     # Log comparison between CV and test performance
-    logger.info(f"\n{'='*60}")
+    logger.info(f"\n{'=' * 60}")
     logger.info(f"Final Model Performance Summary for {best_classifier_name}:")
     logger.info(f"Cross-Validation (10-fold): F1={average_f1:.3f} (±{std_f1:.3f})")
-    logger.info(f"Holdout Test Set: F1={final_test_f1:.3f}, Precision={final_test_precision:.3f}, Recall={final_test_recall:.3f}")
+    logger.info(f"Holdout Test Set: F1={final_test_f1:.3f}, "
+                f"Precision={final_test_precision:.3f}, Recall={final_test_recall:.3f}")
     logger.info(f"Generalization Gap (CV-Test): {average_f1 - final_test_f1:.3f}")
-    logger.info(f"{'='*60}\n")
+    logger.info(f"{'=' * 60}\n")
 
     # Return the trained model and performance metrics
     return best_classifier, stats
@@ -325,7 +321,9 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     novel_data: Union[bool, None], novel_topic_qualifier: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
                     species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False):
-    model_path = f"/data/agr_document_classifier/training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
+    topic_formatted = topic.replace(':', '_')
+    model_filename = f"{mod_abbreviation}_{topic_formatted}_classifier.joblib"
+    model_path = f"/data/agr_document_classifier/training/{model_filename}"
 
     # Save the classifier directly (compatible with existing classification pipeline)
     joblib.dump(classifier, model_path)
