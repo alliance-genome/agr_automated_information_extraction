@@ -208,11 +208,11 @@ def get_confidence_level(classification, conf_score):
     if classification == 0:
         return "NEG"
     elif conf_score < 0.667:
-        return "Low"
+        return "LOW"
     elif conf_score < 0.833:
-        return "Med"
+        return "MEDIUM"
     else:
-        return "High"
+        return "HIGH"
 
 
 def classify_mode(args: Namespace):
