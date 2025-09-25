@@ -11,7 +11,7 @@ import os
 import re
 import sys
 from datetime import datetime
-from typing import List, Dict, Tuple
+from typing import List, Tuple
 import requests
 from requests.auth import HTTPBasicAuth
 from bs4 import BeautifulSoup
@@ -244,9 +244,9 @@ def main():
             results[datatype] = {'error': str(e)}
 
     # Print summary
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("DOWNLOAD SUMMARY")
-    print("="*60)
+    print("=" * 60)
     for datatype, info in results.items():
         if 'error' in info:
             print(f"{datatype}: ERROR - {info['error']}")
@@ -254,7 +254,7 @@ def main():
             print(f"{datatype}: {info['positive']} positive, {info['negative']} negative -> {info['file']}")
         else:
             print(f"{datatype}: No papers found")
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":
