@@ -26,12 +26,9 @@ logger = logging.getLogger(__name__)
 
 # Available data types from WormBase
 AVAILABLE_DATATYPES = [
-    'antibody', 'blastomere', 'catalyticact', 'chemicals', 'chemphen',
-    'envpheno', 'expression_cluster', 'exprmosaic', 'geneint', 'geneprod',
-    'genereg', 'genesymbol', 'geneticablation', 'geneticmosaic', 'humandisease',
-    'laserablation', 'newmutant', 'optogenetic', 'otherexpr', 'overexpr',
-    'picture', 'rnai', 'rnaseq', 'seqchange', 'siteaction', 'structcorr',
-    'timeaction', 'transporter'
+    'antibody', 'catalyticact', 'geneint', 'geneprod', 'genereg',
+    'humandisease', 'newmutant', 'otherexpr', 'overexpr', 'rnai',
+    'transporter'
 ]
 
 
