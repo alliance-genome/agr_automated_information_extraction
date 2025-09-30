@@ -27,6 +27,7 @@ from utils.get_documents import get_documents, remove_stopwords
 
 nltk.download('stopwords')
 nltk.download('punkt')
+nltk.download('punkt_tab')
 
 logger = logging.getLogger(__name__)
 
