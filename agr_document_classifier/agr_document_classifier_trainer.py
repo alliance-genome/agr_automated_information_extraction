@@ -320,10 +320,13 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     novel_data: Union[bool, None], novel_topic_qualifier: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
-                    species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False):
+                    species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False,
+                    training_data_dir: str = None):
+    if training_data_dir is None:
+        training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
     topic_formatted = topic.replace(':', '_')
     model_filename = f"{mod_abbreviation}_{topic_formatted}_classifier.joblib"
-    model_path = f"/data/agr_document_classifier/training/{model_filename}"
+    model_path = os.path.join(training_data_dir, model_filename)
 
     # Save the classifier directly (compatible with existing classification pipeline)
     joblib.dump(classifier, model_path)
@@ -484,10 +487,10 @@ def download_training_set(args, training_data_dir):
     return training_set
 
 
-def upload_pre_existing_model(args, training_set):
+def upload_pre_existing_model(args, training_set, training_data_dir):
     logger.info("Skipping training. Uploading pre-existing model and stats file to ABC")
-    stats = json.load(open(f"/data/agr_document_classifier/training/{args.mod_train}_"
-                           + f"{args.datatype_train.replace(':', '_')}_metadata.json"))
+    stats_path = os.path.join(training_data_dir, f"{args.mod_train}_{args.datatype_train.replace(':', '_')}_metadata.json")
+    stats = json.load(open(stats_path))
     stats["best_params"] = stats["parameters"]
     stats["model_name"] = stats["model_type"]
     stats["average_precision"] = stats["precision"]
@@ -499,8 +502,8 @@ def upload_pre_existing_model(args, training_set):
                     novel_topic_qualifier=args.novel_topic_qualifier,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
-                    model_path=f"/data/agr_document_classifier/training/{args.mod_train}_"
-                               f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
+                    model_path=os.path.join(training_data_dir,
+                               f"{args.mod_train}_{args.datatype_train.replace(':', '_')}_classifier.joblib"),
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
@@ -522,11 +525,12 @@ def train_and_save_model(args, training_data_dir, training_set):
                     novel_data=args.flag_novel, novel_topic_qualifier=args.novel_topic_qualifier,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
-                    stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode)
+                    stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode,
+                    training_data_dir=training_data_dir)
 
 
 def train_mode(args):
-    training_data_dir = "/data/agr_document_classifier/training"
+    training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
     if args.skip_training_set_download:
         logger.info("Skipping training set download")
         training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
@@ -534,7 +538,7 @@ def train_mode(args):
     else:
         training_set = download_training_set(args, training_data_dir)
     if args.skip_training:
-        upload_pre_existing_model(args, training_set)
+        upload_pre_existing_model(args, training_set, training_data_dir)
     else:
         train_and_save_model(args, training_data_dir, training_set)
 
