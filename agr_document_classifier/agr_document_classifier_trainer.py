@@ -504,7 +504,8 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     model_path=os.path.join(training_data_dir,
-                               f"{args.mod_train}_{args.datatype_train.replace(':', '_')}_classifier.joblib"),
+                                            f"{args.mod_train}_{args.datatype_train.replace(':', '_')}"
+                                            f"_classifier.joblib"),
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
