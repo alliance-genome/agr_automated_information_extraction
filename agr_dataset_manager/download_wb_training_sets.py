@@ -141,12 +141,12 @@ class WormBaseDownloader:
 
             # Write positive papers
             for paper in positive_papers:
-                # AGRKBID is empty, XREF contains the WBPaper ID
-                writer.writerow(['', paper, 'positive'])
+                # AGRKBID is empty, XREF contains the WBPaper ID with WB: prefix
+                writer.writerow(['', f'WB:{paper}', 'positive'])
 
             # Write negative papers
             for paper in negative_papers:
-                writer.writerow(['', paper, 'negative'])
+                writer.writerow(['', f'WB:{paper}', 'negative'])
 
         logger.info(f"Saved {len(positive_papers) + len(negative_papers)} papers to {filepath}")
         return filepath

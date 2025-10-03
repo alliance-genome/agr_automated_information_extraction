@@ -7,10 +7,16 @@ from grobid_client import Client
 from grobid_client.api.pdf import process_fulltext_document
 from grobid_client.models import Article, ProcessForm
 from grobid_client.types import TEI, File
+import nltk
 from nltk import word_tokenize
 from nltk.corpus import stopwords
 
 from utils.tei_utils import get_sentences_from_tei_section
+
+# Download required NLTK data
+nltk.download('stopwords')
+nltk.download('punkt')
+nltk.download('punkt_tab')
 
 logger = logging.getLogger(__name__)
 
