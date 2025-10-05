@@ -13,6 +13,7 @@ ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline_fast.py .
+ADD agr_entity_extractor/agr_species_extraction_pipeline.py .
 ADD agr_entity_extractor/fit_and_upload_tfidf_vectorizer.py .
 ADD agr_entity_extractor/fit_and_upload_tfidf_vectorizer_fast.py .
 ADD agr_entity_extractor/upload_string_matching_extractor.py .
