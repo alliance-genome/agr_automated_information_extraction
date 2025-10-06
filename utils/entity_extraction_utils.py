@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 entity_extraction_utils.py
 
@@ -348,6 +347,24 @@ def names_to_curies(model: object, names: List[str]) -> List[str]:
         if curie:
             out.append(curie)
     return out
+
+
+def resolve_entity_curie(model: object, ent: str, *, strict: bool = True) -> Optional[str]:
+    """
+    Map one DISPLAY NAME (possibly wrong-cased) -> CURIE.
+    - strict=True: raise KeyError if no mapping
+    - strict=False: return None and log a warning.
+    """
+    mapping = getattr(model, "name_to_curie_mapping", {}) or {}
+    u2o = getattr(model, "upper_to_original_mapping", {}) or {}
+    key = ent if ent in mapping else u2o.get(ent.upper())
+    curie = mapping.get(key) if key else None
+    if curie:
+        return curie
+    if strict:
+        raise KeyError(f"Unknown entity with no CURIE mapping: '{ent}'")
+    logger.warning("No CURIE mapping for entity '%s'", ent)
+    return None
 
 
 def build_entities_from_results(

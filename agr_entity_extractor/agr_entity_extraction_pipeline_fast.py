@@ -17,12 +17,12 @@ CLI:
     --log-every INT           Log progress every N papers (default 10)
 """
 import argparse
-import copy
 import logging
 import os
 import re
 import sys
 import time
+import copy
 from typing import List
 import dill
 import requests
@@ -51,6 +51,7 @@ from utils.entity_extraction_utils import (
     run_ner_batched,
     prefilter_text as prefilter_text_generic,
     build_entities_from_results as build_entities_from_results_generic,
+    resolve_entity_curie,
 )
 
 # Silence HF info/warnings entirely
@@ -365,13 +366,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 else:
                     seen = set()
                     for ent in all_entities:
-                        key = ent if ent in model.name_to_curie_mapping \
-                            else getattr(model, "upper_to_original_mapping", {}).get(ent.upper(), ent)
-                        ent_curie = model.name_to_curie_mapping.get(key)
-                        if not ent_curie:
-                            logger.warning("No CURIE mapping for entity '%s' in %s", ent, curie)
-                            continue
-                        if ent_curie in seen:
+                        try:
+                            ent_curie = resolve_entity_curie(model, ent, strict=True)
+                        except KeyError:
+                            raise
+                        if not ent_curie or ent_curie in seen:
                             continue
                         seen.add(ent_curie)
                         send_entity_tag_to_abc(
@@ -477,13 +476,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 else:
                     seen = set()
                     for ent in all_entities:
-                        key = ent if ent in model.name_to_curie_mapping \
-                            else getattr(model, "upper_to_original_mapping", {}).get(ent.upper(), ent)
-                        ent_curie = model.name_to_curie_mapping.get(key)
-                        if not ent_curie:
-                            logger.warning("No CURIE mapping for entity '%s' in %s", ent, curie)
-                            continue
-                        if ent_curie in seen:
+                        try:
+                            ent_curie = resolve_entity_curie(model, ent, strict=True)
+                        except KeyError:
+                            raise
+                        if not ent_curie or ent_curie in seen:
                             continue
                         seen.add(ent_curie)
                         send_entity_tag_to_abc(
@@ -533,6 +530,7 @@ def main():
                         help="Disable regex/dictionary prefiltering before NER (slower).")
     parser.add_argument("--log-every", type=int, default=10,
                         help="Log progress every N papers inside a batch (default: 10).")
+    parser.set_defaults(strict_mapping=True)
 
     args = parser.parse_args()
 

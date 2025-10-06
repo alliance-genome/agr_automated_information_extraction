@@ -25,11 +25,13 @@ from __future__ import annotations
 
 from typing import Dict, List, Set, Optional, Tuple
 from pathlib import Path
+from urllib.parse import urlparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import re
 import time
 import requests
 import logging
+import base64
 import json
 import os
 
@@ -75,7 +77,8 @@ def _api_get_json(url: str, timeout: float, retries: int, sleep: float, headers:
                 try:
                     return r.json()
                 except ValueError:
-                    logger.warning("Non-JSON from %s", url)
+                    safe_url = urlparse(url)._replace(query="").geturl()
+                    logger.warning("Non-JSON response from %s", safe_url)
                     return None
             if r.status_code in (429, 500, 502, 503, 504):
                 if attempt <= retries:
@@ -118,9 +121,11 @@ def _lin_cache_get(tid: int) -> Optional[dict]:
 
 def _lin_cache_put(tid: int, payload: dict) -> None:
     try:
-        _lin_cache_path(tid).write_text(json.dumps(payload), encoding="utf-8")
-    except Exception:
-        pass
+        data = json.dumps(payload).encode("utf-8")
+        encoded = base64.b64encode(data).decode("ascii")
+        _lin_cache_path(tid).write_text(encoded, encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to cache lineage for %s: %s", tid, e)
 
 
 def _parse_ncbi_node(data: dict) -> Tuple[List[int], Optional[int], str, List[Tuple[str, int]]]:
