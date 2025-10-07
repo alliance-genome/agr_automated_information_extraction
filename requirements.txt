@@ -71,7 +71,7 @@ sympy==1.13.3
 sqlalchemy==2.0.7
 threadpoolctl==3.5.0
 tokenizers
-torch==2.6.0
+torch==2.2.2
 tqdm==4.66.4
 transformers==4.48.0
 triton
