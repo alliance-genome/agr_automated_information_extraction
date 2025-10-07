@@ -142,7 +142,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
         species = model_metadata['species']
         novel_data = model_metadata['novel_topic_data']
         novel_topic_qualifier = model_metadata['novel_topic_qualifier']
-        ml_model_id=model_metadata['ml_model_id']
+        ml_model_id = model_metadata['ml_model_id']
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
                            task_type="biocuration_entity_extraction")
         logger.info(f"Extraction model downloaded for mod: {mod_abbr}, topic: {topic}.")
