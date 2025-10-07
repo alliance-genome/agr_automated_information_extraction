@@ -40,7 +40,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_prioritization_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs, set_indexing_priority
+    set_job_failure, load_all_jobs, set_indexing_priority, get_model_data
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -517,6 +517,11 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
                            task_type="biocuration_pretriage_priority_classification")
         logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
+        # Get model meta data too
+        # TODO above
+        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_topic_classification",
+                                         topic=topic)
+
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"Priority classifier model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
@@ -531,10 +536,10 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id = model_meta_data['ml_model_id'])
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model):
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_tei_files_for_references(list(reference_curie_job_map.keys()),
@@ -544,7 +549,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         classifier_model=classifier_model,
         input_docs_dir=f"{root_data_path}to_classify")
     send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id)
+                                mod_abbr, topic, tet_source_id, ml_model_id)
 
 
 def prepare_classification_directory():
@@ -555,7 +560,7 @@ def prepare_classification_directory():
 
 
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id):
+                                mod_abbr, topic, tet_source_id, ml_model_id):
     logger.info("Sending classification tags to ABC.")
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
@@ -569,7 +574,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
                                                 negated=bool(classification == 0),
                                                 confidence_score=conf_score,
-                                                confidence_level=confidence_level, tet_source_id=tet_source_id)
+                                                confidence_level=confidence_level,
+                                                tet_source_id=tet_source_id,
+                                                ml_model_id=ml_model_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
             set_job_success(reference_curie_job_map[reference_curie])
