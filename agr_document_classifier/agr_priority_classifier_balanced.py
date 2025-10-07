@@ -518,7 +518,6 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
                            task_type="biocuration_pretriage_priority_classification")
         logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
         # Get model meta data too
-        # TODO above
         model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_topic_classification",
                                          topic=topic)
 
@@ -536,7 +535,7 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id = model_meta_data['ml_model_id'])
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data['ml_model_id'])
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id):
