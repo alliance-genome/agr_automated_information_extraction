@@ -130,6 +130,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         species = meta["species"]
         novel_data = meta["novel_topic_data"]
         novel_topic_qualifier = meta['novel_topic_qualifier']
+        ml_model_id = meta['ml_model_id']
         download_abc_model(mod_abbreviation=mod_abbr,
                            topic=topic,
                            output_path=model_fp,
@@ -224,6 +225,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         tet_source_id=tet_source_id,
                         novel_data=novel_data,
                         novel_topic_qualifier=novel_topic_qualifier,
+                        ml_model_id=ml_model_id
                     )
                 else:
                     for ent_curie in entity_curies:
@@ -236,6 +238,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             tet_source_id=tet_source_id,
                             novel_data=novel_data,
                             novel_topic_qualifier=novel_topic_qualifier,
+                            ml_model_id=ml_model_id
                         )
 
             if dropped:
@@ -343,6 +346,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         tet_source_id=tet_source_id,
                         novel_data=novel_data,
                         novel_topic_qualifier=novel_topic_qualifier,
+                        ml_model_id=ml_model_id
                     )
                 else:
                     for ent_curie in entity_curies:
@@ -355,6 +359,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             tet_source_id=tet_source_id,
                             novel_data=novel_data,
                             novel_topic_qualifier=novel_topic_qualifier,
+                            ml_model_id=ml_model_id
                         )
             if idx % log_every == 0:
                 logger.info("Processed %d/%d in this batch", idx, len(metas))
