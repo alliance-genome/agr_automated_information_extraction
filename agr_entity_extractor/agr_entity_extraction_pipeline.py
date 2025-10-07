@@ -142,15 +142,18 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
         species = model_metadata['species']
         novel_data = model_metadata['novel_topic_data']
         novel_topic_qualifier = model_metadata['novel_topic_qualifier']
+        ml_model_id = model_metadata['ml_model_id']
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
                            task_type="biocuration_entity_extraction")
         logger.info(f"Extraction model downloaded for mod: {mod_abbr}, topic: {topic}.")
+
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"Extraction model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
             return
         else:
             raise
+
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))
@@ -206,7 +209,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                     negated=True,
                     tet_source_id=tet_source_id,
                     novel_data=novel_data,
-                    novel_topic_qualifier=novel_topic_qualifier
+                    novel_topic_qualifier=novel_topic_qualifier,
+                    ml_model_id=ml_model_id
                 )
 
             logger.info("Sending extracted entities as tags to ABC.")
@@ -216,9 +220,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                 else:
                     entity_curie = entity_extraction_model.name_to_curie_mapping[
                         entity_extraction_model.upper_to_original_mapping[entity]]
-                send_entity_tag_to_abc(reference_curie=curie, species=species, topic=topic, entity_type=topic,
-                                       entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data,
-                                       novel_topic_qualifier=novel_topic_qualifier)
+                send_entity_tag_to_abc(
+                    reference_curie=curie, species=species, topic=topic, entity_type=topic,
+                    entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data,
+                    novel_topic_qualifier=novel_topic_qualifier, ml_model_id=ml_model_id)
             set_job_started(job)
             set_job_success(job)
         logger.info(f"Finished processing batch of {len(job_batch)} jobs.")

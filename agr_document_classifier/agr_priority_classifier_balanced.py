@@ -40,7 +40,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_prioritization_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs, set_indexing_priority
+    set_job_failure, load_all_jobs, set_indexing_priority, get_model_data
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.tei_utils import get_sentences_from_tei_section
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -507,12 +507,14 @@ def parse_arguments():
 
 def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
-                                      source_description="Alliance document classification pipeline using machine "
-                                                         "learning to identify papers of interest for curation data "
-                                                         "types")
-    classifier_file_path = (f"{root_data_path}biocuration_pretriage_priority_classification_{mod_abbr}_"
-                            f"{topic.replace(':', '_')}_classifier.joblib")
+    tet_source_id = get_tet_source_id(
+        mod_abbreviation=mod_abbr,
+        source_method="abc_document_classifier",
+        source_description="Alliance document classification pipeline using machine "
+                           "learning to identify papers of interest for curation data types")
+    classifier_file_path = (
+        f"{root_data_path}biocuration_pretriage_priority_classification_{mod_abbr}_"
+        f"{topic.replace(':', '_')}_classifier.joblib")
     try:
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
                            task_type="biocuration_pretriage_priority_classification")
@@ -521,8 +523,17 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         if e.response.status_code == 404:
             logger.warning(f"Priority classifier model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
             return
-        else:
-            raise
+        raise
+    try:
+        # Get model meta data too
+        model_meta_data = get_model_data(mod_abbreviation=mod_abbr,
+                                         task_type="biocuration_pretriage_priority_classification",
+                                         topic=topic)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
+            return
+        raise
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     classifier_model = joblib.load(classifier_file_path)
@@ -531,10 +542,11 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model)
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model,
+                          classifier_model, model_meta_data['ml_model_id'])
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model):
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_tei_files_for_references(list(reference_curie_job_map.keys()),
@@ -544,7 +556,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         classifier_model=classifier_model,
         input_docs_dir=f"{root_data_path}to_classify")
     send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id)
+                                mod_abbr, topic, tet_source_id, ml_model_id)
 
 
 def prepare_classification_directory():
@@ -555,7 +567,7 @@ def prepare_classification_directory():
 
 
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id):
+                                mod_abbr, topic, tet_source_id, ml_model_id):
     logger.info("Sending classification tags to ABC.")
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
@@ -569,7 +581,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
                                                 negated=bool(classification == 0),
                                                 confidence_score=conf_score,
-                                                confidence_level=confidence_level, tet_source_id=tet_source_id)
+                                                confidence_level=confidence_level,
+                                                tet_source_id=tet_source_id,
+                                                ml_model_id=ml_model_id)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
             set_job_success(reference_curie_job_map[reference_curie])
@@ -593,7 +607,8 @@ def get_confidence_level(classification, conf_score):
 
 
 def download_training_set(args, training_data_dir):
-    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train)
+    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train,
+                                             topic=args.datatype_train)
     reference_ids_priority_1 = [
         agrkbid for agrkbid, classification_value in training_set["data_training"].items()
         if classification_value == "priority 1"
@@ -649,10 +664,12 @@ def train_and_save_model(args, training_data_dir, training_set):
         embedding_model_path=args.embedding_model_path,
         training_data_dir=training_data_dir,
         weighted_average_word_embedding=args.weighted_average_word_embedding,
-        standardize_embeddings=args.standardize_embeddings, normalize_embeddings=args.normalize_embeddings,
+        standardize_embeddings=args.standardize_embeddings,
+        normalize_embeddings=args.normalize_embeddings,
         sections_to_use=args.sections_to_use)
     logger.info(f"Best classifier stats: {str(stats)}")
-    save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
+    save_classifier(classifier=classifier, mod_abbreviation=args.mod_train,
+                    topic=args.datatype_train,
                     stats=stats, dataset_id=training_set["dataset_id"])
 
 
@@ -660,8 +677,9 @@ def train_mode(args):
     training_data_dir = f"{root_data_path}training"
     if args.skip_training_set_download:
         logger.info("Skipping training set download")
-        training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                                 metadata_only=True)
+        training_set = get_training_set_from_abc(
+            mod_abbreviation=args.mod_train, topic=args.datatype_train,
+            metadata_only=True)
     else:
         training_set = download_training_set(args, training_data_dir)
     if args.skip_training:

@@ -161,14 +161,13 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
                                    novel_flag: bool, novel_topic_qualifier: str, confidence_score: float,
-                                   confidence_level: str, tet_source_id):
+                                   confidence_level: str, tet_source_id, ml_model_id: Optional[int] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     tet_data = json.dumps({
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
-        # "species": get_cached_mod_species_map()[mod_abbreviation],
         "species": species,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
@@ -177,6 +176,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "confidence_score": float(confidence_score),
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
+        "ml_model_id": ml_model_id,
         "force_insertion": True
     }).encode('utf-8')
     headers = generate_headers(token)
@@ -204,7 +204,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, novel_topic_qualifier: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, novel_topic_qualifier: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     try:
         token = get_authentication_token()
@@ -226,7 +226,8 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
             "confidence_score": confidence_score,
             "confidence_level": confidence_level,
             "reference_curie": reference_curie,
-            "force_insertion": True
+            "force_insertion": True,
+            "ml_model_id": ml_model_id
         }).encode('utf-8')
     except Exception as e:
         logger.error(f"PROBLEM with json dumps. Exception: {e}")
