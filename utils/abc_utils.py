@@ -168,7 +168,6 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
-        "ml_model_id": ml_model_id,
         "species": species,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
@@ -177,6 +176,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "confidence_score": float(confidence_score),
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
+        "ml_model_id": ml_model_id,
         "force_insertion": True
     }).encode('utf-8')
     headers = generate_headers(token)
