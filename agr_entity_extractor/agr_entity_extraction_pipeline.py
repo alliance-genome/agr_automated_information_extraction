@@ -153,15 +153,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
             return
         else:
             raise
-    try:
-        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_entity_extraction",
-                                         topic=topic)
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
-        else:
-            raise
+
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))

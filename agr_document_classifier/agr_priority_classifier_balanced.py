@@ -518,7 +518,7 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
                            task_type="biocuration_pretriage_priority_classification")
         logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
         # Get model meta data too
-        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_topic_classification",
+        model_meta_data = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_pretriage_priority_classification",
                                          topic=topic)
 
     except requests.exceptions.HTTPError as e:
