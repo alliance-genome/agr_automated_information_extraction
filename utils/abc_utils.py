@@ -244,10 +244,10 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
                 logger.error(f"Failed to create TET: {str(tet_data)}")
                 return False
     except requests.exceptions.RequestException as e:
-        logger.error(f"Error occurred during TET upload: {e}")
+        logger.error(f"{reference_curie}: Error occurred during TET upload: {e}")
         return False
     except Exception as e:
-        logger.error(f"Diff Error occurred during TET upload: {e}")
+        logger.error(f"{reference_curie}: Diff Error occurred during TET upload: {e}")
         return False
 
 
@@ -737,7 +737,9 @@ def species_to_exclude():
         "NCBITaxon:31138",
         "NCBITaxon:88086",
         "NCBITaxon:34245",
-        "NCBITaxon:5482"
+        "NCBITaxon:5482",
+        "NCBITaxon:1",
+        "NCBITaxon:2"
     }
 
 
@@ -846,6 +848,10 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
         all_curated_entity_names.copy(),
         entity_name_curie_mappings.copy()
     )
+    if mod_abbreviation == 'WB' and entity_type_str == 'strain':
+        wbid = entity_name_curie_mappings.get("HT115(DE3)")
+        if wbid and entity_name_curie_mappings.get("HT115"):
+            entity_name_curie_mappings["HT115"] = wbid
     return all_curated_entity_names, entity_name_curie_mappings
 
 
