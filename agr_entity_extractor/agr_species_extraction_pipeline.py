@@ -411,8 +411,8 @@ def main():
     if not args.mod:
         args.mod = DEFAULT_MODS
         logging.getLogger(__name__).info("No --mod provided; defaulting to %s", ', '.join(DEFAULT_MODS))
-        if not args.topic:
-            args.topic = DEFAULT_TOPICS
+    if not args.topic:
+        args.topic = DEFAULT_TOPICS
         logging.getLogger(__name__).info("No --topic provided; defaulting to %s", ', '.join(DEFAULT_TOPICS))
     # ------------------------------------------------------------------- #
 
