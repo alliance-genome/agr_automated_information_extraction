@@ -405,6 +405,17 @@ def main():
 
     args = parser.parse_args()
 
+    # ---------------- Default mod/topic if not provided ---------------- #
+    DEFAULT_MODS = ['WB']
+    DEFAULT_TOPICS = ['ATP:0000123']  # species
+    if not args.mod:
+        args.mod = DEFAULT_MODS
+        logging.getLogger(__name__).info("No --mod provided; defaulting to %s", ', '.join(DEFAULT_MODS))
+    if not args.topic:
+        args.topic = DEFAULT_TOPICS
+        logging.getLogger(__name__).info("No --topic provided; defaulting to %s", ', '.join(DEFAULT_TOPICS))
+    # ------------------------------------------------------------------- #
+
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',

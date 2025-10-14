@@ -539,6 +539,17 @@ def main():
 
     args = parser.parse_args()
 
+    # ---------- NEW DEFAULTS WHEN no --mod or no -- topic provided ----------
+    DEFAULT_MODS = ['WB']
+    DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110']  # strain, gene, transgene
+    if not args.mod:
+        args.mod = DEFAULT_MODS
+        logging.getLogger(__name__).info("No --mod provided; defaulting to %s", ", ".join(DEFAULT_MODS))
+    if not args.topic:
+        args.topic = DEFAULT_TOPICS
+        logging.getLogger(__name__).info("No --topic provided; defaulting to %s", ", ".join(DEFAULT_TOPICS))
+    # ------------------------------------------------------------------------
+
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
