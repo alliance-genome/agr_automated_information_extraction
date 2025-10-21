@@ -194,24 +194,20 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         confidence_level = get_confidence_level(classification, conf_score)
 
         result = True
-        if send_to_manual_indexing:
-            result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
-            if result:
-                set_job_success(reference_curie_job_map[reference_curie])
-            os.remove(file_path)
-            continue
-
         if classification > 0 or model_meta_data['negated']:
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' novel_topic_qualifier: '{model_meta_data['novel_topic_qualifier']}")
-            result = send_classification_tag_to_abc(
-                reference_curie, species, topic,
-                negated=bool(classification == 0),
-                novel_flag=bool(model_meta_data['novel_topic_data']),
-                novel_topic_qualifier=model_meta_data['novel_topic_qualifier'],
-                confidence_score=conf_score,
-                confidence_level=confidence_level,
-                tet_source_id=tet_source_id,
-                ml_model_id=model_meta_data['ml_model_id'])
+            if send_to_manual_indexing:
+                result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
+            else:
+                result = send_classification_tag_to_abc(
+                    reference_curie, species, topic,
+                    negated=bool(classification == 0),
+                    novel_flag=bool(model_meta_data['novel_topic_data']),
+                    novel_topic_qualifier=model_meta_data['novel_topic_qualifier'],
+                    confidence_score=conf_score,
+                    confidence_level=confidence_level,
+                    tet_source_id=tet_source_id,
+                    ml_model_id=model_meta_data['ml_model_id'])
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
         os.remove(file_path)
