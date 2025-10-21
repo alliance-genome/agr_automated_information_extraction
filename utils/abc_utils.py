@@ -180,12 +180,12 @@ def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str,
                 if create_response.getcode() == 201:
                     logger.debug("Manual Indexing Tag created")
                 else:
-                    logger.error(f"Failed to create Manual Indexing Tag (attempt {attempts}): {str(tet_data)}")
+                    logger.error(f"Failed to create Manual Indexing Tag (attempt {attempts}): {str(mit_data)}")
             return True
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send manual indexing tag to ABC {attempts} times.")
-                logger.error(f"curie: {reference_curie}, mod_abbr: {mod_abbr}, topic: {topic}, confidence_level: {confidence_level}")
+                logger.error(f"curie: {reference_curie}, mod_abbr: {mod_abbr}, topic: {topic}, confidence_score: {confidence_score}")
                 raise RuntimeError("Error Sending manual indexing tag to abc FAILED") from exc
             time.sleep(attempts)
     return False
