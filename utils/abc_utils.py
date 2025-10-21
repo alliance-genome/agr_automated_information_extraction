@@ -159,6 +159,38 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             raise
 
 
+def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str, confidence_score: float):
+    url = f'{blue_api_base_url}/manual_indexing_tag/'
+    token = get_authentication_token()
+    mit_data = json.dumps({
+        "confidence_score": confidence_score,
+        "mod_abbreviation": mod_abbr,
+        "curation_tag": topic,
+        "reference_curie": reference_curie
+    }).encode('utf-8')
+    headers = generate_headers(token)
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            create_request = urllib.request.Request(url=url, data=mit_data, method='POST', headers=headers)
+            create_request.add_header("Content-type", "application/json")
+            create_request.add_header("Accept", "application/json")
+            with urllib.request.urlopen(create_request) as create_response:
+                if create_response.getcode() == 201:
+                    logger.debug("Manual Indexing Tag created")
+                else:
+                    logger.error(f"Failed to create Manual Indexing Tag (attempt {attempts}): {str(mit_data)}")
+            return True
+        except requests.exceptions.RequestException as exc:
+            if attempts >= 3:
+                logger.error(f"Error trying to send manual indexing tag to ABC {attempts} times.")
+                logger.error(f"curie: {reference_curie}, mod_abbr: {mod_abbr}, topic: {topic}, confidence_score: {confidence_score}")
+                raise RuntimeError("Error Sending manual indexing tag to abc FAILED") from exc
+            time.sleep(attempts)
+    return False
+
+
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
                                    novel_flag: bool, novel_topic_qualifier: str, confidence_score: float,
                                    confidence_level: str, tet_source_id, ml_model_id: Optional[int] = None):

@@ -17,7 +17,8 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
-    get_cached_mod_species_map, set_blue_api_base_url, get_cached_mod_id_from_abbreviation
+    get_cached_mod_species_map, set_blue_api_base_url,\
+    get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc
 from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, get_document_embedding
 
@@ -178,6 +179,10 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
     species = get_cached_mod_species_map()[mod_abbr]
     if 'species' in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
         species = model_meta_data['species']
+    send_to_manual_indexing = False
+    if topic == 'ATP:0000207' and mod_abbr == 'FB':
+        send_to_manual_indexing = True
+
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
         reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
@@ -191,15 +196,18 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         result = True
         if classification > 0 or model_meta_data['negated']:
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' novel_topic_qualifier: '{model_meta_data['novel_topic_qualifier']}")
-            result = send_classification_tag_to_abc(
-                reference_curie, species, topic,
-                negated=bool(classification == 0),
-                novel_flag=bool(model_meta_data['novel_topic_data']),
-                novel_topic_qualifier=model_meta_data['novel_topic_qualifier'],
-                confidence_score=conf_score,
-                confidence_level=confidence_level,
-                tet_source_id=tet_source_id,
-                ml_model_id=model_meta_data['ml_model_id'])
+            if send_to_manual_indexing:
+                result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
+            else:
+                result = send_classification_tag_to_abc(
+                    reference_curie, species, topic,
+                    negated=bool(classification == 0),
+                    novel_flag=bool(model_meta_data['novel_topic_data']),
+                    novel_topic_qualifier=model_meta_data['novel_topic_qualifier'],
+                    confidence_score=conf_score,
+                    confidence_level=confidence_level,
+                    tet_source_id=tet_source_id,
+                    ml_model_id=model_meta_data['ml_model_id'])
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
         os.remove(file_path)
