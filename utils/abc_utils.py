@@ -227,7 +227,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
-                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, novel_flag: {novel_flag}, ")
+                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, ")
                 logger.error(f"negated: {negated}, confidence_score: {confidence_score}, ")
                 logger.error(f"confidence_level: {confidence_level}, tet_source_id: {tet_source_id}")
                 raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
