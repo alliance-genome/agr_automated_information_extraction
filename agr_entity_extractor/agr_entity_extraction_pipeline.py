@@ -140,7 +140,6 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
         model_metadata = get_model_data(mod_abbreviation=mod_abbr, task_type="biocuration_entity_extraction",
                                         topic=topic)
         species = model_metadata['species']
-        novel_data = model_metadata['novel_topic_data']
         novel_topic_qualifier = model_metadata['novel_topic_qualifier']
         ml_model_id = model_metadata['ml_model_id']
         download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=entity_extraction_model_file_path,
@@ -208,7 +207,6 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                     topic=topic,
                     negated=True,
                     tet_source_id=tet_source_id,
-                    novel_data=novel_data,
                     novel_topic_qualifier=novel_topic_qualifier,
                     ml_model_id=ml_model_id
                 )
@@ -222,7 +220,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                         entity_extraction_model.upper_to_original_mapping[entity]]
                 send_entity_tag_to_abc(
                     reference_curie=curie, species=species, topic=topic, entity_type=topic,
-                    entity=entity_curie, tet_source_id=tet_source_id, novel_data=novel_data,
+                    entity=entity_curie, tet_source_id=tet_source_id,
                     novel_topic_qualifier=novel_topic_qualifier, ml_model_id=ml_model_id)
             set_job_started(job)
             set_job_success(job)

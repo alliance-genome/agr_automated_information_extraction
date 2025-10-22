@@ -192,7 +192,7 @@ def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str,
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
-                                   novel_flag: bool, novel_topic_qualifier: str, confidence_score: float,
+                                   novel_topic_qualifier: str, confidence_score: float,
                                    confidence_level: str, tet_source_id, ml_model_id: Optional[int] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
@@ -203,7 +203,6 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "species": species,
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
-        "novel_topic_data": novel_flag,
         "data_novelty": novel_topic_qualifier,
         "confidence_score": float(confidence_score),
         "confidence_level": confidence_level,
@@ -228,7 +227,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         except requests.exceptions.RequestException as exc:
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
-                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, novel_flag: {novel_flag}, ")
+                logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, ")
                 logger.error(f"negated: {negated}, confidence_score: {confidence_score}, ")
                 logger.error(f"confidence_level: {confidence_level}, tet_source_id: {tet_source_id}")
                 raise RuntimeError("Error Sending classification tag to abc FAILED") from exc
@@ -236,7 +235,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool, novel_topic_qualifier: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None):
+def send_entity_tag_to_abc(reference_curie: str, species: str, novel_topic_qualifier: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     try:
         token = get_authentication_token()
@@ -253,7 +252,6 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, novel_data: bool,
             "species": species,
             "topic_entity_tag_source_id": tet_source_id,
             "negated": negated,
-            "novel_topic_data": novel_data,
             "data_novelty": novel_topic_qualifier,
             "confidence_score": confidence_score,
             "confidence_level": confidence_level,
@@ -582,7 +580,7 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
                     topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
                     no_data: Union[bool, None] = True, species: Union[str, None] = None,
-                    novel_data: Union[bool, None] = False, novel_topic_qualifier: Union[str, None] = None,):
+                    novel_topic_qualifier: Union[str, None] = None,):
     upload_url = f"{blue_api_base_url}/ml_model/upload"
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -602,7 +600,6 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "dataset_id": dataset_id,
         "production": production,
         "negated": no_data,
-        "novel_topic_data": novel_data,
         "novel_topic_qualifier": novel_topic_qualifier,
         "species": species
     }
