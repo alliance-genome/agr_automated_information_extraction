@@ -307,7 +307,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                               task_type="biocuration_entity_extraction",
                               topic=topic)
         species = meta["species"]
-        novel_topic_qualifier = meta['novel_topic_qualifier']
+        data_novelty = meta['data_novelty']
         ml_model_id = meta['ml_model_id']
         download_abc_model(mod_abbreviation=mod_abbr,
                            topic=topic,
@@ -360,7 +360,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         topic=topic,
                         negated=True,
                         tet_source_id=tet_source_id,
-                        novel_topic_qualifier=novel_topic_qualifier,
+                        data_novelty=data_novelty,
                         ml_model_id=ml_model_id
                     )
                 else:
@@ -380,7 +380,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             entity_type=topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
-                            novel_topic_qualifier=novel_topic_qualifier,
+                            data_novelty=data_novelty,
                             ml_model_id=ml_model_id
                         )
 
@@ -470,7 +470,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         topic=topic,
                         negated=True,
                         tet_source_id=tet_source_id,
-                        novel_topic_qualifier=novel_topic_qualifier,
+                        data_novelty=data_novelty,
                         ml_model_id=ml_model_id
                     )
                 else:
@@ -490,7 +490,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             entity_type=topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
-                            novel_topic_qualifier=novel_topic_qualifier,
+                            data_novelty=data_novelty,
                             ml_model_id=ml_model_id
                         )
 

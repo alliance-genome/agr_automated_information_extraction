@@ -158,7 +158,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
             logger.info(f"reference_curie: '{reference_curie}', species: '{mod_abbr}', topic: '{topic}', "
                         f"classification: '{classification}', confidence_score: '{conf_score}', "
                         f"confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' "
-                        f"novel_topic_qualifier: '{model_meta_data['novel_topic_qualifier']}'")
+                        f"data_novelty: '{model_meta_data['data_novelty']}'")
         logger.info(f"Finished processing batch of {len(files_loaded)} jobs in test mode. Positive: "
                     f"{sum(classifications)}. Negative: {len(classifications)-sum(classifications)}")
     else:
@@ -195,14 +195,14 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 
         result = True
         if classification > 0 or model_meta_data['negated']:
-            logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' novel_topic_qualifier: '{model_meta_data['novel_topic_qualifier']}")
+            logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' data_novelty: '{model_meta_data['data_novelty']}")
             if send_to_manual_indexing:
                 result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
             else:
                 result = send_classification_tag_to_abc(
                     reference_curie, species, topic,
                     negated=bool(classification == 0),
-                    novel_topic_qualifier=model_meta_data['novel_topic_qualifier'],
+                    data_novelty=model_meta_data['data_novelty'],
                     confidence_score=conf_score,
                     confidence_level=confidence_level,
                     tet_source_id=tet_source_id,
