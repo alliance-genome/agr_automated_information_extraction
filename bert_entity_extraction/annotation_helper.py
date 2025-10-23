@@ -320,8 +320,7 @@ def main():  # noqa C901
                             stat = send_entity_tag_to_abc(
                                 reference_curie=str(ref_id),
                                 species=species,
-                                novel_data=False,
-                                novel_topic_qualifier='ATP:0000334',
+                                data_novelty='ATP:0000334',
                                 topic=job['topic_id'],
                                 tet_source_id=tet_source_id,
                                 entity_type=job['topic_id'],
@@ -336,8 +335,7 @@ def main():  # noqa C901
                                 entity={fbgn},
                                 confidence_score={round(results[fbgn], 2)},
                                 confidence_level={confidence_level},
-                                tet_source_id={tet_source_id},
-                                novel_data=False""")
+                                tet_source_id={tet_source_id}""")
                                 okay = False
                         except Exception as e:
                             okay = False
@@ -351,8 +349,7 @@ def main():  # noqa C901
                         stat = send_entity_tag_to_abc(
                             reference_curie=str(ref_id),
                             species=species,
-                            novel_data=False,
-                            novel_topic_qualifier='ATP:0000335',
+                            data_novelty='ATP:0000335',
                             topic=job['topic_id'],
                             tet_source_id=tet_source_id,
                             negated=True)
