@@ -319,7 +319,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
 
 
 def save_classifier(classifier, mod_abbreviation: str, topic: str,
-                    novel_topic_qualifier: Union[str, None],
+                    data_novelty: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
                     species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False,
                     training_data_dir: str = None):
@@ -335,7 +335,7 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
         logger.info(f"Saved model to {model_path}, skipping upload because in test mode.")
     else:
         upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
-                        novel_topic_qualifier=novel_topic_qualifier, production=production,
+                        data_novelty=data_novelty, production=production,
                         no_data=no_data, species=species,
                         model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
 
@@ -391,7 +391,7 @@ def parse_arguments():
     parser.add_argument("-f", "--do_not_flag_no_data", action="store_true",
                         help="Whether to not set no_data flag to true if no result found. (Default False)",
                         required=False)
-    parser.add_argument("-Q", "--novel_topic_qualifier", type=str, required=False, default='ATP:0000335',
+    parser.add_argument("-Q", "--data_novelty", type=str, required=False, default='ATP:0000335',
                         help="Qualifier to be used for novelty. Default 'ATP:0000335'")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
@@ -496,7 +496,7 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
     stats["average_f1"] = stats["f1_score"]
     upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
-                    novel_topic_qualifier=args.novel_topic_qualifier,
+                    data_novelty=args.data_novelty,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     model_path=os.path.join(training_data_dir,
@@ -520,7 +520,7 @@ def train_and_save_model(args, training_data_dir, training_set):
         outlier_contamination=args.outlier_contamination)
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                    novel_topic_qualifier=args.novel_topic_qualifier,
+                    data_novelty=args.data_novelty,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode,
