@@ -121,7 +121,15 @@ def get_reference_date(reference_id):
 
 
 def get_tet_source_id(mod_abbreviation: str, source_method: str, source_description: str):
-    url = (f'{blue_api_base_url}/topic_entity_tag/source/ECO:0008004/{source_method}/{mod_abbreviation}'
+    eco_map = {
+        "abc_entity_extractor": "ECO:0008021",  # string matching
+        "abc_document_classifier": "ECO:0008004",  # ML
+        "abc_literature_system": "ATP:0000036",
+    }
+    eco_code = eco_map.get(source_method)
+    if eco_code is None:
+        raise ValueError(f"Unknown source_method '{source_method}' — ECO code not defined")
+    url = (f'{blue_api_base_url}/topic_entity_tag/source/{eco_code}/{source_method}/{mod_abbreviation}'
            f'/{mod_abbreviation}')
     request = urllib.request.Request(url=url)
     request.add_header("Content-type", "application/json")
@@ -138,7 +146,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             token = get_authentication_token()
             headers = generate_headers(token)
             create_data = json.dumps({
-                "source_evidence_assertion": "ECO:0008004",
+                "source_evidence_assertion": eco_code,
                 "source_method": source_method,
                 "validation_type": None,
                 "description": source_description,
