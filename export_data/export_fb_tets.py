@@ -49,17 +49,23 @@ def dump_tet():
     conversions = {"NEG": 'neg',
                    "High": 'high',
                    "Low": 'low',
-                   "Med": 'medium'}
+                   "Med": 'medium',
+                   "MEDIUM": 'medium',
+                   "LOW": 'low',
+                   "HIGH": 'high',
+                   }
     atp_to_flag = {"ATP:0000152": 'disease',
                    "ATP:0000013": 'new_transg',
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
-                   "ATP:0000207": 'nocur'}
+                   "ATP:0000207": 'nocur',
+                   "ATP:0000005": 'gene'}
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
                    "ATP:0000006": 'cam',
                    "ATP:0000069": 'harv',
-                   "ATP:0000207": 'cam'}
+                   "ATP:0000207": 'cam',
+                   "ATP:0000005": 'cam'}
     db_session = create_postgres_session(False)
 
     # Get the current date
@@ -83,10 +89,27 @@ def dump_tet():
     pos = ""
     neg = ""
     for row in rows:
+        # do not crash on keyword error. Give message and continue.
+        if row[1] not in atp_to_flag:
+            atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
+        if row[2] not in conversions:
+            conversions[row[2]] = f'UNKNOWN_ATP_{row[2]}'
+        if row[1] not in atp_to_dept:
+            atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
         if row[2] != 'NEG':
-            pos += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}\n"
+            pos += (
+                f"{row[0].strftime('%y%m%d')}\t\t"
+                f"{row[3][5:]}\t"
+                f"{atp_to_flag[row[1]]}:{conversions[row[2]]}\t"
+                f"{atp_to_dept[row[1]]}\n"
+            )
         else:
-            neg += f"{row[0].strftime('%y%m%d')}\t\t{row[3][5:]}\t{atp_to_flag[row[1]]}:{conversions[row[2]]}\t{atp_to_dept[row[1]]}\n"
+            neg += (
+                f"{row[0].strftime('%y%m%d')}\t\t"
+                f"{row[3][5:]}\t"
+                f"{atp_to_flag[row[1]]}:{conversions[row[2]]}\t"
+                f"{atp_to_dept[row[1]]}\n"
+            )
 
     if pos:
         print("Updating positive data")
