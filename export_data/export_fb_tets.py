@@ -45,7 +45,7 @@ def write_to_top(file_path, text_to_add):
         file.write(text_to_add + existing_content)
 
 
-def get_data(table_name:str):
+def get_data(table_name: str):
     # Get the current date
     today = datetime.now()
 
