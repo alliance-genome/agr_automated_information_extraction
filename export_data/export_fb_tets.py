@@ -3,6 +3,8 @@ from os import environ
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
+import traceback
+from agr_literature_service.lit_processing.utils.report_utils import send_report
 
 
 def create_postgres_engine(verbose):
@@ -143,4 +145,13 @@ def dump_tet():
 
 
 if __name__ == "__main__":
-    dump_tet()
+    try:
+        dump_tet()
+    except Exception as e:
+        formatted_traceback = traceback.format_tb(e.__traceback__)
+        subject = "Failed generating FB flags report"
+        message = "<h>Failed generating FB flags report:</h><br><br>\n\n"
+        message += f"Exception: {str(e)}<br>\nStacktrace:<br>{''.join(formatted_traceback)}"
+
+        send_report(subject, message)
+        exit(-1)
