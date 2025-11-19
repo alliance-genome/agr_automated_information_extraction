@@ -304,17 +304,17 @@ def main():  # noqa C901
             download(ftp)
             getXmlFromTar(pmcid)
             try:
-                results, status = deep_learning.get_genes_with_dl(
+                results, status = deep_learning.get_uenes_with_dl(
                     os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
                     gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 if results:
                     okay = True
                     for fbgn in results:
-                        confidence_level = 'Low'
+                        confidence_level = 'LOW'
                         if results[fbgn] > 0.7:
-                            confidence_level = 'High'
+                            confidence_level = 'HIGH'
                         elif results[fbgn] > 0.5:
-                            confidence_level = 'Med'
+                            confidence_level = 'MED'
                         logger.debug(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                         try:
                             stat = send_entity_tag_to_abc(
