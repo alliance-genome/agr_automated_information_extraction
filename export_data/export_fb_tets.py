@@ -110,24 +110,37 @@ def dump_tet():
         rows = get_data(table_name)
         for row in rows:
             # do not crash on keyword error. Give message and continue.
+            conf_level = 'LOW'
             if row[1] not in atp_to_flag:
                 atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
             if row[2] not in conversions:
-                conversions[row[2]] = f'UNKNOWN_ATP_{row[2]}'
+                # Using guessed score levels until told otherwise
+                # taken from method get_confidence_level in classifier
+                if type(row[2]) == float:
+                    if row[2] < 0.667:
+                        conf_level = "LOW"
+                    elif row[2] < 0.833:
+                        conf_level = "MEDIUM"
+                    else:
+                        conf_level = "HIGH"
+                else:
+                    conf_level = f'UNKNOWN_LEVEL_{row[2]}'
+            else:
+                conf_level = conversions[row[2]]
             if row[1] not in atp_to_dept:
                 atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
             if row[2] != 'NEG':
                 pos += (
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{conversions[row[2]]}\t"
+                    f"{atp_to_flag[row[1]]}:{conf_level}\t"
                     f"{atp_to_dept[row[1]]}\n"
                 )
             else:
                 neg += (
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{conversions[row[2]]}\t"
+                    f"{atp_to_flag[row[1]]}:{conf_level}\t"
                     f"{atp_to_dept[row[1]]}\n"
                 )
 
