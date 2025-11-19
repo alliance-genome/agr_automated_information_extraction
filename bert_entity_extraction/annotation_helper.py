@@ -304,7 +304,7 @@ def main():  # noqa C901
             download(ftp)
             getXmlFromTar(pmcid)
             try:
-                results, status = deep_learning.get_uenes_with_dl(
+                results, status = deep_learning.get_genes_with_dl(
                     os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
                     gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
                 if results:
