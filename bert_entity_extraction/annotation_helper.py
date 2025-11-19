@@ -310,11 +310,11 @@ def main():  # noqa C901
                 if results:
                     okay = True
                     for fbgn in results:
-                        confidence_level = 'Low'
+                        confidence_level = 'LOW'
                         if results[fbgn] > 0.7:
-                            confidence_level = 'High'
+                            confidence_level = 'HIGH'
                         elif results[fbgn] > 0.5:
-                            confidence_level = 'Med'
+                            confidence_level = 'MEDIUM'
                         logger.debug(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
                         try:
                             stat = send_entity_tag_to_abc(
