@@ -59,13 +59,16 @@ def get_data(table_name: str):
     db_session = create_postgres_session(False)
     if table_name == 'tet':
 
-        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
-                      FROM topic_entity_tag tet, cross_reference cr
+        # changed query to get tet.confidence_score instead of tet.confidence_level
+        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie
+                      FROM topic_entity_tag tet, cross_reference cr, topic_entity_tag_source s
                         WHERE tet.date_created >= '{sql_date}'
+                             AND s.topic_entity_tag_source_id = tet.topic_entity_tag_source_id
                              AND cr.reference_id = tet.reference_id
                              AND cr.curie_prefix = 'PMID'
+                             AND s.source_method = 'abc_document_classifier'
                              AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
-                             order by tet.date_created desc"""
+                             order by tet.date_created desc;"""
         print(query)
     else:
         query = f"""SELECT mit.date_created, mit.curation_tag, mit.confidence_score, cr.curie
@@ -74,6 +77,7 @@ def get_data(table_name: str):
                              AND mit.reference_id = cr.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND mit.mod_id = 1
+                             AND mit.validation_by_biocurator is NULL
                              order by mit.date_created desc"""
         print(query)
 
