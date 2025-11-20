@@ -59,7 +59,7 @@ def get_data(table_name: str):
     db_session = create_postgres_session(False)
     if table_name == 'tet':
 
-       ## changed query to get tet.confidence_score instead of tet.confidence_level
+        # changed query to get tet.confidence_score instead of tet.confidence_level
         query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie
                       FROM topic_entity_tag tet, cross_reference cr
                         WHERE tet.date_created >= '{sql_date}'
