@@ -89,13 +89,11 @@ def dump_tet():
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
                    "ATP:0000207": 'nocur',
-                   "ATP:0000005": 'gene'}
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
                    "ATP:0000006": 'cam',
                    "ATP:0000069": 'harv',
                    "ATP:0000207": 'cam',
-                   "ATP:0000005": 'cam'}
 
     pos = ""
     neg = ""
