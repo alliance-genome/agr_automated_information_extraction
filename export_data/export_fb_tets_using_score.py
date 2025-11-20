@@ -59,7 +59,8 @@ def get_data(table_name: str):
     db_session = create_postgres_session(False)
     if table_name == 'tet':
 
-        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
+        # changed query to get tet.confidence_score instead of tet.confidence_level
+        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie
                       FROM topic_entity_tag tet, cross_reference cr
                         WHERE tet.date_created >= '{sql_date}'
                              AND cr.reference_id = tet.reference_id
@@ -83,68 +84,43 @@ def get_data(table_name: str):
 
 
 def dump_tet():
-    conversions = {"NEG": 'neg',
-                   "High": 'high',
-                   "Low": 'low',
-                   "Med": 'medium',
-                   "MEDIUM": 'medium',
-                   "LOW": 'low',
-                   "HIGH": 'high',
-                   }
     atp_to_flag = {"ATP:0000152": 'disease',
                    "ATP:0000013": 'new_transg',
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
                    "ATP:0000207": 'nocur',
-                   "ATP:0000005": 'gene'}
+                   }
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
                    "ATP:0000006": 'cam',
                    "ATP:0000069": 'harv',
                    "ATP:0000207": 'cam',
-                   "ATP:0000005": 'cam'}
+                   }
 
     pos = ""
     neg = ""
     for table_name in ('tet', 'mi'):  # topic_entity_tag, Manual_indexing
         rows = get_data(table_name)
         for row in rows:
-            conf_level = 'LOW'
             # do not crash on keyword error. Give message and continue.
             if row[1] not in atp_to_flag:
                 atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
-            if row[2] not in conversions:
-                # Using guessed score levels until told otherwise
-                # taken from method get_confidence_level in classifier
-                if type(row[2]) == float:
-                    ## add loop to set confidence level to NEG for manual_indexing_tag results where mit.confidence_score = 0 so that they can be put in the negative pot
-                    if row[2] == 0:
-                        conf_level = "NEG"
-                    elif row[2] < 0.667:
-                        conf_level = "LOW"
-                    elif row[2] < 0.833:
-                        conf_level = "MEDIUM"
-                    else:
-                        conf_level = "HIGH"
-                else:
-                    conf_level = f'UNKNOWN_LEVEL_{row[2]}'
-            else:
-                conf_level = conversions[row[2]]
             if row[1] not in atp_to_dept:
                 atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
-            ## use conf_level rather than row[2] to partition data into positive/negative pots so that negative manual_indexing_tag results go in the negative pot
-            if conf_level != 'NEG':
-                pos += (
-                    f"{row[0].strftime('%y%m%d')}\t\t"
-                    f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{conf_level}\t"
-                    f"{atp_to_dept[row[1]]}\n"
-                )
-            else:
+            ## put anything with a score of 0 in the negative pot, everything else goes in the positive pot
+            ## in both cases, print the confidence_score after "flag:"
+            if row[2] == 0:
                 neg += (
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{conf_level}\t"
+                    f"{atp_to_flag[row[1]]}:{row[2]}\t"
+                    f"{atp_to_dept[row[1]]}\n"
+                )
+            else:
+                pos += (
+                    f"{row[0].strftime('%y%m%d')}\t\t"
+                    f"{row[3][5:]}\t"
+                    f"{atp_to_flag[row[1]]}:{row[2]}\t"
                     f"{atp_to_dept[row[1]]}\n"
                 )
 
