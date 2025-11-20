@@ -109,15 +109,18 @@ def dump_tet():
     for table_name in ('tet', 'mi'):  # topic_entity_tag, Manual_indexing
         rows = get_data(table_name)
         for row in rows:
-            # do not crash on keyword error. Give message and continue.
             conf_level = 'LOW'
+            # do not crash on keyword error. Give message and continue.
             if row[1] not in atp_to_flag:
                 atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
             if row[2] not in conversions:
                 # Using guessed score levels until told otherwise
                 # taken from method get_confidence_level in classifier
                 if type(row[2]) == float:
-                    if row[2] < 0.667:
+                    ## add loop to set confidence level to NEG for manual_indexing_tag results where mit.confidence_score = 0 so that they can be put in the negative pot
+                    if row[2] == 0:
+                        conf_level = "NEG"
+                    elif row[2] < 0.667:
                         conf_level = "LOW"
                     elif row[2] < 0.833:
                         conf_level = "MEDIUM"
@@ -129,7 +132,8 @@ def dump_tet():
                 conf_level = conversions[row[2]]
             if row[1] not in atp_to_dept:
                 atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
-            if row[2] != 'NEG':
+            ## use conf_level rather than row[2] to partition data into positive/negative pots so that negative manual_indexing_tag results go in the negative pot
+            if conf_level != 'NEG':
                 pos += (
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
