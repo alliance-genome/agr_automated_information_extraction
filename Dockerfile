@@ -25,6 +25,7 @@ ADD utils/ ./utils
 ADD agr_dataset_manager/ ./agr_dataset_manager
 ADD agr_document_classifier/models.py .
 ADD export_data/export_fb_tets.py .
+ADD export_data/export_fb_tets_using_score.py .
 RUN apt-get -y install git-lfs wget
 RUN apt-get update && apt-get install --no-install-recommends --yes build-essential git cron
 RUN pip install --upgrade pip
