@@ -89,4 +89,4 @@ xmltodict==0.13.0
 pubmed_parser @ git+https://github.com/titipata/pubmed_parser
 retry==0.9.2
 matplotlib
-agr-curation-api-client==0.6.0
+agr-curation-api-client==0.7.3
