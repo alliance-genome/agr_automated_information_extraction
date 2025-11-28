@@ -100,7 +100,7 @@ class AllianceTEI:
         abstract = ' '.join(abstract_parts).strip()
         return _normalize_text(abstract)
 
-    def get_fulltext(self) -> str:  # noqa: C901
+    def get_fulltext(self, include_attributes: bool = False) -> str:  # noqa: C901
         """
         Return the full text of the document, including sentences, table cells,
         formulas, figure/table captions, list items, and notes/footnotes,
@@ -184,6 +184,79 @@ class AllianceTEI:
             cleaned = _clean_block(block)
             if cleaned:
                 text += ' ' + cleaned
+
+        # ------------------------------------------------------------------
+        # 9) Entity-unifying mode: scan all text + attributes for entity-like
+        #    tokens and append them once, so attributes and text are treated
+        #    the same by downstream code.
+        # ------------------------------------------------------------------
+        if include_attributes:
+
+            def _looks_like_entity(tok: str) -> bool:
+                tok = tok.strip()
+                if len(tok) < 2:
+                    return False
+
+                has_letter = any(c.isalpha() for c in tok)
+                has_digit = any(c.isdigit() for c in tok)
+                if not (has_letter and has_digit):
+                    return False
+
+                lowered = tok.lower()
+                bad_prefixes = ("fig", "sup", "sub", "sec", "eq")
+                if lowered.startswith(bad_prefixes):
+                    return False
+
+                if lowered.startswith(("lt", "gt", "amp")):
+                    return False
+
+                if re.fullmatch(r"[ivx]+", lowered):
+                    return False
+
+                return True
+
+            entity_tokens: set[str] = set()
+            text_tokens: set[str] = set()  # NEW: track tokens seen in visible text
+
+            # 9a) Scan visible text from the entire TEI (tags stripped)
+            plain_all = re.sub(r'<[^>]+>', ' ', xml)
+            for tok in re.findall(
+                r'[A-Za-z][A-Za-z0-9_.-]*\d+[A-Za-z0-9_.-]*',
+                plain_all
+            ):
+                if _looks_like_entity(tok):
+                    text_tokens.add(tok)
+                    entity_tokens.add(tok)
+
+            # 9b) Scan attribute values (xml:id, id, n, target, ref)
+            attr_values = re.findall(
+                r'\b(?:xml:id|id|n|target|ref)\s*=\s*"([^"]+)"',
+                xml,
+                flags=re.IGNORECASE
+            )
+            for val in attr_values:
+                for tok in re.findall(
+                    r'[A-Za-z][A-Za-z0-9_.-]*\d+[A-Za-z0-9_.-]*',
+                    val
+                ):
+                    if not _looks_like_entity(tok):
+                        continue
+
+                    # If we've already seen this token in real text, keep it
+                    if tok in text_tokens:
+                        entity_tokens.add(tok)
+                        continue
+
+                    t_lower = tok.lower()
+
+                    # NEW: drop attribute-only bibliography IDs like b1001, b290, etc.
+                    if re.fullmatch(r"b\d{2,4}", t_lower):
+                        continue
+
+                    entity_tokens.add(tok)
+
+            if entity_tokens:
+                text += ' ' + '. '.join(sorted(entity_tokens)) + '.'
 
         return _normalize_text(text)
 
