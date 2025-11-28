@@ -793,9 +793,9 @@ def get_name_from_entity(entity_symbol):
 
 
 def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type: str, page: int):
-    """Fetch a single page of entities from the API."""
     if entity_type == 'gene':
         return api_client.get_genes(data_provider=mod, limit=PAGE_LIMIT, page=page)
+
     elif entity_type == 'transgene':
         return api_client.get_alleles(
             data_provider=mod,
@@ -803,6 +803,24 @@ def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type:
             page=page,
             transgenes_only=True
         )
+
+    elif entity_type == 'allele':
+        # WB extraction subset: force DB + correct params
+        if mod == 'WB':
+            return api_client.get_alleles(
+                taxon='NCBITaxon:6239',
+                limit=PAGE_LIMIT,
+                offset=page * PAGE_LIMIT,
+                wb_extraction_subset=True,
+                data_source='db'
+            )
+        # other MODs: use normal API/GraphQL path
+        return api_client.get_alleles(
+            data_provider=mod,
+            limit=PAGE_LIMIT,
+            page=page
+        )
+
     elif entity_type in ['strain', 'genotype', 'fish']:
         return api_client.get_agms(
             data_provider=mod,
@@ -810,11 +828,12 @@ def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type:
             limit=PAGE_LIMIT,
             page=page
         )
+
     elif entity_type == 'species':
         return api_client.get_species(limit=PAGE_LIMIT, page=page)
-    else:
-        logger.info(f"Unknown entity_type '{entity_type}' requested; returning empty list.")
-        return []
+
+    logger.info(f"Unknown entity_type '{entity_type}' requested; returning empty list.")
+    return []
 
 
 def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, force_refresh: bool = False):  # noqa: C901
@@ -865,7 +884,7 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
                 if entity_type_str == 'gene':
                     if hasattr(entity, 'geneSymbol'):
                         entity_symbol = entity.geneSymbol
-                elif entity_type_str == 'transgene':
+                elif entity_type_str in ['transgene', 'allele']:
                     if hasattr(entity, 'alleleSymbol'):
                         entity_symbol = entity.alleleSymbol
                 elif entity_type_str in ['fish', 'genotype', 'strain']:
