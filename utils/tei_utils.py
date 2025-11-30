@@ -210,6 +210,7 @@ class AllianceTEI:
                 if lowered.startswith(("lt", "gt", "amp")):
                     return False
 
+                # This prevents incorrectly treating Roman numerals like iv, vi, xiv as allele names.
                 if re.fullmatch(r"[ivx]+", lowered):
                     return False
 
@@ -249,7 +250,7 @@ class AllianceTEI:
 
                     t_lower = tok.lower()
 
-                    # NEW: drop attribute-only bibliography IDs like b1001, b290, etc.
+                    # drop attribute-only bibliography IDs like b1001, b290, etc.
                     if re.fullmatch(r"b\d{2,4}", t_lower):
                         continue
 

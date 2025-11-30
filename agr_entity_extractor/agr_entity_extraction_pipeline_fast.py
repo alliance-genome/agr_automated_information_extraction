@@ -137,6 +137,8 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         original_count = len(entities)
 
         # 1) Keep canonical lowercase allele-like tokens or weird non-alnum mixes
+        # str.isalnum() checks whether all characters in the string are alphanumeric (A–Z, a–z, 0–9)
+        # and there is at least one character.
         entities = [
             e for e in entities
             if e.islower() or not e.replace('-', '').replace('_', '').isalnum()
