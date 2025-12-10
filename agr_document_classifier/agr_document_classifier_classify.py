@@ -17,8 +17,8 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
-    get_cached_mod_species_map, set_blue_api_base_url,\
-    get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc
+    get_cached_mod_species_map, set_blue_api_base_url, \
+    get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag
 from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, get_document_embedding
 
@@ -198,6 +198,9 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' data_novelty: '{model_meta_data['data_novelty']}")
             if send_to_manual_indexing:
                 result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
+                if result and classification > 0 and topic == 'ATP:0000207':  # set the wf to TBD only for FB no gen dta
+                    create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
+                                        workflow_tag_atp_id="ATP:0000359")
             else:
                 result = send_classification_tag_to_abc(
                     reference_curie, species, topic,

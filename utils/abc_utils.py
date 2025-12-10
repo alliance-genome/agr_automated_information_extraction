@@ -12,7 +12,7 @@ import psycopg2
 import requests
 import urllib.request
 import numpy as np
-from fastapi_okta.okta_utils import get_authentication_token, generate_headers
+from agr_cognito_py import get_authentication_token, generate_headers
 from agr_curation_api import APIConfig, AGRCurationAPIClient  # type: ignore
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
@@ -369,6 +369,37 @@ def set_job_failure(job):
         except HTTPError:
             time.sleep(attempts)
     logger.error(f"Error setting job failed: {str(job)}")
+    return False
+
+
+def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str):
+    url = f'{blue_api_base_url}/workflow_tag/create'
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    workflow_data = json.dumps({
+        "curie_or_reference_id": reference_curie,
+        "mod_abbreviation": mod_abbreviation,
+        "workflow_tag_atp_id": workflow_tag_atp_id,
+    }).encode('utf-8')
+    request = urllib.request.Request(url=url, data=workflow_data, method='POST', headers=headers)
+    request.add_header("Content-type", "application/json")
+    request.add_header("Accept", "application/json")
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            logger.debug("Successfully set workflow tag")
+            return True
+        except HTTPError as e:
+            logger.warning(f"Error creating workflow tag for : {reference_curie}, {mod_abbreviation}, "
+                           f"{workflow_tag_atp_id}: {e}")
+            time.sleep(attempts)
+        except Exception as e:
+            logger.error(f"Error attempt {attempts} creating workflow tag for : {reference_curie}, "
+                         f"{mod_abbreviation}, {workflow_tag_atp_id}: {e}")
+    logger.error(f"Error creating workflow tag after 3 attempts: {reference_curie}, {mod_abbreviation}, "
+                 f"{workflow_tag_atp_id}")
     return False
 
 
