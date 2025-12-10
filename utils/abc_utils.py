@@ -372,6 +372,38 @@ def set_job_failure(job):
     return False
 
 
+def get_current_workflow_status(reference_curie: str, mod_abbreviation: str, workflow_process_atp_id: str):
+    """
+    Get the current workflow status for a reference, mod, and workflow process.
+
+    Returns the current workflow tag ATP ID if it exists, None otherwise.
+    """
+    url = (f'{blue_api_base_url}/workflow_tag/get_current_workflow_status/'
+           f'{reference_curie}/{mod_abbreviation}/{workflow_process_atp_id}')
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, headers=headers)
+    request.add_header("Content-type", "application/json")
+    request.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(request) as response:
+            resp = response.read().decode("utf8")
+            # The response is a JSON string (e.g., "ATP:0000275")
+            return json.loads(resp)
+    except HTTPError as e:
+        if e.code == 404:
+            logger.debug(f"No workflow status found for {reference_curie}, {mod_abbreviation}, "
+                         f"{workflow_process_atp_id}")
+            return None
+        logger.error(f"Error getting workflow status for {reference_curie}, {mod_abbreviation}, "
+                     f"{workflow_process_atp_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting workflow status for {reference_curie}, {mod_abbreviation}, "
+                     f"{workflow_process_atp_id}: {e}")
+        return None
+
+
 def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str):
     url = f'{blue_api_base_url}/workflow_tag/create'
     token = get_authentication_token()
