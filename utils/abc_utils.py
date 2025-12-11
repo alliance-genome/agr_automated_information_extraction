@@ -405,13 +405,13 @@ def get_current_workflow_status(reference_curie: str, mod_abbreviation: str, wor
 
 
 def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str):
-    url = f'{blue_api_base_url}/workflow_tag/create'
+    url = f'{blue_api_base_url}/workflow_tag/'
     token = get_authentication_token()
     headers = generate_headers(token)
     workflow_data = json.dumps({
-        "curie_or_reference_id": reference_curie,
+        "reference_curie": reference_curie,
         "mod_abbreviation": mod_abbreviation,
-        "workflow_tag_atp_id": workflow_tag_atp_id,
+        "workflow_tag_id": workflow_tag_atp_id,
     }).encode('utf-8')
     request = urllib.request.Request(url=url, data=workflow_data, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
@@ -421,14 +421,14 @@ def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_ta
         attempts += 1
         try:
             urllib.request.urlopen(request)
-            logger.debug("Successfully set workflow tag")
+            logger.debug("Successfully created workflow tag")
             return True
         except HTTPError as e:
-            logger.warning(f"Error creating workflow tag for : {reference_curie}, {mod_abbreviation}, "
+            logger.warning(f"Error creating workflow tag for: {reference_curie}, {mod_abbreviation}, "
                            f"{workflow_tag_atp_id}: {e}")
             time.sleep(attempts)
         except Exception as e:
-            logger.error(f"Error attempt {attempts} creating workflow tag for : {reference_curie}, "
+            logger.error(f"Error attempt {attempts} creating workflow tag for: {reference_curie}, "
                          f"{mod_abbreviation}, {workflow_tag_atp_id}: {e}")
     logger.error(f"Error creating workflow tag after 3 attempts: {reference_curie}, {mod_abbreviation}, "
                  f"{workflow_tag_atp_id}")
