@@ -4,7 +4,8 @@ import dill
 
 from agr_entity_extractor.models import AllianceStringMatchingEntityExtractorConfig, \
     AllianceStringMatchingEntityExtractor, CustomTokenizer
-from utils.abc_utils import upload_ml_model, download_abc_model, get_all_curated_entities
+from utils.abc_utils import upload_ml_model, download_abc_model
+from utils.ateam_utils import get_all_curated_entities
 
 logger = logging.getLogger(__name__)
 

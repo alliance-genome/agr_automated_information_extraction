@@ -15,9 +15,9 @@ from agr_entity_extractor.models import CustomTokenizer
 from utils.abc_utils import (
     get_all_ref_curies,
     download_tei_files_for_references,
-    get_all_curated_entities,
     upload_ml_model
 )
+from utils.ateam_utils import get_all_curated_entities
 from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 logger = logging.getLogger(__name__)

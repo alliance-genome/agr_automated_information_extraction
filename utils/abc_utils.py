@@ -1,19 +1,19 @@
+import html
 import io
 import json
-import time
 import logging
 import os
-import html
+import time
+import urllib.request
+from argparse import Namespace
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union, Optional
 from urllib.error import HTTPError
-from argparse import Namespace
+
+import numpy as np
 import psycopg2
 import requests
-import urllib.request
-import numpy as np
-from fastapi_okta.okta_utils import get_authentication_token, generate_headers
-from agr_curation_api import APIConfig, AGRCurationAPIClient  # type: ignore
+from agr_cognito_py import get_authentication_token, generate_headers
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
@@ -21,11 +21,7 @@ if blue_api_base_url.startswith('literature'):
 curation_api_base_url = os.environ.get('CURATION_API_SERVER', "https://curation.alliancegenome.org/api/")
 logger = logging.getLogger(__name__)
 
-PAGE_LIMIT = 1000
-
 cache = {}
-
-_CURATED_ENTITY_CACHE: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {}
 
 
 def set_blue_api_base_url(value):
@@ -369,6 +365,69 @@ def set_job_failure(job):
         except HTTPError:
             time.sleep(attempts)
     logger.error(f"Error setting job failed: {str(job)}")
+    return False
+
+
+def get_current_workflow_status(reference_curie: str, mod_abbreviation: str, workflow_process_atp_id: str):
+    """
+    Get the current workflow status for a reference, mod, and workflow process.
+
+    Returns the current workflow tag ATP ID if it exists, None otherwise.
+    """
+    url = (f'{blue_api_base_url}/workflow_tag/get_current_workflow_status/'
+           f'{reference_curie}/{mod_abbreviation}/{workflow_process_atp_id}')
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    request = urllib.request.Request(url=url, headers=headers)
+    request.add_header("Content-type", "application/json")
+    request.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(request) as response:
+            resp = response.read().decode("utf8")
+            # The response is a JSON string (e.g., "ATP:0000275")
+            return json.loads(resp)
+    except HTTPError as e:
+        if e.code == 404:
+            logger.debug(f"No workflow status found for {reference_curie}, {mod_abbreviation}, "
+                         f"{workflow_process_atp_id}")
+            return None
+        logger.error(f"Error getting workflow status for {reference_curie}, {mod_abbreviation}, "
+                     f"{workflow_process_atp_id}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting workflow status for {reference_curie}, {mod_abbreviation}, "
+                     f"{workflow_process_atp_id}: {e}")
+        return None
+
+
+def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str):
+    url = f'{blue_api_base_url}/workflow_tag/'
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    workflow_data = json.dumps({
+        "reference_curie": reference_curie,
+        "mod_abbreviation": mod_abbreviation,
+        "workflow_tag_id": workflow_tag_atp_id,
+    }).encode('utf-8')
+    request = urllib.request.Request(url=url, data=workflow_data, method='POST', headers=headers)
+    request.add_header("Content-type", "application/json")
+    request.add_header("Accept", "application/json")
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            urllib.request.urlopen(request)
+            logger.debug("Successfully created workflow tag")
+            return True
+        except HTTPError as e:
+            logger.warning(f"Error creating workflow tag for: {reference_curie}, {mod_abbreviation}, "
+                           f"{workflow_tag_atp_id}: {e}")
+            time.sleep(attempts)
+        except Exception as e:
+            logger.error(f"Error attempt {attempts} creating workflow tag for: {reference_curie}, "
+                         f"{mod_abbreviation}, {workflow_tag_atp_id}: {e}")
+    logger.error(f"Error creating workflow tag after 3 attempts: {reference_curie}, {mod_abbreviation}, "
+                 f"{workflow_tag_atp_id}")
     return False
 
 
@@ -758,138 +817,6 @@ def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: 
     else:
         logger.error(f"Failed to download dataset {response.text}")
         response.raise_for_status()
-
-
-def species_to_exclude():
-    return {
-        "NCBITaxon:4853",
-        "NCBITaxon:30023",
-        "NCBITaxon:8805",
-        "NCBITaxon:216498",
-        "NCBITaxon:1420681",
-        "NCBITaxon:10231",
-        "NCBITaxon:156766",
-        "NCBITaxon:80388",
-        "NCBITaxon:101142",
-        "NCBITaxon:31138",
-        "NCBITaxon:88086",
-        "NCBITaxon:34245",
-        "NCBITaxon:5482",
-        "NCBITaxon:1",
-        "NCBITaxon:2"
-    }
-
-
-def get_name_from_entity(entity_symbol):
-    if entity_symbol is None:
-        return None
-    if getattr(entity_symbol, "obsolete", False) or getattr(entity_symbol, "internal", False):
-        return None
-    if hasattr(entity_symbol, 'formatText'):
-        return entity_symbol.formatText
-    elif hasattr(entity_symbol, 'displayText'):
-        return entity_symbol.displayText
-    return None
-
-
-def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type: str, page: int):
-    """Fetch a single page of entities from the API."""
-    if entity_type == 'gene':
-        return api_client.get_genes(data_provider=mod, limit=PAGE_LIMIT, page=page)
-    elif entity_type == 'transgene':
-        return api_client.get_alleles(
-            data_provider=mod,
-            limit=PAGE_LIMIT,
-            page=page,
-            transgenes_only=True
-        )
-    elif entity_type in ['strain', 'genotype', 'fish']:
-        return api_client.get_agms(
-            data_provider=mod,
-            subtype=entity_type,
-            limit=PAGE_LIMIT,
-            page=page
-        )
-    elif entity_type == 'species':
-        return api_client.get_species(limit=PAGE_LIMIT, page=page)
-    else:
-        logger.info(f"Unknown entity_type '{entity_type}' requested; returning empty list.")
-        return []
-
-
-def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, force_refresh: bool = False):  # noqa: C901
-    """
-    Return (all_curated_entity_names, entity_name_curie_mappings)
-    Results are cached per (mod_abbreviation, original_entity_type_str)
-    """
-    cache_key = (mod_abbreviation, entity_type_str)
-
-    if not force_refresh and cache_key in _CURATED_ENTITY_CACHE:
-        names, mapping = _CURATED_ENTITY_CACHE[cache_key]
-        return names.copy(), mapping.copy()
-
-    all_curated_entity_names: list[str] = []
-    entity_name_curie_mappings: dict[str, str] = {}
-
-    api_config = APIConfig()  # type: ignore
-    api_client = AGRCurationAPIClient(api_config)
-
-    if entity_type_str == 'transgenic_allele':
-        entity_type_str = 'transgene'
-
-    species_to_exclude_set = species_to_exclude()
-
-    current_page = 0
-    while True:
-        entities = fetch_entities_page(api_client, mod_abbreviation, entity_type_str, current_page)
-        if not entities:
-            logger.info(f"No entities returned for {entity_type_str} page {current_page}")
-            break
-
-        for entity in entities:
-            entity_name = None
-            curie = None
-            if entity_type_str == 'species':
-                if hasattr(entity, 'curie'):
-                    if entity.obsolete or entity.internal:
-                        continue
-                    curie = entity.curie
-                    entity_name = entity.name
-                    if curie in species_to_exclude_set:
-                        continue
-            else:
-                if hasattr(entity, 'primaryExternalId'):
-                    curie = entity.primaryExternalId
-                if not curie:
-                    continue
-                if entity_type_str == 'gene':
-                    if hasattr(entity, 'geneSymbol'):
-                        entity_symbol = entity.geneSymbol
-                elif entity_type_str == 'transgene':
-                    if hasattr(entity, 'alleleSymbol'):
-                        entity_symbol = entity.alleleSymbol
-                elif entity_type_str in ['fish', 'genotype', 'strain']:
-                    entity_symbol = entity.agmFullName
-                entity_name = get_name_from_entity(entity_symbol)
-            if not entity_name or not curie:
-                continue
-            if entity_name not in entity_name_curie_mappings:
-                all_curated_entity_names.append(entity_name)
-            entity_name_curie_mappings[entity_name] = curie
-        current_page += 1
-
-    # Deduplicate + stable sort output names
-    all_curated_entity_names = sorted(set(all_curated_entity_names), key=str.lower)
-
-    _CURATED_ENTITY_CACHE[cache_key] = (
-        all_curated_entity_names.copy(),
-        entity_name_curie_mappings.copy()
-    )
-    if mod_abbreviation == 'WB' and entity_type_str == 'strain':
-        wbid = entity_name_curie_mappings.get("HT115(DE3)")
-        if wbid and entity_name_curie_mappings.get("HT115"):
-            entity_name_curie_mappings["HT115"] = wbid
-    return all_curated_entity_names, entity_name_curie_mappings
 
 
 def get_all_ref_curies(mod_abbreviation: str):
