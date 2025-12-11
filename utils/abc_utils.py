@@ -1,17 +1,18 @@
+import html
 import io
 import json
-import time
 import logging
 import os
-import html
+import time
+import urllib.request
+from argparse import Namespace
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union, Optional
 from urllib.error import HTTPError
-from argparse import Namespace
+
+import numpy as np
 import psycopg2
 import requests
-import urllib.request
-import numpy as np
 from agr_cognito_py import get_authentication_token, generate_headers
 from agr_curation_api import APIConfig, AGRCurationAPIClient  # type: ignore
 

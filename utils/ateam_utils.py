@@ -1,6 +1,6 @@
 import logging
 
-from agr_curation_api import AGRCurationAPIClient
+from agr_curation_api import AGRCurationAPIClient, APIConfig
 
 PAGE_LIMIT = 1000
 
