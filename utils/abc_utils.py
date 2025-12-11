@@ -14,7 +14,6 @@ import numpy as np
 import psycopg2
 import requests
 from agr_cognito_py import get_authentication_token, generate_headers
-from agr_curation_api import APIConfig, AGRCurationAPIClient  # type: ignore
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
