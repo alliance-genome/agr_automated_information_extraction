@@ -39,9 +39,9 @@ from utils.abc_utils import (
     set_job_success,
     send_entity_tag_to_abc,
     get_model_data,
-    set_job_failure,
-    get_all_curated_entities,
+    set_job_failure
 )
+from utils.ateam_utils import get_all_curated_entities
 from utils.tei_utils import AllianceTEI
 
 from utils.entity_extraction_utils import (
