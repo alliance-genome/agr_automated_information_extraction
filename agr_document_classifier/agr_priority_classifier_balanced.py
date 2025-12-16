@@ -599,11 +599,11 @@ def get_confidence_level(classification, conf_score):
     mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
     base_label = mapping.get(classification, "unknown")
     if conf_score < 0.5:
-        return f"{base_label}-Low"
+        return f"{base_label}-LOW"
     elif conf_score < 0.75:
-        return f"{base_label}-Med"
+        return f"{base_label}-MEDIUM"
     else:
-        return f"{base_label}-High"
+        return f"{base_label}-HIGH"
 
 
 def download_training_set(args, training_data_dir):
