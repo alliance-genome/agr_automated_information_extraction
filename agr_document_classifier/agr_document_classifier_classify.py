@@ -177,7 +177,7 @@ def prepare_classification_directory():
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
                                 mod_abbr, topic, tet_source_id, model_meta_data):
     logger.info("Sending classification tags to ABC.")
-    species = get_cached_mod_species_map()[mod_abbr]
+    species = None
     if 'species' in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
         species = model_meta_data['species']
     send_to_manual_indexing = False
