@@ -17,7 +17,7 @@ from utils.abc_utils import download_tei_files_for_references, send_classificati
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
-    get_cached_mod_species_map, set_blue_api_base_url, \
+    set_blue_api_base_url, \
     get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag, \
     get_current_workflow_status
 from utils.get_documents import get_documents, remove_stopwords
