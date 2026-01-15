@@ -139,7 +139,7 @@ def _load_compiled_aliases():
     curated_names = set()
     try:
         # Lazy import to avoid circulars at module import time.
-        from utils.abc_utils import get_all_curated_entities
+        from utils.ateam_utils import get_all_curated_entities
         for mod in mods:
             names, _mapping = get_all_curated_entities(mod, "species")
             curated_names.update(names or [])
