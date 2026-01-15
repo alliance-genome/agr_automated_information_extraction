@@ -100,7 +100,7 @@ class AllianceTEI:
         abstract = ' '.join(abstract_parts).strip()
         return _normalize_text(abstract)
 
-    def get_fulltext(self) -> str:  # noqa: C901
+    def get_fulltext(self, include_attributes: bool = False) -> str:  # noqa: C901
         """
         Return the full text of the document, including sentences, table cells,
         formulas, figure/table captions, list items, and notes/footnotes,
@@ -184,6 +184,116 @@ class AllianceTEI:
             cleaned = _clean_block(block)
             if cleaned:
                 text += ' ' + cleaned
+
+        # ------------------------------------------------------------------
+        # 9) Entity-unifying mode: scan all text + attributes for entity-like
+        #    tokens and append them once, so attributes and text are treated
+        #    the same by downstream code.
+        #
+        #    Strategy:
+        #      - collect tokens from visible text and from attributes
+        #      - then filter:
+        #          * drop attribute-only b#### TEI bib IDs
+        #          * drop e###/e#### that occur only inside
+        #            <biblScope unit="page/pages">...</biblScope>
+        # ------------------------------------------------------------------
+        if include_attributes:
+
+            def _looks_like_entity(tok: str) -> bool:
+                tok = tok.strip()
+                if len(tok) < 2:
+                    return False
+
+                has_letter = any(c.isalpha() for c in tok)
+                has_digit = any(c.isdigit() for c in tok)
+                if not (has_letter and has_digit):
+                    return False
+
+                lowered = tok.lower()
+                bad_prefixes = ("fig", "sup", "sub", "sec", "eq")
+                if lowered.startswith(bad_prefixes):
+                    return False
+
+                if lowered.startswith(("lt", "gt", "amp")):
+                    return False
+
+                # simple roman numerals
+                if re.fullmatch(r"[ivx]+", lowered):
+                    return False
+
+                return True
+
+            # 1) Tokens from visible text (all TEI, no reference stripping)
+            plain_all = re.sub(r'<[^>]+>', ' ', xml or '')
+            text_tokens: set[str] = set()
+
+            for tok in re.findall(
+                r'[A-Za-z][A-Za-z0-9_.-]*\d+[A-Za-z0-9_.-]*',
+                plain_all
+            ):
+                if _looks_like_entity(tok):
+                    text_tokens.add(tok)
+
+            # 2) Tokens from attribute values (xml:id, id, n, target, ref)
+            attr_tokens: set[str] = set()
+            attr_values = re.findall(
+                r'\b(?:xml:id|id|n|target|ref)\s*=\s*"([^"]+)"',
+                xml or '',
+                flags=re.IGNORECASE
+            )
+            for val in attr_values:
+                for tok in re.findall(
+                    r'[A-Za-z][A-Za-z0-9_.-]*\d+[A-Za-z0-9_.-]*',
+                    val
+                ):
+                    if _looks_like_entity(tok):
+                        attr_tokens.add(tok)
+
+            entity_tokens: set[str] = set(text_tokens) | set(attr_tokens)
+
+            # 3) Compute spans of text inside <biblScope unit="page/pages">...</biblScope>
+            page_spans: list[tuple[int, int]] = []
+            for m in re.finditer(
+                r'<biblScope\b[^>]*unit="(?:page|pages)"[^>]*>(.*?)</biblScope>',
+                xml or '',
+                flags=re.IGNORECASE | re.DOTALL,
+            ):
+                # group(1) is the *inside* of the biblScope
+                page_spans.append((m.start(1), m.end(1)))
+
+            def _occurs_only_in_page_scopes(tok: str) -> bool:
+                """Return True if *all* occurrences of tok are inside page_spans."""
+                if not page_spans:
+                    return False
+
+                matches = list(re.finditer(re.escape(tok), xml or ''))
+                if not matches:
+                    return False
+
+                for m in matches:
+                    pos = m.start()
+                    if not any(start <= pos < end for start, end in page_spans):
+                        return False  # found an occurrence outside page scopes
+
+                return True  # every occurrence is within a page/pages biblScope
+
+            # 4) Filter out junk patterns
+            filtered_tokens: set[str] = set()
+            for tok in entity_tokens:
+                lower = tok.lower()
+
+                # Drop attribute-only bibliography IDs like b117, b126, b1001, etc.
+                if re.fullmatch(r"b\d{2,4}", lower) and tok in attr_tokens and tok not in text_tokens:
+                    continue
+
+                # Drop page-only e### / e#### codes that occur only in <biblScope unit="page/pages">.
+                if re.fullmatch(r"e\d{3,4}", lower) and _occurs_only_in_page_scopes(tok):
+                    continue
+
+                filtered_tokens.add(tok)
+
+            if filtered_tokens:
+                text += ' ' + '. '.join(sorted(filtered_tokens)) + '.'
 
         return _normalize_text(text)
 
