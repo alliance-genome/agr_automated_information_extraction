@@ -390,13 +390,13 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             try:
                                 ent_curie = resolve_entity_curie(model, ent, strict=True)
                             except KeyError:
-                                logger.debug(
+                                logger.info(
                                     "ALLELE-REJECT: mapping KeyError for candidate '%s' in ref %s (combined TEI)",
                                     ent, curie,
                                 )
                                 continue
                             if not ent_curie:
-                                logger.debug(
+                                logger.info(
                                     "ALLELE-REJECT: no CURIE found for candidate '%s' in ref %s (combined TEI)",
                                     ent, curie,
                                 )
@@ -521,13 +521,13 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             try:
                                 ent_curie = resolve_entity_curie(model, ent, strict=True)
                             except KeyError:
-                                logger.debug(
+                                logger.info(
                                     "ALLELE-REJECT: mapping KeyError for candidate '%s' in ref %s",
                                     ent, curie,
                                 )
                                 continue
                             if not ent_curie:
-                                logger.debug(
+                                logger.info(
                                     "ALLELE-REJECT: no CURIE found for candidate '%s' in ref %s",
                                     ent, curie,
                                 )
@@ -596,6 +596,7 @@ def main():
     DEFAULT_MODS = ['WB']
     # strain, gene, transgene, allele
     # DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110', 'ATP:0000006']
+    # temporarily turn off allele extraction until it is ready for prod
     DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110']
     if not args.mod:
         args.mod = DEFAULT_MODS
