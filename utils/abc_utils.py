@@ -14,6 +14,7 @@ import numpy as np
 import psycopg2
 import requests
 from agr_cognito_py import get_authentication_token, generate_headers
+from utils.ateam_utils import get_all_curated_entities as _get_all_curated_entities
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
 if blue_api_base_url.startswith('literature'):
@@ -27,6 +28,10 @@ cache = {}
 def set_blue_api_base_url(value):
     global blue_api_base_url
     blue_api_base_url = value
+
+
+def get_all_curated_entities(*args, **kwargs):
+    return _get_all_curated_entities(*args, **kwargs)
 
 
 def get_mod_species_map():
