@@ -73,9 +73,9 @@ GENERIC_NAME_PATTERN = re.compile(
 #   (allows mixed-case like ttTi4348, oxTi970, mgDf50, ccTi1594, etc.)
 ALLELE_NAME_PATTERN = re.compile(
     r'(?<![A-Za-z0-9_.\-])'       # left-delimiter: not letter/digit/._-
-    r'(?=[A-Za-z0-9_.\-]*[a-z])'  # must contain ≥1 lowercase letter
-    r'(?=[A-Za-z0-9_.\-]*\d)'     # must contain ≥1 digit
-    r'[a-z][A-Za-z0-9_.\-]{1,}'   # FIRST char lowercase; then ≥1 allowed chars
+    r'(?=[A-Za-z0-9_.\-]*[a-z])'  # must contain >=1 lowercase letter
+    r'(?=[A-Za-z0-9_.\-]*\d)'     # must contain >=1 digit
+    r'[a-z][A-Za-z0-9_.\-]{1,}'   # FIRST char lowercase; then >=1 allowed chars
     r'(?![A-Za-z0-9_.\-])'        # right-delimiter: not letter/digit/._-
 )
 """
