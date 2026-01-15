@@ -40,6 +40,22 @@ def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type:
             page=page,
             transgenes_only=True
         )
+    elif entity_type == 'allele':
+        # WB extraction subset: force DB + correct params
+        if mod == 'WB':
+            return api_client.get_alleles(
+                taxon='NCBITaxon:6239',
+                limit=PAGE_LIMIT,
+                offset=page * PAGE_LIMIT,
+                wb_extraction_subset=True,
+                data_source='db'
+            )
+        # other MODs: use normal API/GraphQL path
+        return api_client.get_alleles(
+            data_provider=mod,
+            limit=PAGE_LIMIT,
+            page=page
+        )
     elif entity_type in ['strain', 'genotype', 'fish']:
         return api_client.get_agms(
             data_provider=mod,
@@ -114,7 +130,7 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
                 if entity_type_str == 'gene':
                     if hasattr(entity, 'geneSymbol'):
                         entity_symbol = entity.geneSymbol
-                elif entity_type_str == 'transgene':
+                elif entity_type_str in ['transgene', 'allele']:
                     if hasattr(entity, 'alleleSymbol'):
                         entity_symbol = entity.alleleSymbol
                 elif entity_type_str in ['fish', 'genotype', 'strain']:
