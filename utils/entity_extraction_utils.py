@@ -40,6 +40,160 @@ _MODEL_CACHE: Dict[Tuple[str, str], object] = {}
 _PIPE_CACHE: Dict[Tuple[str, str], Optional[object]] = {}
 _ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str]]] = {}
 
+# --------------------------------------------------------------------- #
+# PATTERNS & TOPIC MAPPING                                              #
+# --------------------------------------------------------------------- #
+STRAIN_NAME_PATTERN = re.compile(
+    r'''
+    (?<![A-Za-z0-9])              # left-boundary: not preceded by a letter or digit
+    (?=[A-Za-z0-9()_-]*[A-Za-z])  # must contain at least one letter
+    (?=[A-Za-z0-9()_-]*\d)        # must contain at least one digit
+    [A-Za-z0-9]                   # first char: letter or digit
+    (?:                           # then any ofâ€¦
+       [A-Za-z0-9_-]              #   letter/digit/underscore/hyphen
+     | \([A-Za-z0-9]+\)           #   "(â€¦)" group of alphanumerics
+    )*                            # repeated
+    (?![A-Za-z0-9])               # right-boundary: next char is not a letter or digit
+    ''',
+    re.VERBOSE
+)
+
+GENERIC_NAME_PATTERN = re.compile(
+    r'(?<![A-Za-z0-9_.\-])'          # left-delimiter: not letter/digit/._-
+    r'(?=[A-Za-z0-9_.\-]*[A-Za-z])'  # must contain â‰¥1 letter
+    r'(?=[A-Za-z0-9_.\-]*\d)'        # must contain â‰¥1 digit
+    r'[A-Za-z0-9_.\-]{2,}'           # the token itself (no colon!)
+    r'(?![A-Za-z0-9_.\-])'           # right-delimiter: not letter/digit/._-
+)
+
+# Allele-specific pattern:
+# - must start with a LOWERCASE letter (C. elegans lab prefix)
+# - can contain letters/digits/._-
+# - must contain at least one lowercase letter and at least one digit
+#   (allows mixed-case like ttTi4348, oxTi970, mgDf50, ccTi1594, etc.)
+ALLELE_NAME_PATTERN = re.compile(
+    r'(?<![A-Za-z0-9_.\-])'       # left-delimiter: not letter/digit/._-
+    r'(?=[A-Za-z0-9_.\-]*[a-z])'  # must contain >=1 lowercase letter
+    r'(?=[A-Za-z0-9_.\-]*\d)'     # must contain >=1 digit
+    r'[a-z][A-Za-z0-9_.\-]{1,}'   # FIRST char lowercase; then >=1 allowed chars
+    r'(?![A-Za-z0-9_.\-])'        # right-delimiter: not letter/digit/._-
+)
+"""
+This pattern now matches
+ttTi4348, ttTi5605
+oxTi970, oxTi185
+ccTi1594, cxTi10882, cxTi9279
+mgDf50, gkDf31, mgDf90
+dnSi4, juSi123, ieSi65, ltSi915
+all classic alleles: e1370, e1490, n745, ok1255, tm3411, tm6119, gk218
+"""
+
+# Suspect short alleles that frequently appear as labels/panel IDs, etc.
+SUSPICIOUS_SHORT_ALLELES = {f"e{i}" for i in range(1, 10)}  # e1..e9
+
+# Any single-letter + digits pattern is suspicious (e5, s7, f1, m2, z1, etc.)
+SUSPICIOUS_PREFIX_RE = re.compile(r"^[a-z]\d{1,2}$")
+
+# Words that suggest true allele context
+ALLELE_CONTEXT_WORDS = {
+    "allele", "alleles",
+    "mutant", "mutants",
+    "mutation", "mutations",
+    "variant", "variants",
+    "suppressor", "suppressors",
+}
+
+# --------------------------------------------------------------------- #
+# Threshold-tuning gold sets (restored)                                 #
+# --------------------------------------------------------------------- #
+STRAIN_TARGET_ENTITIES = {
+    "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
+    "AGRKB:101000000641132": ["EG4322", "GE24"],
+    "AGRKB:101000000641112": ["N2", "EG6699", "JT734"],
+    "AGRKB:101000000640598": [
+        "XZ1515", "XZ1514", "QX1794", "PB306", "ECA369", "CX11271", "JT73", "JT513", "XZ1513",
+        "JJ1271", "ECA36", "SP346", "RB2488", "ECA372", "NIC268", "RB1658", "NH646", "LKC34",
+        "CB185", "JU1200", "RB1977", "ECA189", "JU258", "XZ1516", "JU367", "GH383", "CX11314",
+        "QG556", "ECA191", "NIC256", "RT362", "WN2001", "MY10", "JU775", "BA819", "CB4932",
+        "PB303", "JK4545", "OP50", "NIC251", "JU1242", "QG2075", "CB30", "GL302", "QX1791",
+        "ECA396", "JT11398", "JU830", "JU363", "QX1793", "EG4725", "NIC199", "CB4856",
+        "ECA363", "N2"
+    ],
+    "AGRKB:101000000641062": ["PD1074", "HT115"],
+    "AGRKB:101000000641018": ["VC2428", "N2", "OP50", "VC1743"],
+    "AGRKB:101000000640727": [
+        "VC1263", "CB3203", "CB3257", "MT5013", "SP1713", "VC610", "CB3261", "MT5006",
+        "RB983", "MT4433", "MT8886", "KJ462", "MT9958", "PR678", "CB936", "N2", "CU1715",
+        "NG144", "RB1100", "NF87", "CU2945", "PR811", "PR691", "MT11068", "MT4434", "PR767"
+    ],
+    "AGRKB:101000000640813": ["N2", "CB4856", "JU1580"],
+    "AGRKB:101000000639765": [
+        "N2", "DA1814", "AQ866", "LX702", "LX703", "CX13079", "OH313", "VC125", "VC670",
+        "RB785", "RB1680"
+    ],
+    "AGRKB:101000000640768": ["KG1180", "RB830", "TR2171", "ZX460", "OP50-1"]
+}
+
+ALLELE_TARGET_ENTITIES = {
+    "AGRKB:101000001029627": ['km25', 'mu86', 'ok434', 'ok524', 'zu135'],
+    "AGRKB:101000001033554": [
+        'e1393', 'e1398', 'e502', 'ev554', 'jj278', 'm40', 'm62',
+        'm77', 'ok3336', 'ok3416', 'tm2091', 'wk30', 'wk7', 'wk70'
+    ],
+    "AGRKB:101000001052808": [
+        'ad465', 'km21', 'km25', 'mu86', 'nk3', 'nr2041', 'ok1255', 'ok186',
+        'ok2065', 'ok3730', 'ok386', 'ok524', 'p675', 'qm150', 'qm30',
+        'rh50', 'tm1978'
+    ],
+    "AGRKB:101000000638747": ['ok161'],
+    "AGRKB:101000001185203": ['re257'],
+    "AGRKB:101000000623393": [
+        'e102', 'e234', 'e81', 'js115', 'md1088', 'md247', 'md299', 's69'
+    ],
+    "AGRKB:101000000623933": ['km41', 'tm1779', 'tm1898'],
+    "AGRKB:101000000387847": ['gk203', 'hx546', 'ok976'],
+    "AGRKB:101000000624886": ['gk349', 'ok705', 'tm843', 'tm1920', 'tm2183', 'zc32'],
+    "AGRKB:101000000625317": [
+        'ev546', 'n324', 'ok255', 'ok2226', 'tr64', 'tr96', 'tr101', 'tr103',
+        'tr113', 'tr129', 'tr150', 'tr162', 'tr163', 'tr171', 'tr187', 'tr189'
+    ],
+    "AGRKB:101000000625751": [
+        'bz189', 'e1735', 'e1752', 'k149', 'mu38', 'n1043', 'n1812', 'n1813', 'n1963',
+        'n1993', 'n1994', 'n1995', 'n1996', 'n2433', 'n2433', 'n2438', 'n2690',
+        'n3246', 'n4039', 'n432', 'n717', 'ok300', 'op149', 'op234', 'op360', 'oz167',
+        't1875', 'tm1826', 'tm1949', 'tm3701'
+    ],
+    "AGRKB:101000000627138": ['km19', 'km21', 'ok2531', 'ok364', 'tm737'],
+    "AGRKB:101000000627490": ['tm2530', 'tm2725'],
+    "AGRKB:101000000639903": ['mu86', 'ra102'],
+    "AGRKB:101000000960091": ['mu86', 'tm1783'],
+    "AGRKB:101000001048559": ['ok2409', 'pk610', 'tm10970']
+}
+
+GENE_TARGET_ENTITIES = {
+    "AGRKB:101000000634691": ["lov-3"],
+    "AGRKB:101000000635145": ["his-58"],
+    "AGRKB:101000000635933": ["spe-4", "spe-6", "spe-8", "swm-1", "zipt-7.1", "zipt-7.2"],
+    "AGRKB:101000000635973": ["dot-1.1", "hbl-1", "let-7", "lin-29A", "lin-41", "mir-48", "mir-84", "mir-241"],
+    "AGRKB:101000000636039": ["fog-3"],
+    "AGRKB:101000000636419": [],
+    "AGRKB:101000000637655": ["ddi-1", "hsf-1", "pas-1", "pbs-2", "pbs-3", "pbs-4", "pbs-5", "png-1", "rpt-3", "rpt-6",
+                              "rpn-1", "rpn-5", "rpn-8", "rpn-9", "rpn-10", "rpn-11", "sel-1", "skn-1", "unc-54"],
+    "AGRKB:101000000637658": ["dbt-1"],
+    "AGRKB:101000000637693": ["C17D12.7", "plk-1", "spd-2", "spd-5"],
+    "AGRKB:101000000637713": ["cha-1", "daf-2", "daf-16"],
+    "AGRKB:101000000637764": ["F28C6.8", "Y71F9B.2", "acl-3", "crls-1", "drp-1", "fzo-1", "pgs-1"],
+    "AGRKB:101000000637890": ["atg-13", "atg-18", "atg-2", "atg-3", "atg-4.1", "atg-4.2", "atg-7", "atg-9", "atg-18",
+                              "asp-10", "bec-1", "ced-13", "cep-1", "egl-1", "epg-2", "epg-5", "epg-8", "epg-9",
+                              "epg-11", "glh-1", "lgg-1", "pgl-1", "pgl-3", "rrf-1", "sepa-1", "vet-2", "vet-6",
+                              "vha-5", "vha-13", "ZK1053.3"],
+    "AGRKB:101000000637968": ["avr-15", "bet-2", "csr-1", "cye-1", "daf-12", "drp-1", "ego-1", "hrde-1", "lin-13",
+                              "ncl-1", "rrf-1", "snu-23", "unc-31"],
+    "AGRKB:101000000638021": [],
+    "AGRKB:101000000638052": ["cept-1", "cept-2", "daf-22", "drp-1", "fat-1", "fat-2", "fat-3", "fat-4", "fat-6",
+                              "fat-7", "fzo-1", "pcyt-1", "seip-1"],
+}
+
 
 def _entity_cache_path(mod_abbr: str, entity_type: str) -> Path:
     return ENTITY_CACHE_DIR / f"{mod_abbr}_{entity_type}.json"
@@ -485,3 +639,117 @@ def compute_cache_key(items: Iterable[str]) -> str:
     '9f6c1e3f8577c1d2'
     """
     return hashlib.sha1(raw).hexdigest()[:16]
+
+
+def has_allele_like_context(fulltext: str, candidate: str) -> bool:
+    """
+    True if the short allele candidate appears in a context that looks like
+    a real allele, e.g. gene-1(e5), "the e5 mutant", etc.
+
+    For *very short* suspicious alleles (one-letter + digits, e.g. "b2", "e5"),
+    we are stricter: we only accept them if they appear in a gene(e5)-style pattern.
+    """
+    if not fulltext or not candidate:
+        return False
+
+    text = fulltext.lower()
+    cand = candidate.lower()
+
+    # Is this a "suspicious" ultra-short allele like e5, b2, s7, etc.?
+    is_suspicious_short = bool(SUSPICIOUS_PREFIX_RE.match(cand))
+
+    # gene-1(e5) / foo-1(e5)-style: gene-like token followed by (cand)
+    gene_like_pattern = re.compile(
+        r"[A-Za-z][A-Za-z0-9_.-]{1,15}\(" + re.escape(cand) + r"\)"
+    )
+
+    if is_suspicious_short:
+        # For ultra-short patterns (e5, b2, s7, ...), require a strong
+        # gene(e5)-style context. This avoids picking up figure labels like "B2".
+        if gene_like_pattern.search(text):
+            return True
+        return False
+
+    # For normal-length alleles (tm1783, ok1255, n324, etc.), keep your
+    # original behavior: gene-like pattern OR nearby context words.
+    if gene_like_pattern.search(text):
+        return True
+
+    # Simple window around the first occurrence: look for context words nearby
+    idx = text.find(cand)
+    if idx == -1:
+        return False
+
+    window_start = max(0, idx - 60)
+    window_end = min(len(text), idx + len(cand) + 60)
+    window = text[window_start:window_end]
+
+    if any(word in window for word in ALLELE_CONTEXT_WORDS):
+        return True
+
+    return False
+
+
+def rescue_short_alleles_from_fulltext(
+    fulltext: str,
+    model,
+    already_found: set[str],
+) -> set[str]:
+    """
+    Rescue allele names that appear in the full text but were missed by NER.
+
+    Behavior:
+    - Scan the ORIGINAL-CASE fulltext with ALLELE_NAME_PATTERN
+      (which itself only matches lowercase alleles like e1370, ok1255, tm1949, etc.).
+    - Ignore anything that:
+        * is already in `already_found` (case-insensitive), or
+        * starts with a digit (e.g. "1a", "5b-5d", "100x", "1-octanol").
+    - For one-letter+digits patterns (e5, e7, b2, ...), require allele-like context
+      via has_allele_like_context().
+    - Returns canonical lowercase allele names.
+    """
+    rescued: set[str] = set()
+    if not fulltext:
+        return rescued
+
+    # Track what we've already found (case-insensitive)
+    already_found_lower = {e.lower() for e in (already_found or set())}
+
+    # IMPORTANT: we now search the original-case text, not fulltext.lower().
+    # ALLELE_NAME_PATTERN is lowercase-only, so it will only match true
+    # lowercase allele-like tokens (e1370, ok1255, tm1949, n324, etc.),
+    # and will NOT match uppercase tokens like Mos1, CD31, B2.
+    for m in ALLELE_NAME_PATTERN.finditer(fulltext):
+        raw = m.group(0) or ""
+        if not raw:
+            continue
+
+        # Remove trailing '.' from sentence boundaries (e.g. "e1370.")
+        name = raw.rstrip(".")
+        if len(name) < 2:
+            continue
+
+        name_lc = name.lower()
+
+        # Skip if we've already got this allele (case-insensitive)
+        if name_lc in already_found_lower:
+            continue
+
+        # Drop anything that starts with a digit: panel labels, 100x, 1a, 2b-2c, etc.
+        if name_lc[0].isdigit():
+            continue
+
+        # Suspicious if it looks like one-letter+digits: e5, e7, b2, s7, ...
+        is_suspicious = (
+            name_lc in SUSPICIOUS_SHORT_ALLELES
+            or SUSPICIOUS_PREFIX_RE.match(name_lc) is not None
+        )
+
+        if is_suspicious:
+            # Require allele-like context to keep it (gene-1(e5), "e5 mutant", etc.)
+            if not has_allele_like_context(fulltext, name_lc):
+                continue
+
+        rescued.add(name_lc)
+
+    return rescued

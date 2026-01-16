@@ -39,7 +39,7 @@ from utils.abc_utils import (
     set_job_success,
     send_entity_tag_to_abc,
     get_model_data,
-    set_job_failure
+    set_job_failure,
 )
 from utils.ateam_utils import get_all_curated_entities
 from utils.tei_utils import AllianceTEI
@@ -52,38 +52,21 @@ from utils.entity_extraction_utils import (
     prefilter_text as prefilter_text_generic,
     build_entities_from_results as build_entities_from_results_generic,
     resolve_entity_curie,
+    has_allele_like_context,
+    rescue_short_alleles_from_fulltext,
+    SUSPICIOUS_PREFIX_RE,
+    ALLELE_NAME_PATTERN,
+    GENERIC_NAME_PATTERN,
+    STRAIN_NAME_PATTERN,
+    ALLELE_TARGET_ENTITIES,
+    GENE_TARGET_ENTITIES,
+    STRAIN_TARGET_ENTITIES
 )
 
 # Silence HF info/warnings entirely
 set_verbosity_error()
 
 logger = logging.getLogger(__name__)
-
-# --------------------------------------------------------------------- #
-# PATTERNS & TOPIC MAPPING                                              #
-# --------------------------------------------------------------------- #
-STRAIN_NAME_PATTERN = re.compile(
-    r'''
-    (?<![A-Za-z0-9])              # left-boundary: not preceded by a letter or digit
-    (?=[A-Za-z0-9()_-]*[A-Za-z])  # must contain at least one letter
-    (?=[A-Za-z0-9()_-]*\d)        # must contain at least one digit
-    [A-Za-z0-9]                   # first char: letter or digit
-    (?:                           # then any of…
-       [A-Za-z0-9_-]              #   letter/digit/underscore/hyphen
-     | \([A-Za-z0-9]+\)           #   "(…)" group of alphanumerics
-    )*                            # repeated
-    (?![A-Za-z0-9])               # right-boundary: next char is not a letter or digit
-    ''',
-    re.VERBOSE
-)
-
-GENERIC_NAME_PATTERN = re.compile(
-    r'(?<![A-Za-z0-9_.\-])'          # left-delimiter: not letter/digit/._-
-    r'(?=[A-Za-z0-9_.\-]*[A-Za-z])'  # must contain ≥1 letter
-    r'(?=[A-Za-z0-9_.\-]*\d)'        # must contain ≥1 digit
-    r'[A-Za-z0-9_.\-]{2,}'           # the token itself (no colon!)
-    r'(?![A-Za-z0-9_.\-])'           # right-delimiter: not letter/digit/._-
-)
 
 TOPIC2TYPE = {
     "ATP:0000027": "strain",
@@ -99,63 +82,11 @@ def topic_to_entity_type(topic: str) -> str:
 
 
 def get_generic_name_pattern(topic: str) -> re.Pattern:
-    return STRAIN_NAME_PATTERN if topic == "ATP:0000027" else GENERIC_NAME_PATTERN
-
-
-# --------------------------------------------------------------------- #
-# Threshold-tuning gold sets (restored)                                 #
-# --------------------------------------------------------------------- #
-STRAIN_TARGET_ENTITIES = {
-    "AGRKB:101000000641073": ["N2", "OP50", "TJ375"],
-    "AGRKB:101000000641132": ["EG4322", "GE24"],
-    "AGRKB:101000000641112": ["N2", "EG6699", "JT734"],
-    "AGRKB:101000000640598": [
-        "XZ1515", "XZ1514", "QX1794", "PB306", "ECA369", "CX11271", "JT73", "JT513", "XZ1513",
-        "JJ1271", "ECA36", "SP346", "RB2488", "ECA372", "NIC268", "RB1658", "NH646", "LKC34",
-        "CB185", "JU1200", "RB1977", "ECA189", "JU258", "XZ1516", "JU367", "GH383", "CX11314",
-        "QG556", "ECA191", "NIC256", "RT362", "WN2001", "MY10", "JU775", "BA819", "CB4932",
-        "PB303", "JK4545", "OP50", "NIC251", "JU1242", "QG2075", "CB30", "GL302", "QX1791",
-        "ECA396", "JT11398", "JU830", "JU363", "QX1793", "EG4725", "NIC199", "CB4856",
-        "ECA363", "N2"
-    ],
-    "AGRKB:101000000641062": ["PD1074", "HT115"],
-    "AGRKB:101000000641018": ["VC2428", "N2", "OP50", "VC1743"],
-    "AGRKB:101000000640727": [
-        "VC1263", "CB3203", "CB3257", "MT5013", "SP1713", "VC610", "CB3261", "MT5006",
-        "RB983", "MT4433", "MT8886", "KJ462", "MT9958", "PR678", "CB936", "N2", "CU1715",
-        "NG144", "RB1100", "NF87", "CU2945", "PR811", "PR691", "MT11068", "MT4434", "PR767"
-    ],
-    "AGRKB:101000000640813": ["N2", "CB4856", "JU1580"],
-    "AGRKB:101000000639765": [
-        "N2", "DA1814", "AQ866", "LX702", "LX703", "CX13079", "OH313", "VC125", "VC670",
-        "RB785", "RB1680"
-    ],
-    "AGRKB:101000000640768": ["KG1180", "RB830", "TR2171", "ZX460", "OP50-1"]
-}
-
-GENE_TARGET_ENTITIES = {
-    "AGRKB:101000000634691": ["lov-3"],
-    "AGRKB:101000000635145": ["his-58"],
-    "AGRKB:101000000635933": ["spe-4", "spe-6", "spe-8", "swm-1", "zipt-7.1", "zipt-7.2"],
-    "AGRKB:101000000635973": ["dot-1.1", "hbl-1", "let-7", "lin-29A", "lin-41", "mir-48", "mir-84", "mir-241"],
-    "AGRKB:101000000636039": ["fog-3"],
-    "AGRKB:101000000636419": [],
-    "AGRKB:101000000637655": ["ddi-1", "hsf-1", "pas-1", "pbs-2", "pbs-3", "pbs-4", "pbs-5", "png-1", "rpt-3", "rpt-6",
-                              "rpn-1", "rpn-5", "rpn-8", "rpn-9", "rpn-10", "rpn-11", "sel-1", "skn-1", "unc-54"],
-    "AGRKB:101000000637658": ["dbt-1"],
-    "AGRKB:101000000637693": ["C17D12.7", "plk-1", "spd-2", "spd-5"],
-    "AGRKB:101000000637713": ["cha-1", "daf-2", "daf-16"],
-    "AGRKB:101000000637764": ["F28C6.8", "Y71F9B.2", "acl-3", "crls-1", "drp-1", "fzo-1", "pgs-1"],
-    "AGRKB:101000000637890": ["atg-13", "atg-18", "atg-2", "atg-3", "atg-4.1", "atg-4.2", "atg-7", "atg-9", "atg-18",
-                              "asp-10", "bec-1", "ced-13", "cep-1", "egl-1", "epg-2", "epg-5", "epg-8", "epg-9",
-                              "epg-11", "glh-1", "lgg-1", "pgl-1", "pgl-3", "rrf-1", "sepa-1", "vet-2", "vet-6",
-                              "vha-5", "vha-13", "ZK1053.3"],
-    "AGRKB:101000000637968": ["avr-15", "bet-2", "csr-1", "cye-1", "daf-12", "drh-3", "ego-1", "hrde-1", "lin-13",
-                              "ncl-1", "rrf-1", "snu-23", "unc-31"],
-    "AGRKB:101000000638021": [],
-    "AGRKB:101000000638052": ["cept-1", "cept-2", "daf-22", "drp-1", "fat-1", "fat-2", "fat-3", "fat-4", "fat-6",
-                              "fat-7", "fzo-1", "pcyt-1", "seip-1"],
-}
+    if topic == "ATP:0000027":       # strain
+        return STRAIN_NAME_PATTERN
+    if topic == "ATP:0000006":       # allele
+        return ALLELE_NAME_PATTERN
+    return GENERIC_NAME_PATTERN      # gene, transgene, etc.
 
 
 # --------------------------------------------------------------------- #
@@ -187,19 +118,101 @@ def prefilter_text(fulltext: str, model) -> str:
 
 
 def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model) -> List[str]:
-    return build_entities_from_results_generic(
+    entities = build_entities_from_results_generic(
         results=results,
         title=title,
         abstract=abstract,
         fulltext=fulltext,
         model=model,
         pattern=get_generic_name_pattern(model.topic),
-        is_species=False,               # no species-specific normalization
+        is_species=False,
         normalize_aliases=None,
         expand_abbrevs=None,
         use_fulltext_tokenizer=False,
         use_count_gate=False,
     )
+
+    # For allele topic, enforce allele-specific post-processing rules.
+    if getattr(model, "topic", None) == "ATP:0000006":
+        original_count = len(entities)
+
+        # 1) Keep canonical lowercase allele-like tokens or weird non-alnum mixes
+        # str.isalnum() checks whether all characters in the string are alphanumeric (A–Z, a–z, 0–9)
+        # and there is at least one character.
+        entities = [
+            e for e in entities
+            if e.islower() or not e.replace('-', '').replace('_', '').isalnum()
+        ]
+
+        # 2) Drop suspicious one-letter+digit alleles (e5, e7, b2, ...) unless context looks allele-like
+        before_suspicious_filter = len(entities)
+        filtered_entities: list[str] = []
+        for e in entities:
+            if SUSPICIOUS_PREFIX_RE.match(e):
+                if not has_allele_like_context(fulltext, e):
+                    logger.info(
+                        "ALLELE-FILTER: dropping suspicious short allele '%s' due to weak context",
+                        e,
+                    )
+                    continue
+            filtered_entities.append(e)
+        entities = filtered_entities
+        dropped_suspicious = before_suspicious_filter - len(entities)
+
+        # 3) Rescue allele-like tokens from fulltext that NER missed
+        already_found = set(entities)
+        rescued = rescue_short_alleles_from_fulltext(fulltext, model, already_found)
+        if rescued:
+            logger.info(
+                "ALLELE-RESCUE: adding %d alleles from fulltext that NER missed: %s",
+                len(rescued), ", ".join(sorted(rescued))
+            )
+            entities.extend(sorted(rescued))
+
+        # 4) Normalize and dedupe after rescue
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for e in entities:
+            e_norm = e.rstrip('.')
+            if e_norm and e_norm not in seen:
+                seen.add(e_norm)
+                normalized.append(e_norm)
+        entities = normalized
+
+        # 5) Filter to curated allele list only (case-insensitive)
+        curated = getattr(model, "entities_to_extract", None)
+        dropped_non_curated = 0
+        if curated:
+            curated_lower = {c.lower() for c in curated if isinstance(c, str)}
+            before_curated_filter = len(entities)
+            entities = [e for e in entities if e.lower() in curated_lower]
+            dropped_non_curated = before_curated_filter - len(entities)
+
+        # 6) Map back to canonical display names using the curated mapping
+        #    so mgdf50 -> mgDf50, ttti5605 -> ttTi5605, etc.
+        u2o = getattr(model, "upper_to_original_mapping", {}) or {}
+        canonical: list[str] = []
+        seen_disp: set[str] = set()
+        for e in entities:
+            key = e.upper()
+            display = u2o.get(key, e)  # fall back to e if not in mapping
+            if display not in seen_disp:
+                seen_disp.add(display)
+                canonical.append(display)
+        entities = canonical
+
+        if dropped_suspicious > 0 or dropped_non_curated > 0:
+            logger.info(
+                "ALLELE-FILTER: start=%d, after_lowercase=%d, "
+                "dropped_suspicious=%d, dropped_non_curated=%d, final=%d",
+                original_count,
+                before_suspicious_filter,
+                dropped_suspicious,
+                dropped_non_curated,
+                len(entities),
+            )
+
+    return entities
 
 
 # --------------------------------------------------------------------- #
@@ -255,7 +268,10 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
 
                 nlp = pipeline("ner", model=entity_model, tokenizer=entity_model.tokenizer)
                 try:
-                    fulltext = tei.get_fulltext()
+                    if entity_model.topic == "ATP:0000006":   # allele
+                        fulltext = tei.get_fulltext(include_attributes=True)
+                    else:
+                        fulltext = tei.get_fulltext()
                 except Exception as e:
                     logger.error("Error getting fulltext for %s: %s. Skipping.", curie, e)
                     continue
@@ -331,16 +347,19 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
     if combined_tei_dir:
         logger.info("Processing all combined TEI files in %s (files will not be deleted)", combined_tei_dir)
         for fname in sorted(os.listdir(combined_tei_dir)):
-            if not fname.endswith(".combined.tei"):
+            if not fname.endswith(".tei"):
                 continue
-            curie = fname.replace(".combined.tei", "")
+            curie = fname.replace(".tei", "")
             path = os.path.join(combined_tei_dir, fname)
             try:
                 tei = AllianceTEI()
                 tei.load_from_file(path)
                 title = tei.get_title() or ""
                 abstract = tei.get_abstract() or ""
-                fulltext = tei.get_fulltext() or ""
+                if model.topic == "ATP:0000006":   # allele
+                    fulltext = tei.get_fulltext(include_attributes=True)
+                else:
+                    fulltext = tei.get_fulltext() or ""
             except Exception as e:
                 logger.warning("Failed to load/process %s: %s", fname, e)
                 continue
@@ -366,10 +385,28 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 else:
                     seen = set()
                     for ent in all_entities:
-                        try:
-                            ent_curie = resolve_entity_curie(model, ent, strict=True)
-                        except KeyError:
-                            raise
+                        # Allele-specific mapping debug / behavior
+                        if topic == "ATP:0000006":
+                            try:
+                                ent_curie = resolve_entity_curie(model, ent, strict=True)
+                            except KeyError:
+                                logger.info(
+                                    "ALLELE-REJECT: mapping KeyError for candidate '%s' in ref %s (combined TEI)",
+                                    ent, curie,
+                                )
+                                continue
+                            if not ent_curie:
+                                logger.info(
+                                    "ALLELE-REJECT: no CURIE found for candidate '%s' in ref %s (combined TEI)",
+                                    ent, curie,
+                                )
+                                continue
+                        else:
+                            try:
+                                ent_curie = resolve_entity_curie(model, ent, strict=True)
+                            except KeyError:
+                                raise
+
                         if not ent_curie or ent_curie in seen:
                             continue
                         seen.add(ent_curie)
@@ -423,7 +460,10 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 continue
 
             try:
-                fulltext = tei.get_fulltext() or ""
+                if model.topic == "ATP:0000006":   # allele
+                    fulltext = tei.get_fulltext(include_attributes=True)
+                else:
+                    fulltext = tei.get_fulltext() or ""
             except Exception as e:
                 logger.error("Fulltext error for %s: %s. Marking failure.", curie, e)
                 set_job_started(job)
@@ -476,10 +516,28 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 else:
                     seen = set()
                     for ent in all_entities:
-                        try:
-                            ent_curie = resolve_entity_curie(model, ent, strict=True)
-                        except KeyError:
-                            raise
+                        # Allele-specific mapping debug / behavior
+                        if topic == "ATP:0000006":
+                            try:
+                                ent_curie = resolve_entity_curie(model, ent, strict=True)
+                            except KeyError:
+                                logger.info(
+                                    "ALLELE-REJECT: mapping KeyError for candidate '%s' in ref %s",
+                                    ent, curie,
+                                )
+                                continue
+                            if not ent_curie:
+                                logger.info(
+                                    "ALLELE-REJECT: no CURIE found for candidate '%s' in ref %s",
+                                    ent, curie,
+                                )
+                                continue
+                        else:
+                            try:
+                                ent_curie = resolve_entity_curie(model, ent, strict=True)
+                            except KeyError:
+                                raise
+
                         if not ent_curie or ent_curie in seen:
                             continue
                         seen.add(ent_curie)
@@ -519,7 +577,7 @@ def main():
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
     parser.add_argument("-t", "--test-output", metavar="PATH",
-                        help="Write '<curie>\t<pipe_separated_entities>' to PATH and skip sending tags to ABC")
+                        help="Write '<curie>\\t<pipe_separated_entities>' to PATH and skip sending tags to ABC")
     parser.add_argument("-T", "--topic", action="append",
                         help="Only process these topic CURIE(s). Repeatable.")
     parser.add_argument("-m", "--mod", action="append",
@@ -536,7 +594,10 @@ def main():
 
     # ---------- NEW DEFAULTS WHEN no --mod or no -- topic provided ----------
     DEFAULT_MODS = ['WB']
-    DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110']  # strain, gene, transgene
+    # strain, gene, transgene, allele
+    # DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110', 'ATP:0000006']
+    # temporarily turn off allele extraction until it is ready for prod
+    DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110']
     if not args.mod:
         args.mod = DEFAULT_MODS
         logging.getLogger(__name__).info("No --mod provided; defaulting to %s", ", ".join(DEFAULT_MODS))
@@ -578,7 +639,12 @@ def main():
 
     if args.tune_threshold:
         for (mod_id, topic), jobs in mod_topic_jobs.items():
-            TARGET = STRAIN_TARGET_ENTITIES if topic == 'ATP:0000027' else GENE_TARGET_ENTITIES
+            if topic == 'ATP:0000027':
+                TARGET = STRAIN_TARGET_ENTITIES
+            elif topic == 'ATP:0000006':
+                TARGET = ALLELE_TARGET_ENTITIES
+            else:
+                TARGET = GENE_TARGET_ENTITIES
             best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET)
             logger.info("Best TF-IDF threshold for %s/%s: %s", mod_id, topic, best)
         logger.info("Threshold tuning complete.")
