@@ -4,6 +4,16 @@ from agr_curation_api import AGRCurationAPIClient, APIConfig
 
 PAGE_LIMIT = 1000
 
+# will add XB one later
+MOD_TAXON_MAPPING = {
+    'RGD': 'NCBITaxon:10116',
+    'MGI': 'NCBITaxon:10090',
+    'ZFIN': 'NCBITaxon:7955',
+    'WB': 'NCBITaxon:6239',
+    'SGD': 'NCBITaxon:559292',
+    'FB': 'NCBITaxon:7227'
+}
+
 _CURATED_ENTITY_CACHE: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {}
 
 logger = logging.Logger(__name__)
@@ -31,8 +41,24 @@ def species_to_exclude():
 
 def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type: str, page: int):
     """Fetch a single page of entities from the API."""
+    if entity_type == 'species':
+        return api_client.get_species(limit=PAGE_LIMIT, page=page)
+
+    taxon = MOD_TAXON_MAPPING.get(mod)
+    if not taxon:
+        logger.info(f"'{mod}' is not in the MOD_TAXON_MAPPING")
+        return []
+
     if entity_type == 'gene':
-        return api_client.get_genes(data_provider=mod, limit=PAGE_LIMIT, page=page)
+        # return api_client.get_genes(data_provider=mod, limit=PAGE_LIMIT, page=page)
+        return api_client.get_genes(
+            data_provider=mod,
+            taxon=taxon,
+            limit=PAGE_LIMIT,
+            offset=page * PAGE_LIMIT,
+            data_source='db'
+        )
+
     elif entity_type == 'transgene':
         return api_client.get_alleles(
             data_provider=mod,
@@ -44,7 +70,7 @@ def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type:
         # WB extraction subset: force DB + correct params
         if mod == 'WB':
             return api_client.get_alleles(
-                taxon='NCBITaxon:6239',
+                taxon=taxon,
                 limit=PAGE_LIMIT,
                 offset=page * PAGE_LIMIT,
                 wb_extraction_subset=True,
@@ -63,8 +89,6 @@ def fetch_entities_page(api_client: AGRCurationAPIClient, mod: str, entity_type:
             limit=PAGE_LIMIT,
             page=page
         )
-    elif entity_type == 'species':
-        return api_client.get_species(limit=PAGE_LIMIT, page=page)
     else:
         logger.info(f"Unknown entity_type '{entity_type}' requested; returning empty list.")
         return []
