@@ -21,9 +21,10 @@ jobs:
       issues: write
       # REQUIRED: Must grant id-token permission to the reusable workflow
       id-token: write
+      # REQUIRED: Allow reusable workflow to read CI results
+      actions: read
     uses: alliance-genome/.github/.github/workflows/claude-code-review.yml@main
     with:
-      model: claude-sonnet-4-20250514
       max_turns: "60"
       # Python-specific focus for automated information extraction
       review_focus: "critical bugs, performance issues, and data integrity problems in the Python information extraction pipeline. Focus on: memory efficiency, data validation errors, exception handling, regex pattern bugs, parsing logic issues, and potential data loss scenarios"
