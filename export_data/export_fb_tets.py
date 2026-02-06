@@ -120,15 +120,15 @@ def dump_tet():
                 # Using guessed score levels until told otherwise
                 # taken from method get_confidence_level in classifier
                 if type(row[2]) == float:
-                    ## add loop to set confidence level to NEG for manual_indexing_tag results where mit.confidence_score = 0 so that they can be put in the negative pot
+                    ## add loop to set confidence level to neg for manual_indexing_tag results where mit.confidence_score = 0 so that they can be put in the negative pot
                     if row[2] == 0:
-                        conf_level = "NEG"
+                        conf_level = "neg"
                     elif row[2] < 0.667:
-                        conf_level = "LOW"
+                        conf_level = "low"
                     elif row[2] < 0.833:
-                        conf_level = "MEDIUM"
+                        conf_level = "medium"
                     else:
-                        conf_level = "HIGH"
+                        conf_level = "high"
                 else:
                     conf_level = f'UNKNOWN_LEVEL_{row[2]}'
             else:
@@ -136,7 +136,7 @@ def dump_tet():
             if row[1] not in atp_to_dept:
                 atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
             ## use conf_level rather than row[2] to partition data into positive/negative pots so that negative manual_indexing_tag results go in the negative pot
-            if conf_level != 'NEG':
+            if conf_level != 'neg':
                 pos += (
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
