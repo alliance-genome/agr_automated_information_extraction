@@ -112,6 +112,26 @@ ALLELE_CONTEXT_WORDS = {
 BACKGROUND_MARKER_GENES = {"unc-119", "unc119"}
 BACKGROUND_MARKER_ALLELES = {"ed3", "ed4"}
 
+# Genetic marker genes used in crosses (dpy=dumpy, unc=uncoordinated, etc.)
+# These alleles are used as visible markers, not being studied
+GENETIC_MARKER_GENES = {
+    "dpy-10", "dpy-17", "dpy-20",  # dumpy markers
+    "unc-4", "unc-32", "unc-52",   # uncoordinated markers
+    "rol-6",                       # roller marker
+    "lon-2",                       # long marker
+    "lin-15",                      # multivulva marker
+}
+GENETIC_MARKER_ALLELES = {
+    "e128", "e120",  # dpy-10(e128), unc-4(e120) from paper 8
+}
+
+# Control allele context patterns
+CONTROL_CONTEXT_PATTERN = re.compile(
+    r'(positive\s+control|negative\s+control|control\s+(strain|animal|worm)|'
+    r'used\s+as\s+(a\s+)?control|as\s+(a\s+)?(positive|negative)?\s*control)',
+    re.IGNORECASE
+)
+
 # MosSCI transposon insertion sites (reagent, not an allele being studied)
 # These are specific loci used for single-copy transgene insertion
 MOSCI_INSERTION_SITE_PATTERN = re.compile(r"ttTi\d+", re.IGNORECASE)
@@ -199,7 +219,7 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         if site_context_pattern.search(fulltext):
             return True, f"MosSCI transposon insertion site ({candidate})"
 
-    # 4. Check for background marker alleles (ed3, ed4 in unc-119 context)
+    # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
     if cand_lower in BACKGROUND_MARKER_ALLELES:
         # Look for pattern like "unc-119(ed3)" or "unc-119 (ed3)"
         marker_pattern = re.compile(
@@ -207,15 +227,31 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             re.IGNORECASE
         )
         if marker_pattern.search(fulltext):
-            # Check if this allele is ONLY used as a marker, not studied
-            # Count occurrences in marker context vs. total
-            marker_matches = len(marker_pattern.findall(fulltext))
-            # Count total occurrences of the allele
-            total_pattern = re.compile(r'\b' + re.escape(cand_lower) + r'\b', re.IGNORECASE)
-            total_matches = len(total_pattern.findall(fulltext))
-            # If most/all occurrences are in marker context, it's a false positive
-            if marker_matches >= total_matches * 0.7:  # 70% threshold
-                return True, f"background marker ({candidate} in unc-119 context)"
+            # If it appears at least once in unc-119 context, it's likely a marker
+            # (relaxed from 70% threshold - these alleles are almost always markers)
+            return True, f"background marker ({candidate} in unc-119 context)"
+
+    # 4b. Check for genetic marker alleles (e120, e128 in dpy-10, unc-4 context)
+    if cand_lower in GENETIC_MARKER_ALLELES:
+        # Look for pattern like "dpy-10(e128)" or "unc-4(e120)"
+        for marker_gene in GENETIC_MARKER_GENES:
+            marker_pattern = re.compile(
+                re.escape(marker_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
+                re.IGNORECASE
+            )
+            if marker_pattern.search(fulltext):
+                return True, f"genetic marker ({candidate} in {marker_gene} context)"
+
+    # 4c. Check for control alleles (explicitly mentioned as control)
+    # Look for the allele mentioned near "control" keywords
+    control_window_pattern = re.compile(
+        r'.{0,50}' + re.escape(cand_lower) + r'.{0,50}',
+        re.IGNORECASE | re.DOTALL
+    )
+    for match in control_window_pattern.finditer(fulltext):
+        window = match.group(0)
+        if CONTROL_CONTEXT_PATTERN.search(window):
+            return True, f"control allele ({candidate})"
 
     # 5a. Check if the candidate IS a balancer chromosome name itself (qC1, hT2, nT1, etc.)
     if cand_lower in BALANCER_CHROMOSOME_NAMES:
@@ -229,15 +265,17 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 5b. Check for balancer chromosome alleles (alleles INSIDE balancer constructs)
     if cand_lower in KNOWN_BALANCER_ALLELES:
-        # Check if it appears inside a balancer construct [...]
-        balancer_content_pattern = re.compile(
-            r'\[[^\]]*' + re.escape(cand_lower) + r'[^\]]*\]',
+        # Look for balancer patterns and check if allele appears near them
+        # Pattern matches: hT2[...e937...], qC1[...e1259...], hT2/+ [...e937...]
+        # Use a window-based approach to handle nested brackets
+        balancer_names = r'(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1)'
+        # Look for balancer name followed by the allele within ~200 chars
+        balancer_window_pattern = re.compile(
+            balancer_names + r'[^;]{0,200}' + re.escape(cand_lower),
             re.IGNORECASE
         )
-        if balancer_content_pattern.search(fulltext):
-            # Also verify there's a balancer name nearby
-            if BALANCER_CONSTRUCT_PATTERN.search(fulltext):
-                return True, f"balancer allele ({candidate})"
+        if balancer_window_pattern.search(fulltext):
+            return True, f"balancer allele ({candidate})"
 
     # 6. Check for AID/TIR1 system (plant protein, not C. elegans allele)
     if cand_lower == "tir1":
