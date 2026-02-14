@@ -187,7 +187,7 @@ TRANSGENE_MARKER_PATTERN = re.compile(r'^[a-z]{1,4}(Is|Si|Ti)\d+$', re.IGNORECAS
 EXTRACHROMOSOMAL_ARRAY_PATTERN = re.compile(r'^[a-z]{1,4}Ex\d+$', re.IGNORECASE)
 
 
-def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
+def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:  # noqa: C901
     """
     Check if an allele candidate is a false positive based on context analysis.
 
@@ -198,7 +198,7 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     if not fulltext or not candidate:
         return False, ""
 
-    text_lower = fulltext.lower()
+    # text_lower = fulltext.lower()
     cand_lower = candidate.lower()
 
     # 1. Check for transgene markers (qIs*, ieSi*, etc.) - these are NOT alleles
@@ -346,6 +346,7 @@ def filter_false_positive_alleles(
             filtered.append(ent)
 
     return filtered, rejected
+
 
 # --------------------------------------------------------------------- #
 # Threshold-tuning gold sets (restored)                                 #
