@@ -133,6 +133,17 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         use_count_gate=False,
     )
 
+    # DEBUG: Check if tm3603 is in curated list and found by generic function
+    if getattr(model, "topic", None) == "ATP:0000006":
+        curated = getattr(model, "entities_to_extract", []) or []
+        tm3603_in_curated = "tm3603" in curated or "TM3603" in [c.upper() for c in curated]
+        tm3603_in_entities = "tm3603" in entities or "tm3603" in [e.lower() for e in entities]
+        if "tm3603" in (fulltext or "").lower():
+            logger.info(
+                "DEBUG-TM3603: in_curated=%s, in_generic_results=%s, curated_count=%d, generic_results=%s",
+                tm3603_in_curated, tm3603_in_entities, len(curated), entities[:20]
+            )
+
     # For allele topic, enforce allele-specific post-processing rules.
     if getattr(model, "topic", None) == "ATP:0000006":
         original_count = len(entities)
@@ -162,7 +173,14 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
 
         # 3) Rescue allele-like tokens from fulltext that NER missed
         already_found = set(entities)
+        tm3603_already_found = "tm3603" in [e.lower() for e in already_found]
         rescued = rescue_short_alleles_from_fulltext(fulltext, model, already_found)
+        tm3603_rescued = "tm3603" in rescued
+        if "tm3603" in (fulltext or "").lower():
+            logger.info(
+                "DEBUG-TM3603: before_rescue=%s, rescued=%s, already_found_count=%d",
+                tm3603_already_found, tm3603_rescued, len(already_found)
+            )
         if rescued:
             logger.info(
                 "ALLELE-RESCUE: adding %d alleles from fulltext that NER missed: %s",
@@ -186,7 +204,16 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         if curated:
             curated_lower = {c.lower() for c in curated if isinstance(c, str)}
             before_curated_filter = len(entities)
+            # DEBUG: Check tm3603 before curated filter
+            tm3603_before = "tm3603" in [e.lower() for e in entities]
+            tm3603_in_curated_lower = "tm3603" in curated_lower
             entities = [e for e in entities if e.lower() in curated_lower]
+            tm3603_after = "tm3603" in [e.lower() for e in entities]
+            if tm3603_before and not tm3603_after:
+                logger.info(
+                    "DEBUG-TM3603: FILTERED by curated list! tm3603_in_curated_lower=%s",
+                    tm3603_in_curated_lower
+                )
             dropped_non_curated = before_curated_filter - len(entities)
 
         # 6) Map back to canonical display names using the curated mapping
@@ -205,7 +232,15 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         # 7) Context-based false positive filtering
         #    Filter out alleles that are markers, balancers, reagents, etc.
         before_fp_filter = len(entities)
+        tm3603_before_fp = "tm3603" in [e.lower() for e in entities]
         entities, rejected_fps = filter_false_positive_alleles(entities, fulltext)
+        tm3603_after_fp = "tm3603" in [e.lower() for e in entities]
+        if tm3603_before_fp and not tm3603_after_fp:
+            tm3603_rejection = [r for r in rejected_fps if r[0].lower() == "tm3603"]
+            logger.info(
+                "DEBUG-TM3603: FILTERED by false positive! rejection_reason=%s",
+                tm3603_rejection
+            )
         dropped_false_positives = before_fp_filter - len(entities)
 
         if dropped_suspicious > 0 or dropped_non_curated > 0 or dropped_false_positives > 0:
