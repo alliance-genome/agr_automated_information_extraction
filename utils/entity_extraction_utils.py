@@ -245,8 +245,9 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 4c. Check for control alleles (explicitly mentioned as control)
     # Look for the allele mentioned near "control" keywords
+    # Use word boundaries to avoid matching substrings (e.g., 'al2' inside 'val2')
     control_window_pattern = re.compile(
-        r'.{0,50}' + re.escape(cand_lower) + r'.{0,50}',
+        r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}',
         re.IGNORECASE | re.DOTALL
     )
     for match in control_window_pattern.finditer(fulltext):
@@ -271,8 +272,9 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         # Use a window-based approach to handle nested brackets
         balancer_names = r'(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1)'
         # Look for balancer name followed by the allele within ~200 chars
+        # Use trailing word boundary to avoid matching e937 inside e9370
         balancer_window_pattern = re.compile(
-            balancer_names + r'[^;]{0,200}' + re.escape(cand_lower),
+            balancer_names + r'[^;]{0,200}' + re.escape(cand_lower) + r'\b',
             re.IGNORECASE
         )
         if balancer_window_pattern.search(fulltext):
