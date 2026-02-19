@@ -136,12 +136,6 @@ CONTROL_CONTEXT_PATTERN = re.compile(
 # These are specific loci used for single-copy transgene insertion
 MOSCI_INSERTION_SITE_PATTERN = re.compile(r"ttTi\d+", re.IGNORECASE)
 
-# Pre-compiled pattern for MosSCI insertion site context
-MOSCI_SITE_CONTEXT_PATTERN = re.compile(
-    r'(ttTi\d+)\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
-    re.IGNORECASE
-)
-
 # Balancer chromosome markers - typically appear inside square bracket constructs
 # e.g., hT2[bli-4(e937) let-?(q782) qIs48], qC1[dpy-19(e1259) glp-1(q339) qIs26]
 # Also handles variations like hT2/+ [...] or hT2 [...]
@@ -217,8 +211,13 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
-        # Verify it's used as an insertion site, not studied as an allele
-        if MOSCI_SITE_CONTEXT_PATTERN.search(fulltext):
+        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele
+        # Must match the exact candidate, not just any ttTi pattern in the text
+        candidate_site_pattern = re.compile(
+            re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
+            re.IGNORECASE
+        )
+        if candidate_site_pattern.search(fulltext):
             return True, f"MosSCI transposon insertion site ({candidate})"
 
     # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
