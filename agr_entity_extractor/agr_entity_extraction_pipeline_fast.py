@@ -205,7 +205,7 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         # 7) Context-based false positive filtering
         #    Filter out alleles that are markers, balancers, reagents, etc.
         before_fp_filter = len(entities)
-        entities, rejected_fps = filter_false_positive_alleles(entities, fulltext)
+        entities, _ = filter_false_positive_alleles(entities, fulltext)
         dropped_false_positives = before_fp_filter - len(entities)
 
         if dropped_suspicious > 0 or dropped_non_curated > 0 or dropped_false_positives > 0:

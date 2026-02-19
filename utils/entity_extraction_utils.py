@@ -136,6 +136,12 @@ CONTROL_CONTEXT_PATTERN = re.compile(
 # These are specific loci used for single-copy transgene insertion
 MOSCI_INSERTION_SITE_PATTERN = re.compile(r"ttTi\d+", re.IGNORECASE)
 
+# Pre-compiled pattern for MosSCI insertion site context
+MOSCI_SITE_CONTEXT_PATTERN = re.compile(
+    r'(ttTi\d+)\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
+    re.IGNORECASE
+)
+
 # Balancer chromosome markers - typically appear inside square bracket constructs
 # e.g., hT2[bli-4(e937) let-?(q782) qIs48], qC1[dpy-19(e1259) glp-1(q339) qIs26]
 # Also handles variations like hT2/+ [...] or hT2 [...]
@@ -212,11 +218,7 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
         # Verify it's used as an insertion site, not studied as an allele
-        site_context_pattern = re.compile(
-            r'(ttTi\d+)\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
-            re.IGNORECASE
-        )
-        if site_context_pattern.search(fulltext):
+        if MOSCI_SITE_CONTEXT_PATTERN.search(fulltext):
             return True, f"MosSCI transposon insertion site ({candidate})"
 
     # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
@@ -283,13 +285,12 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             return True, f"AID system reagent ({candidate} is plant TIR1)"
 
     # 7. Check for yeast strains/genes (not C. elegans)
-    # Look for yeast deletion pattern Δyfh1
-    yeast_deletion_match = YEAST_DELETION_PATTERN.search(fulltext)
-    if yeast_deletion_match:
-        deleted_gene = yeast_deletion_match.group(1).lower()
-        if deleted_gene == cand_lower:
+    # Look for yeast deletion pattern Δyfh1 - check ALL matches, not just the first
+    for yeast_m in YEAST_DELETION_PATTERN.finditer(fulltext):
+        if yeast_m.group(1).lower() == cand_lower:
             if YEAST_CONTEXT_PATTERN.search(fulltext):
                 return True, f"yeast gene/strain ({candidate})"
+            break
 
     # Also check if the candidate appears specifically in yeast context
     # Look for patterns like "yfh1 yeast" or "S. cerevisiae yfh1"
@@ -303,19 +304,18 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         return True, f"yeast gene/strain ({candidate})"
 
     # 8. Check for reference-only mentions ("identical to X allele")
+    # Check ALL matches per pattern, not just the first
     for pattern in REFERENCE_ONLY_PATTERNS:
-        match = pattern.search(fulltext)
-        if match:
+        for match in pattern.finditer(fulltext):
             referenced_allele = match.group(1).lower()
             if referenced_allele == cand_lower:
                 # Verify this is the primary/only context for this allele
-                allele_pattern = re.compile(
-                    r'\b' + re.escape(cand_lower) + r'\b',
-                    re.IGNORECASE
-                )
-                total_mentions = len(allele_pattern.findall(fulltext))
-                if total_mentions <= 3:  # Very few mentions suggests reference-only
+                # Count total mentions of this allele in the text
+                allele_re = re.compile(r'\b' + re.escape(cand_lower) + r'\b', re.IGNORECASE)
+                allele_count = len(allele_re.findall(fulltext))
+                if allele_count <= 3:  # Very few mentions suggests reference-only
                     return True, f"reference-only mention ({candidate})"
+                break  # No need to check more matches for this pattern
 
     return False, ""
 
