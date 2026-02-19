@@ -293,8 +293,9 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # Also check if the candidate appears specifically in yeast context
     # Look for patterns like "yfh1 yeast" or "S. cerevisiae yfh1"
+    # NOTE: Do NOT include generic "strain" here - it's used for C. elegans strains too
     yeast_allele_pattern = re.compile(
-        r'(' + re.escape(cand_lower) + r'\s+(yeast|strain|S\.\s*cerevisiae)|'
+        r'(' + re.escape(cand_lower) + r'\s+(yeast|S\.\s*cerevisiae)|'
         r'(yeast|S\.\s*cerevisiae)\s+' + re.escape(cand_lower) + r')',
         re.IGNORECASE
     )
