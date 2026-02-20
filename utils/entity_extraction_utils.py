@@ -268,9 +268,10 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         # Count total mentions of this allele
         allele_pattern = r'\b' + re.escape(cand_lower) + r'\b'
         total_mentions = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
-        # Only filter if control context accounts for majority of mentions
-        # or if there are very few total mentions (likely just a control reference)
-        if total_mentions <= 3 or control_mentions >= total_mentions // 2:
+        # Only filter if ALL mentions are in control context, or if control context
+        # is the dominant usage. Require at least 1 non-control mention to keep.
+        non_control_mentions = total_mentions - control_mentions
+        if non_control_mentions == 0 or control_mentions > total_mentions // 2:
             return True, f"control allele ({candidate})"
 
     # 5a. Check if the candidate IS a balancer chromosome name itself (qC1, hT2, nT1, etc.)
