@@ -107,9 +107,8 @@ ALLELE_CONTEXT_WORDS = {
 # Allele false positive detection patterns
 # ---------------------------------------------------------------------------
 
-# Common background markers used for transformation (allele is not being studied)
+# Common background marker alleles used for transformation (allele is not being studied)
 # Pattern: unc-119(ed3), unc-119 (ed3), etc.
-BACKGROUND_MARKER_GENES = {"unc-119", "unc119"}
 BACKGROUND_MARKER_ALLELES = {"ed3", "ed4"}
 
 # Genetic marker genes used in crosses (dpy=dumpy, unc=uncoordinated, etc.)
@@ -205,21 +204,15 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
         # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele
         # Must match the exact candidate, not just any ttTi pattern in the text
-        candidate_site_pattern = re.compile(
-            re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
-            re.IGNORECASE
-        )
-        if candidate_site_pattern.search(fulltext):
+        site_pattern = re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)'
+        if re.search(site_pattern, fulltext, re.IGNORECASE):
             return True, f"MosSCI transposon insertion site ({candidate})"
 
     # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
     if cand_lower in BACKGROUND_MARKER_ALLELES:
         # Look for pattern like "unc-119(ed3)" or "unc-119 (ed3)"
-        marker_pattern = re.compile(
-            r'unc-?119\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
-            re.IGNORECASE
-        )
-        if marker_pattern.search(fulltext):
+        marker_pattern = r'unc-?119\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+        if re.search(marker_pattern, fulltext, re.IGNORECASE):
             # If it appears at least once in unc-119 context, it's likely a marker
             # (relaxed from 70% threshold - these alleles are almost always markers)
             return True, f"background marker ({candidate} in unc-119 context)"
@@ -228,21 +221,15 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     if cand_lower in GENETIC_MARKER_ALLELES:
         # Look for pattern like "dpy-10(e128)" or "unc-4(e120)"
         for marker_gene in GENETIC_MARKER_GENES:
-            marker_pattern = re.compile(
-                re.escape(marker_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
-                re.IGNORECASE
-            )
-            if marker_pattern.search(fulltext):
+            marker_pattern = re.escape(marker_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+            if re.search(marker_pattern, fulltext, re.IGNORECASE):
                 return True, f"genetic marker ({candidate} in {marker_gene} context)"
 
     # 4c. Check for control alleles (explicitly mentioned as control)
     # Look for the allele mentioned near "control" keywords
     # Use word boundaries to avoid matching substrings (e.g., 'al2' inside 'val2')
-    control_window_pattern = re.compile(
-        r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}',
-        re.IGNORECASE | re.DOTALL
-    )
-    for match in control_window_pattern.finditer(fulltext):
+    control_window_pattern = r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}'
+    for match in re.finditer(control_window_pattern, fulltext, re.IGNORECASE | re.DOTALL):
         window = match.group(0)
         if CONTROL_CONTEXT_PATTERN.search(window):
             return True, f"control allele ({candidate})"
@@ -250,11 +237,8 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # 5a. Check if the candidate IS a balancer chromosome name itself (qC1, hT2, nT1, etc.)
     if cand_lower in BALANCER_CHROMOSOME_NAMES:
         # Verify it's used as a balancer (appears with [...] or /+ or as a strain name)
-        balancer_usage_pattern = re.compile(
-            r'\b' + re.escape(cand_lower) + r'(/\+)?\s*(\[|with|strain|balancer)',
-            re.IGNORECASE
-        )
-        if balancer_usage_pattern.search(fulltext):
+        balancer_usage_pattern = r'\b' + re.escape(cand_lower) + r'(/\+)?\s*(\[|with|strain|balancer)'
+        if re.search(balancer_usage_pattern, fulltext, re.IGNORECASE):
             return True, f"balancer chromosome name ({candidate})"
 
     # 5b. Check for balancer chromosome alleles (alleles INSIDE balancer constructs)
@@ -265,11 +249,8 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         balancer_names = r'(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1)'
         # Look for balancer name followed by the allele within ~200 chars
         # Use trailing word boundary to avoid matching e937 inside e9370
-        balancer_window_pattern = re.compile(
-            balancer_names + r'[^;]{0,200}' + re.escape(cand_lower) + r'\b',
-            re.IGNORECASE
-        )
-        if balancer_window_pattern.search(fulltext):
+        balancer_window_pattern = balancer_names + r'[^;]{0,200}' + re.escape(cand_lower) + r'\b'
+        if re.search(balancer_window_pattern, fulltext, re.IGNORECASE):
             return True, f"balancer allele ({candidate})"
 
     # 6. Check for AID/TIR1 system (plant protein, not C. elegans allele)
@@ -288,12 +269,11 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # Also check if the candidate appears specifically in yeast context
     # Look for patterns like "yfh1 yeast" or "S. cerevisiae yfh1"
     # NOTE: Do NOT include generic "strain" here - it's used for C. elegans strains too
-    yeast_allele_pattern = re.compile(
+    yeast_allele_pattern = (
         r'(' + re.escape(cand_lower) + r'\s+(yeast|S\.\s*cerevisiae)|'
-        r'(yeast|S\.\s*cerevisiae)\s+' + re.escape(cand_lower) + r')',
-        re.IGNORECASE
+        r'(yeast|S\.\s*cerevisiae)\s+' + re.escape(cand_lower) + r')'
     )
-    if yeast_allele_pattern.search(fulltext):
+    if re.search(yeast_allele_pattern, fulltext, re.IGNORECASE):
         return True, f"yeast gene/strain ({candidate})"
 
     # 8. Check for reference-only mentions ("identical to X allele")
@@ -304,8 +284,8 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             if referenced_allele == cand_lower:
                 # Verify this is the primary/only context for this allele
                 # Count total mentions of this allele in the text
-                allele_re = re.compile(r'\b' + re.escape(cand_lower) + r'\b', re.IGNORECASE)
-                allele_count = len(allele_re.findall(fulltext))
+                allele_pattern = r'\b' + re.escape(cand_lower) + r'\b'
+                allele_count = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
                 if allele_count <= 3:  # Very few mentions suggests reference-only
                     return True, f"reference-only mention ({candidate})"
                 break  # No need to check more matches for this pattern
