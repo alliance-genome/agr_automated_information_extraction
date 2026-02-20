@@ -268,19 +268,35 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # Use frequency heuristic: only filter if control context is the dominant usage
     control_window_pattern = r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}'
     control_mentions = 0
+    control_windows = []  # Debug: collect matching windows
     for match in re.finditer(control_window_pattern, fulltext, re.IGNORECASE):
         window = match.group(0)
         if CONTROL_CONTEXT_PATTERN.search(window):
             control_mentions += 1
+            control_windows.append(window)
     if control_mentions > 0:
+        logger.debug(
+            "ALLELE-FP-FILTER: candidate=%s control_windows=%r",
+            candidate, control_windows
+        )
         # Count total mentions of this allele
         allele_pattern = r'\b' + re.escape(cand_lower) + r'\b'
         total_mentions = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
         # Only filter if ALL mentions are in control context, or if control context
         # is the dominant usage. Require at least 1 non-control mention to keep.
         non_control_mentions = total_mentions - control_mentions
+        logger.debug(
+            "ALLELE-FP-FILTER: candidate=%s total=%d control=%d non_control=%d",
+            candidate, total_mentions, control_mentions, non_control_mentions
+        )
         if non_control_mentions == 0 or control_mentions > total_mentions // 2:
             return True, f"control allele ({candidate})"
+    else:
+        # Debug: log when no control context found for troubleshooting
+        logger.debug(
+            "ALLELE-FP-FILTER: candidate=%s no control context in %d-char window",
+            candidate, len(fulltext)
+        )
 
     # 5a. Check if the candidate IS a balancer chromosome name itself (qC1, hT2, nT1, etc.)
     if cand_lower in BALANCER_CHROMOSOME_NAMES:
