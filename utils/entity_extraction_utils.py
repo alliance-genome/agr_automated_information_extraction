@@ -170,7 +170,7 @@ REFERENCE_ONLY_PATTERNS = [
     re.compile(r'equivalent\s+to\s+(?:the\s+)?(?:\w+-?\d*\s*\()?' + r'(\w+)\)?', re.IGNORECASE),
 ]
 
-# Integrated transgene markers - these are NOT alleles
+# Integrated transgene markers - typically used as reporters/markers, not studied
 # Patterns: qIs51, wIs50, ruIs32, etc.
 # Format: 1-4 letter prefix + Is + digits
 # NOTE: Si (single-copy insertions like ieSi64, juSi123) and Ti (MosSCI sites like
@@ -178,8 +178,15 @@ REFERENCE_ONLY_PATTERNS = [
 # step 3's context-sensitive MosSCI check instead.
 TRANSGENE_MARKER_PATTERN = re.compile(r'^[a-z]{1,4}Is\d+$', re.IGNORECASE)
 
-# Extrachromosomal array patterns (qEx*, wEx*, pzEx*, etc.) - these are NOT alleles
+# Extrachromosomal array patterns (qEx*, wEx*, pzEx*, etc.) - typically constructs
 EXTRACHROMOSOMAL_ARRAY_PATTERN = re.compile(r'^[a-z]{1,4}Ex\d+$', re.IGNORECASE)
+
+# Context patterns indicating a transgene/array is used as a marker (not studied)
+# If the candidate appears near these terms, it's likely a marker/reagent
+MARKER_CONTEXT_KEYWORDS = (
+    r'(reporter|marker|GFP|mCherry|RFP|YFP|CFP|fluorescent|'
+    r'expressing|expression\s+pattern|visualize|labeled|tag(ged)?)'
+)
 
 
 def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:  # noqa: C901
@@ -196,13 +203,25 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # text_lower = fulltext.lower()
     cand_lower = candidate.lower()
 
-    # 1. Check for transgene markers (qIs*, ieSi*, etc.) - these are NOT alleles
+    # 1. Check for transgene markers (qIs*, wIs*, etc.)
+    # Only filter if used in marker/reporter context to avoid dropping studied transgenes
     if TRANSGENE_MARKER_PATTERN.match(candidate):
-        return True, f"transgene marker ({candidate})"
+        # Check if candidate appears near marker-related context
+        marker_context = re.escape(candidate) + r'.{0,50}' + MARKER_CONTEXT_KEYWORDS
+        context_before = MARKER_CONTEXT_KEYWORDS + r'.{0,50}' + re.escape(candidate)
+        if re.search(marker_context, fulltext, re.IGNORECASE) or \
+           re.search(context_before, fulltext, re.IGNORECASE):
+            return True, f"transgene marker ({candidate})"
 
     # 2. Check for extrachromosomal arrays (qEx*, pzEx*, etc.)
+    # Only filter if used in marker/reporter context to avoid dropping studied arrays
     if EXTRACHROMOSOMAL_ARRAY_PATTERN.match(candidate):
-        return True, f"extrachromosomal array ({candidate})"
+        # Check if candidate appears near marker-related context
+        marker_context = re.escape(candidate) + r'.{0,50}' + MARKER_CONTEXT_KEYWORDS
+        context_before = MARKER_CONTEXT_KEYWORDS + r'.{0,50}' + re.escape(candidate)
+        if re.search(marker_context, fulltext, re.IGNORECASE) or \
+           re.search(context_before, fulltext, re.IGNORECASE):
+            return True, f"extrachromosomal array ({candidate})"
 
     # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
