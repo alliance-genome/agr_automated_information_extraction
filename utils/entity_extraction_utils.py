@@ -148,6 +148,11 @@ KNOWN_BALANCER_ALLELES = {
     "q361", "h661", "mn316", "mn398",  # other common balancers
 }
 
+# Pre-built balancer names pattern (built from BALANCER_CHROMOSOME_NAMES)
+# Used in step 5b to detect alleles inside balancer constructs
+# Sorted for deterministic ordering across runs
+_BALANCER_NAMES_PATTERN = r'(' + '|'.join(re.escape(b) for b in sorted(BALANCER_CHROMOSOME_NAMES)) + r')'
+
 # AID (auxin-inducible degradation) system - tir1 is a plant protein
 AID_REAGENT_PATTERN = re.compile(
     r'(auxin[- ]inducible|AID\s*(system|degron)?|plant[- ]specific\s+F[- ]box|TIR1)',
@@ -281,11 +286,9 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         # Look for balancer patterns and check if allele appears near them
         # Pattern matches: hT2[...e937...], qC1[...e1259...], hT2/+ [...e937...]
         # Use a window-based approach to handle nested brackets
-        # Build pattern from BALANCER_CHROMOSOME_NAMES to keep them in sync
-        balancer_names = r'(' + '|'.join(re.escape(b) for b in BALANCER_CHROMOSOME_NAMES) + r')'
         # Look for balancer name followed by the allele within ~200 chars
-        # Use trailing word boundary to avoid matching e937 inside e9370
-        balancer_window_pattern = balancer_names + r'[^;]{0,200}' + re.escape(cand_lower) + r'\b'
+        # Use word boundaries on both sides to avoid substring matches (e.g., ze937)
+        balancer_window_pattern = _BALANCER_NAMES_PATTERN + r'[^;]{0,200}\b' + re.escape(cand_lower) + r'\b'
         if re.search(balancer_window_pattern, fulltext, re.IGNORECASE):
             return True, f"balancer allele ({candidate})"
 
@@ -344,6 +347,11 @@ def filter_false_positive_alleles(
         (filtered_entities, rejected_with_reasons) - List of entities that passed
         filtering, and list of (entity, reason) tuples for rejected ones.
     """
+    # Warn if no fulltext available - all entities will pass through unfiltered
+    if not fulltext:
+        logger.warning("ALLELE-FP-FILTER: no fulltext available, skipping false positive filtering")
+        return entities, []
+
     filtered = []
     rejected = []
 
