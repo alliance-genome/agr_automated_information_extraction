@@ -133,7 +133,8 @@ CONTROL_CONTEXT_PATTERN = re.compile(
 
 # MosSCI transposon insertion sites (reagent, not an allele being studied)
 # These are specific loci used for single-copy transgene insertion
-MOSCI_INSERTION_SITE_PATTERN = re.compile(r"ttTi\d+", re.IGNORECASE)
+# Use anchors to ensure exact match, not prefix matching
+MOSCI_INSERTION_SITE_PATTERN = re.compile(r"^ttTi\d+$", re.IGNORECASE)
 
 # Balancer chromosome NAMES themselves (these are NOT alleles being studied)
 BALANCER_CHROMOSOME_NAMES = {
@@ -170,9 +171,12 @@ REFERENCE_ONLY_PATTERNS = [
 ]
 
 # Integrated transgene markers - these are NOT alleles
-# Patterns: qIs51, wIs50, ieSi64, oxSi1091, ruIs32, etc.
-# Format: 1-4 letter prefix + Is/Si/Ti + digits
-TRANSGENE_MARKER_PATTERN = re.compile(r'^[a-z]{1,4}(Is|Si|Ti)\d+$', re.IGNORECASE)
+# Patterns: qIs51, wIs50, ruIs32, etc.
+# Format: 1-4 letter prefix + Is + digits
+# NOTE: Si (single-copy insertions like ieSi64, juSi123) and Ti (MosSCI sites like
+# ttTi4348) are excluded - these can be studied alleles. Ti patterns are handled by
+# step 3's context-sensitive MosSCI check instead.
+TRANSGENE_MARKER_PATTERN = re.compile(r'^[a-z]{1,4}Is\d+$', re.IGNORECASE)
 
 # Extrachromosomal array patterns (qEx*, wEx*, pzEx*, etc.) - these are NOT alleles
 EXTRACHROMOSOMAL_ARRAY_PATTERN = re.compile(r'^[a-z]{1,4}Ex\d+$', re.IGNORECASE)
