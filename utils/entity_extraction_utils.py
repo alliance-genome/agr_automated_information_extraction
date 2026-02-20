@@ -103,6 +103,304 @@ ALLELE_CONTEXT_WORDS = {
     "suppressor", "suppressors",
 }
 
+# ---------------------------------------------------------------------------
+# Allele false positive detection patterns
+# ---------------------------------------------------------------------------
+
+# Common background marker alleles used for transformation (allele is not being studied)
+# Pattern: unc-119(ed3), unc-119 (ed3), etc.
+BACKGROUND_MARKER_ALLELES = {"ed3", "ed4"}
+
+# Genetic marker genes used in crosses (dpy=dumpy, unc=uncoordinated, etc.)
+# These alleles are used as visible markers, not being studied
+GENETIC_MARKER_GENES = {
+    "dpy-10", "dpy-17", "dpy-20",  # dumpy markers
+    "unc-4", "unc-32", "unc-52",   # uncoordinated markers
+    "rol-6",                       # roller marker
+    "lon-2",                       # long marker
+    "lin-15",                      # multivulva marker
+}
+GENETIC_MARKER_ALLELES = {
+    "e128", "e120",  # dpy-10(e128), unc-4(e120) from paper 8
+}
+
+# Control allele context patterns
+CONTROL_CONTEXT_PATTERN = re.compile(
+    r'(positive\s+control|negative\s+control|control\s+(strain|animal|worm)|'
+    r'used\s+as\s+(a\s+)?control|as\s+(a\s+)?(positive|negative)?\s*control)',
+    re.IGNORECASE
+)
+
+# MosSCI transposon insertion sites (reagent, not an allele being studied)
+# These are specific loci used for single-copy transgene insertion
+# Use anchors to ensure exact match, not prefix matching
+MOSCI_INSERTION_SITE_PATTERN = re.compile(r"^ttTi\d+$", re.IGNORECASE)
+
+# Balancer chromosome NAMES themselves (these are NOT alleles being studied)
+BALANCER_CHROMOSOME_NAMES = {
+    "ht2", "qc1", "nt1", "min1", "et1", "mt1", "sc1", "szt1",
+    "hin1", "mnc1", "sdp2", "sdp3", "mdf1", "qdf",
+}
+
+# Common balancer allele names (used to maintain lethal mutations)
+KNOWN_BALANCER_ALLELES = {
+    "e937", "q782", "e1259", "q339",  # from user's examples
+    "q361", "h661", "mn316", "mn398",  # other common balancers
+}
+
+# Pre-built balancer names pattern (built from BALANCER_CHROMOSOME_NAMES)
+# Used in step 5b to detect alleles inside balancer constructs
+# Sorted for deterministic ordering across runs
+_BALANCER_NAMES_PATTERN = r'(' + '|'.join(re.escape(b) for b in sorted(BALANCER_CHROMOSOME_NAMES)) + r')'
+
+# AID (auxin-inducible degradation) system - tir1 is a plant protein
+AID_REAGENT_PATTERN = re.compile(
+    r'(auxin[- ]inducible|AID\s*(system|degron)?|plant[- ]specific\s+F[- ]box|TIR1)',
+    re.IGNORECASE
+)
+
+# Known AID system transgenes - these carry TIR1 and are used as reagents, not studied
+# ieSi64: gld-1p::tir1::mRuby (germline-specific TIR1, most common)
+# ieSi57: eft-3p::tir1::mRuby (ubiquitous somatic TIR1)
+# ca1199, ca1200: eft-3p::tir1::mRuby (ubiquitous TIR1)
+KNOWN_AID_TRANSGENES = {
+    "iesi64", "iesi57", "ca1199", "ca1200",
+}
+
+# Yeast-related context patterns
+YEAST_CONTEXT_PATTERN = re.compile(
+    r'(yeast|S\.\s*cerevisiae|Saccharomyces|budding\s+yeast|fission\s+yeast|'
+    r'S\.\s*pombe|Schizosaccharomyces)',
+    re.IGNORECASE
+)
+# Yeast deletion strain pattern: Δyfh1, Δade2, etc.
+YEAST_DELETION_PATTERN = re.compile(r'Δ(\w+)', re.UNICODE)
+
+# Reference-only mentions - allele mentioned only by comparison, not studied
+REFERENCE_ONLY_PATTERNS = [
+    re.compile(r'identical\s+to\s+(?:the\s+)?(?:\w+-?\d*\s*\()?' + r'(\w+)\)?', re.IGNORECASE),
+    re.compile(r'same\s+as\s+(?:the\s+)?(?:\w+-?\d*\s*\()?' + r'(\w+)\)?', re.IGNORECASE),
+    re.compile(r'equivalent\s+to\s+(?:the\s+)?(?:\w+-?\d*\s*\()?' + r'(\w+)\)?', re.IGNORECASE),
+]
+
+# Integrated transgene markers - typically used as reporters/markers, not studied
+# Patterns: qIs51, wIs50, ruIs32, etc.
+# Format: 1-4 letter prefix + Is + digits
+# NOTE: Si (single-copy insertions like ieSi64, juSi123) and Ti (MosSCI sites like
+# ttTi4348) are excluded - these can be studied alleles. Ti patterns are handled by
+# step 3's context-sensitive MosSCI check instead.
+TRANSGENE_MARKER_PATTERN = re.compile(r'^[a-z]{1,4}Is\d+$', re.IGNORECASE)
+
+# Extrachromosomal array patterns (qEx*, wEx*, pzEx*, etc.) - typically constructs
+EXTRACHROMOSOMAL_ARRAY_PATTERN = re.compile(r'^[a-z]{1,4}Ex\d+$', re.IGNORECASE)
+
+# Context patterns indicating a transgene/array is used as a marker (not studied)
+# If the candidate appears near these terms, it's likely a marker/reagent
+MARKER_CONTEXT_KEYWORDS = (
+    r'(reporter|marker|GFP|mCherry|RFP|YFP|CFP|fluorescent|'
+    r'expressing|expression\s+pattern|visualize|labeled|tag(ged)?)'
+)
+
+
+def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:  # noqa: C901
+    """
+    Check if an allele candidate is a false positive based on context analysis.
+
+    Returns:
+        (is_false_positive, reason) - True if the candidate should be filtered out,
+        along with a description of why.
+    """
+    if not fulltext or not candidate:
+        return False, ""
+
+    cand_lower = candidate.lower()
+
+    # 1. Check for transgene markers (qIs*, wIs*, etc.)
+    # Only filter if used in marker/reporter context to avoid dropping studied transgenes
+    if TRANSGENE_MARKER_PATTERN.match(candidate):
+        # Check if candidate appears near marker-related context
+        marker_context = re.escape(candidate) + r'.{0,50}' + MARKER_CONTEXT_KEYWORDS
+        context_before = MARKER_CONTEXT_KEYWORDS + r'.{0,50}' + re.escape(candidate)
+        if re.search(marker_context, fulltext, re.IGNORECASE) or \
+           re.search(context_before, fulltext, re.IGNORECASE):
+            return True, f"transgene marker ({candidate})"
+
+    # 2. Check for extrachromosomal arrays (qEx*, pzEx*, etc.)
+    # Only filter if used in marker/reporter context to avoid dropping studied arrays
+    if EXTRACHROMOSOMAL_ARRAY_PATTERN.match(candidate):
+        # Check if candidate appears near marker-related context
+        marker_context = re.escape(candidate) + r'.{0,50}' + MARKER_CONTEXT_KEYWORDS
+        context_before = MARKER_CONTEXT_KEYWORDS + r'.{0,50}' + re.escape(candidate)
+        if re.search(marker_context, fulltext, re.IGNORECASE) or \
+           re.search(context_before, fulltext, re.IGNORECASE):
+            return True, f"extrachromosomal array ({candidate})"
+
+    # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
+    if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
+        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele
+        # Must match the exact candidate, not just any ttTi pattern in the text
+        site_pattern = re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)'
+        if re.search(site_pattern, fulltext, re.IGNORECASE):
+            return True, f"MosSCI transposon insertion site ({candidate})"
+
+    # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
+    if cand_lower in BACKGROUND_MARKER_ALLELES:
+        # Look for pattern like "unc-119(ed3)" or "unc-119 (ed3)"
+        marker_pattern = r'unc-?119\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+        if re.search(marker_pattern, fulltext, re.IGNORECASE):
+            # If it appears at least once in unc-119 context, it's likely a marker
+            # (relaxed from 70% threshold - these alleles are almost always markers)
+            return True, f"background marker ({candidate} in unc-119 context)"
+
+    # 4b. Check for genetic marker alleles (e120, e128 in dpy-10, unc-4 context)
+    if cand_lower in GENETIC_MARKER_ALLELES:
+        # Look for pattern like "dpy-10(e128)" or "unc-4(e120)"
+        for marker_gene in GENETIC_MARKER_GENES:
+            marker_pattern = re.escape(marker_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+            if re.search(marker_pattern, fulltext, re.IGNORECASE):
+                return True, f"genetic marker ({candidate} in {marker_gene} context)"
+
+    # 4c. Check for control alleles (explicitly mentioned as control)
+    # Look for the allele mentioned near "control" keywords
+    # Use word boundaries to avoid matching substrings (e.g., 'al2' inside 'val2')
+    # Note: No DOTALL flag - window should stay within a single line to avoid
+    # false positives from unrelated text across line breaks
+    # Use frequency heuristic: only filter if control context is the dominant usage
+    control_window_pattern = r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}'
+    control_mentions = 0
+    control_windows = []  # Debug: collect matching windows
+    for match in re.finditer(control_window_pattern, fulltext, re.IGNORECASE):
+        window = match.group(0)
+        if CONTROL_CONTEXT_PATTERN.search(window):
+            control_mentions += 1
+            control_windows.append(window)
+    if control_mentions > 0:
+        logger.debug(
+            "ALLELE-FP-FILTER: candidate=%s control_windows=%r",
+            candidate, control_windows
+        )
+        # Count total mentions of this allele
+        allele_pattern = r'\b' + re.escape(cand_lower) + r'\b'
+        total_mentions = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
+        # Only filter if ALL mentions are in control context, or if control context
+        # is the dominant usage. Require at least 1 non-control mention to keep.
+        non_control_mentions = total_mentions - control_mentions
+        logger.debug(
+            "ALLELE-FP-FILTER: candidate=%s total=%d control=%d non_control=%d",
+            candidate, total_mentions, control_mentions, non_control_mentions
+        )
+        if non_control_mentions == 0 or control_mentions > total_mentions // 2:
+            return True, f"control allele ({candidate})"
+    else:
+        # Debug: log when no control context found for troubleshooting
+        logger.debug(
+            "ALLELE-FP-FILTER: candidate=%s no control context in %d-char window",
+            candidate, len(fulltext)
+        )
+
+    # 5a. Check if the candidate IS a balancer chromosome name itself (qC1, hT2, nT1, etc.)
+    if cand_lower in BALANCER_CHROMOSOME_NAMES:
+        # Verify it's used as a balancer (appears with [...] or /+ or as a strain name)
+        balancer_usage_pattern = r'\b' + re.escape(cand_lower) + r'(/\+)?\s*(\[|with|strain|balancer)'
+        if re.search(balancer_usage_pattern, fulltext, re.IGNORECASE):
+            return True, f"balancer chromosome name ({candidate})"
+
+    # 5b. Check for balancer chromosome alleles (alleles INSIDE balancer constructs)
+    if cand_lower in KNOWN_BALANCER_ALLELES:
+        # Look for balancer patterns and check if allele appears near them
+        # Pattern matches: hT2[...e937...], qC1[...e1259...], hT2/+ [...e937...]
+        # Use a window-based approach to handle nested brackets
+        # Look for balancer name followed by the allele within ~150 chars
+        # Exclude semicolons, newlines, and periods to avoid spanning clause/sentence boundaries
+        # Use word boundaries on both sides to avoid substring matches (e.g., ze937)
+        balancer_window_pattern = _BALANCER_NAMES_PATTERN + r'[^;\n.]{0,150}\b' + re.escape(cand_lower) + r'\b'
+        if re.search(balancer_window_pattern, fulltext, re.IGNORECASE):
+            return True, f"balancer allele ({candidate})"
+
+    # 6. Check for AID/TIR1 system (plant protein, not C. elegans allele)
+    if cand_lower == "tir1":
+        if AID_REAGENT_PATTERN.search(fulltext):
+            return True, f"AID system reagent ({candidate} is plant TIR1)"
+
+    # 6b. Check for known AID system transgenes (ieSi64, etc.)
+    # These carry TIR1 and are used as reagents for protein degradation, not studied
+    if cand_lower in KNOWN_AID_TRANSGENES:
+        if AID_REAGENT_PATTERN.search(fulltext):
+            return True, f"AID system transgene ({candidate})"
+
+    # 7. Check for yeast strains/genes (not C. elegans)
+    # Look for yeast deletion pattern Δyfh1 - check ALL matches, not just the first
+    for yeast_m in YEAST_DELETION_PATTERN.finditer(fulltext):
+        if yeast_m.group(1).lower() == cand_lower:
+            if YEAST_CONTEXT_PATTERN.search(fulltext):
+                return True, f"yeast gene/strain ({candidate})"
+            break
+
+    # Also check if the candidate appears specifically in yeast context
+    # Look for patterns like "yfh1 yeast" or "S. cerevisiae yfh1"
+    # NOTE: Do NOT include generic "strain" here - it's used for C. elegans strains too
+    yeast_allele_pattern = (
+        r'(' + re.escape(cand_lower) + r'\s+(yeast|S\.\s*cerevisiae)|'
+        r'(yeast|S\.\s*cerevisiae)\s+' + re.escape(cand_lower) + r')'
+    )
+    if re.search(yeast_allele_pattern, fulltext, re.IGNORECASE):
+        return True, f"yeast gene/strain ({candidate})"
+
+    # 8. Check for reference-only mentions ("identical to X allele")
+    # Check ALL matches per pattern, not just the first
+    # Note: Each pattern in REFERENCE_ONLY_PATTERNS is checked independently.
+    # A candidate could be filtered by "same as" even if "identical to" didn't match.
+    for pattern in REFERENCE_ONLY_PATTERNS:
+        for match in pattern.finditer(fulltext):
+            referenced_allele = match.group(1).lower()
+            if referenced_allele == cand_lower:
+                # Verify this is the primary/only context for this allele
+                # Count total mentions of this allele in the text
+                allele_pattern = r'\b' + re.escape(cand_lower) + r'\b'
+                allele_count = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
+                if allele_count <= 3:  # Very few mentions suggests reference-only
+                    return True, f"reference-only mention ({candidate})"
+                # Found candidate in this pattern but count is high; skip remaining
+                # matches for this pattern but continue checking other patterns
+                break
+
+    return False, ""
+
+
+def filter_false_positive_alleles(
+    entities: list[str],
+    fulltext: str,
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """
+    Filter out false positive alleles from a list of candidate entities.
+
+    Args:
+        entities: List of candidate allele names
+        fulltext: Full text of the paper for context analysis
+
+    Returns:
+        (filtered_entities, rejected_with_reasons) - List of entities that passed
+        filtering, and list of (entity, reason) tuples for rejected ones.
+    """
+    # Warn if no fulltext available - all entities will pass through unfiltered
+    if not fulltext:
+        logger.warning("ALLELE-FP-FILTER: no fulltext available, skipping false positive filtering")
+        return entities, []
+
+    filtered = []
+    rejected = []
+
+    for ent in entities:
+        is_fp, reason = is_false_positive_allele(fulltext, ent)
+        if is_fp:
+            rejected.append((ent, reason))
+            logger.info("ALLELE-FP-FILTER: rejecting '%s' - %s", ent, reason)
+        else:
+            filtered.append(ent)
+
+    return filtered, rejected
+
+
 # --------------------------------------------------------------------- #
 # Threshold-tuning gold sets (restored)                                 #
 # --------------------------------------------------------------------- #
