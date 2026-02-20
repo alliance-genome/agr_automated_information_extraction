@@ -136,14 +136,6 @@ CONTROL_CONTEXT_PATTERN = re.compile(
 # These are specific loci used for single-copy transgene insertion
 MOSCI_INSERTION_SITE_PATTERN = re.compile(r"ttTi\d+", re.IGNORECASE)
 
-# Balancer chromosome markers - typically appear inside square bracket constructs
-# e.g., hT2[bli-4(e937) let-?(q782) qIs48], qC1[dpy-19(e1259) glp-1(q339) qIs26]
-# Also handles variations like hT2/+ [...] or hT2 [...]
-BALANCER_CONSTRUCT_PATTERN = re.compile(
-    r'\b(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1|sDp2|sDp3|mDf1|qDf)(/\+)?\s*\[',
-    re.IGNORECASE
-)
-
 # Balancer chromosome NAMES themselves (these are NOT alleles being studied)
 BALANCER_CHROMOSOME_NAMES = {
     "ht2", "qc1", "nt1", "min1", "et1", "mt1", "sc1", "szt1",
