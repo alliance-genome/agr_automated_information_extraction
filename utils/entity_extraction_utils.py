@@ -161,7 +161,7 @@ YEAST_CONTEXT_PATTERN = re.compile(
     re.IGNORECASE
 )
 # Yeast deletion strain pattern: Δyfh1, Δade2, etc.
-YEAST_DELETION_PATTERN = re.compile(r'[ΔΔ](\w+)', re.UNICODE)
+YEAST_DELETION_PATTERN = re.compile(r'Δ(\w+)', re.UNICODE)
 
 # Reference-only mentions - allele mentioned only by comparison, not studied
 REFERENCE_ONLY_PATTERNS = [
@@ -253,10 +253,20 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # Use word boundaries to avoid matching substrings (e.g., 'al2' inside 'val2')
     # Note: No DOTALL flag - window should stay within a single line to avoid
     # false positives from unrelated text across line breaks
+    # Use frequency heuristic: only filter if control context is the dominant usage
     control_window_pattern = r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}'
+    control_mentions = 0
     for match in re.finditer(control_window_pattern, fulltext, re.IGNORECASE):
         window = match.group(0)
         if CONTROL_CONTEXT_PATTERN.search(window):
+            control_mentions += 1
+    if control_mentions > 0:
+        # Count total mentions of this allele
+        allele_pattern = r'\b' + re.escape(cand_lower) + r'\b'
+        total_mentions = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
+        # Only filter if control context accounts for majority of mentions
+        # or if there are very few total mentions (likely just a control reference)
+        if total_mentions <= 3 or control_mentions >= total_mentions // 2:
             return True, f"control allele ({candidate})"
 
     # 5a. Check if the candidate IS a balancer chromosome name itself (qC1, hT2, nT1, etc.)
@@ -271,7 +281,8 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         # Look for balancer patterns and check if allele appears near them
         # Pattern matches: hT2[...e937...], qC1[...e1259...], hT2/+ [...e937...]
         # Use a window-based approach to handle nested brackets
-        balancer_names = r'(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1)'
+        # Build pattern from BALANCER_CHROMOSOME_NAMES to keep them in sync
+        balancer_names = r'(' + '|'.join(re.escape(b) for b in BALANCER_CHROMOSOME_NAMES) + r')'
         # Look for balancer name followed by the allele within ~200 chars
         # Use trailing word boundary to avoid matching e937 inside e9370
         balancer_window_pattern = balancer_names + r'[^;]{0,200}' + re.escape(cand_lower) + r'\b'
