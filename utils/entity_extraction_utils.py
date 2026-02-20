@@ -159,6 +159,14 @@ AID_REAGENT_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Known AID system transgenes - these carry TIR1 and are used as reagents, not studied
+# ieSi64: gld-1p::tir1::mRuby (germline-specific TIR1, most common)
+# ieSi57: eft-3p::tir1::mRuby (ubiquitous somatic TIR1)
+# ca1199, ca1200: eft-3p::tir1::mRuby (ubiquitous TIR1)
+KNOWN_AID_TRANSGENES = {
+    "iesi64", "iesi57", "ca1199", "ca1200",
+}
+
 # Yeast-related context patterns
 YEAST_CONTEXT_PATTERN = re.compile(
     r'(yeast|S\.\s*cerevisiae|Saccharomyces|budding\s+yeast|fission\s+yeast|'
@@ -297,6 +305,12 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     if cand_lower == "tir1":
         if AID_REAGENT_PATTERN.search(fulltext):
             return True, f"AID system reagent ({candidate} is plant TIR1)"
+
+    # 6b. Check for known AID system transgenes (ieSi64, etc.)
+    # These carry TIR1 and are used as reagents for protein degradation, not studied
+    if cand_lower in KNOWN_AID_TRANSGENES:
+        if AID_REAGENT_PATTERN.search(fulltext):
+            return True, f"AID system transgene ({candidate})"
 
     # 7. Check for yeast strains/genes (not C. elegans)
     # Look for yeast deletion pattern Δyfh1 - check ALL matches, not just the first
