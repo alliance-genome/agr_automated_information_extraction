@@ -286,9 +286,10 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         # Look for balancer patterns and check if allele appears near them
         # Pattern matches: hT2[...e937...], qC1[...e1259...], hT2/+ [...e937...]
         # Use a window-based approach to handle nested brackets
-        # Look for balancer name followed by the allele within ~200 chars
+        # Look for balancer name followed by the allele within ~150 chars
+        # Exclude semicolons, newlines, and periods to avoid spanning clause/sentence boundaries
         # Use word boundaries on both sides to avoid substring matches (e.g., ze937)
-        balancer_window_pattern = _BALANCER_NAMES_PATTERN + r'[^;]{0,200}\b' + re.escape(cand_lower) + r'\b'
+        balancer_window_pattern = _BALANCER_NAMES_PATTERN + r'[^;\n.]{0,150}\b' + re.escape(cand_lower) + r'\b'
         if re.search(balancer_window_pattern, fulltext, re.IGNORECASE):
             return True, f"balancer allele ({candidate})"
 
@@ -317,6 +318,8 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 8. Check for reference-only mentions ("identical to X allele")
     # Check ALL matches per pattern, not just the first
+    # Note: Each pattern in REFERENCE_ONLY_PATTERNS is checked independently.
+    # A candidate could be filtered by "same as" even if "identical to" didn't match.
     for pattern in REFERENCE_ONLY_PATTERNS:
         for match in pattern.finditer(fulltext):
             referenced_allele = match.group(1).lower()
@@ -327,7 +330,9 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
                 allele_count = len(re.findall(allele_pattern, fulltext, re.IGNORECASE))
                 if allele_count <= 3:  # Very few mentions suggests reference-only
                     return True, f"reference-only mention ({candidate})"
-                break  # No need to check more matches for this pattern
+                # Found candidate in this pattern but count is high; skip remaining
+                # matches for this pattern but continue checking other patterns
+                break
 
     return False, ""
 
