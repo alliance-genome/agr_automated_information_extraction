@@ -251,8 +251,10 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     # 4c. Check for control alleles (explicitly mentioned as control)
     # Look for the allele mentioned near "control" keywords
     # Use word boundaries to avoid matching substrings (e.g., 'al2' inside 'val2')
+    # Note: No DOTALL flag - window should stay within a single line to avoid
+    # false positives from unrelated text across line breaks
     control_window_pattern = r'.{0,50}\b' + re.escape(cand_lower) + r'\b.{0,50}'
-    for match in re.finditer(control_window_pattern, fulltext, re.IGNORECASE | re.DOTALL):
+    for match in re.finditer(control_window_pattern, fulltext, re.IGNORECASE):
         window = match.group(0)
         if CONTROL_CONTEXT_PATTERN.search(window):
             return True, f"control allele ({candidate})"
