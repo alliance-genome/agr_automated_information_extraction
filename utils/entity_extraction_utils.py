@@ -205,7 +205,6 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
     if not fulltext or not candidate:
         return False, ""
 
-    # text_lower = fulltext.lower()
     cand_lower = candidate.lower()
 
     # 1. Check for transgene markers (qIs*, wIs*, etc.)
