@@ -107,9 +107,8 @@ ALLELE_CONTEXT_WORDS = {
 # Allele false positive detection patterns
 # ---------------------------------------------------------------------------
 
-# Common background markers used for transformation (allele is not being studied)
-# Pattern: unc-119(ed3), unc-119 (ed3), etc.
-BACKGROUND_MARKER_GENES = {"unc-119", "unc119"}
+# Common background marker alleles used for transformation (allele is not being studied)
+# These appear in unc-119(ed3), unc-119 (ed4) context
 BACKGROUND_MARKER_ALLELES = {"ed3", "ed4"}
 
 # Genetic marker genes used in crosses (dpy=dumpy, unc=uncoordinated, etc.)
@@ -124,13 +123,6 @@ GENETIC_MARKER_GENES = {
 GENETIC_MARKER_ALLELES = {
     "e128", "e120",  # dpy-10(e128), unc-4(e120) from paper 8
 }
-
-# Control allele context patterns
-CONTROL_CONTEXT_PATTERN = re.compile(
-    r'(positive\s+control|negative\s+control|control\s+(strain|animal|worm)|'
-    r'used\s+as\s+(a\s+)?control|as\s+(a\s+)?(positive|negative)?\s*control)',
-    re.IGNORECASE
-)
 
 # MosSCI transposon insertion sites (reagent, not an allele being studied)
 # These are specific loci used for single-copy transgene insertion
@@ -238,31 +230,29 @@ def _check_control_allele_context(fulltext: str, candidate: str, cand_lower: str
     # e.g., "positive control xyz5", "control strain xyz5", "the control xyz5"
     # NOTE: We do NOT allow comma between control phrase and allele, because
     # "positive control N2, xyz5" means N2 is the control, not xyz5.
-    control_before_allele_pattern = re.compile(
+    # Use re.findall with string pattern to benefit from Python's internal cache
+    control_before_pattern_str = (
         r'(positive\s+control|negative\s+control|control\s+(?:strain|animal|worm))\s+'
-        + re.escape(cand_lower) + r'\b',
-        re.IGNORECASE
+        + re.escape(cand_lower) + r'\b'
     )
-    allele_is_control_count += len(control_before_allele_pattern.findall(fulltext))
+    allele_is_control_count += len(re.findall(control_before_pattern_str, fulltext, re.IGNORECASE))
 
     # Pattern 2: Allele followed by "was/is/served as control"
     # e.g., "xyz5 was used as a positive control", "xyz5 served as the control"
-    allele_as_control_pattern = re.compile(
-        r'\b' + re.escape(cand_lower) +
-        r'\s+(?:was|is|were|are|served|used)\s+(?:as\s+)?'
-        r'(?:a\s+|the\s+)?(?:positive\s+|negative\s+)?control\b',
-        re.IGNORECASE
+    allele_as_control_pattern_str = (
+        r'\b' + re.escape(cand_lower)
+        + r'\s+(?:was|is|were|are|served|used)\s+(?:as\s+)?'
+        + r'(?:a\s+|the\s+)?(?:positive\s+|negative\s+)?control\b'
     )
-    allele_is_control_count += len(allele_as_control_pattern.findall(fulltext))
+    allele_is_control_count += len(re.findall(allele_as_control_pattern_str, fulltext, re.IGNORECASE))
 
     # Pattern 3: "used/using ALLELE as a control"
     # e.g., "we used xyz5 as a positive control"
-    used_as_control_pattern = re.compile(
-        r'(?:used|using|use)\s+' + re.escape(cand_lower) +
-        r'\s+as\s+(?:a\s+|the\s+)?(?:positive\s+|negative\s+)?control\b',
-        re.IGNORECASE
+    used_as_control_pattern_str = (
+        r'(?:used|using|use)\s+' + re.escape(cand_lower)
+        + r'\s+as\s+(?:a\s+|the\s+)?(?:positive\s+|negative\s+)?control\b'
     )
-    allele_is_control_count += len(used_as_control_pattern.findall(fulltext))
+    allele_is_control_count += len(re.findall(used_as_control_pattern_str, fulltext, re.IGNORECASE))
 
     # Only filter if the allele is explicitly described as a control in a significant
     # portion of its mentions. This avoids filtering alleles that appear near control
@@ -300,10 +290,10 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
-        # Verify it's used as an insertion site, not studied as an allele
-        # Use re.search with string pattern to avoid repeated re.compile() calls
+        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied
+        # IMPORTANT: Use re.escape(candidate) to match the specific allele, not any ttTi
         if re.search(
-            r'(ttTi\d+)\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
+            re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)',
             fulltext,
             re.IGNORECASE
         ):
