@@ -343,13 +343,11 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             return True, f"AID system reagent ({candidate} is plant TIR1)"
 
     # 7. Check for yeast strains/genes (not C. elegans)
-    # Look for yeast deletion pattern Δyfh1
-    yeast_deletion_match = YEAST_DELETION_PATTERN.search(fulltext)
-    if yeast_deletion_match:
-        deleted_gene = yeast_deletion_match.group(1).lower()
-        if deleted_gene == cand_lower:
-            if YEAST_CONTEXT_PATTERN.search(fulltext):
-                return True, f"yeast gene/strain ({candidate})"
+    # Check ALL yeast deletions in the text (Δyfh1, Δade2, etc.), not just the first
+    yeast_deletions = {m.group(1).lower() for m in YEAST_DELETION_PATTERN.finditer(fulltext)}
+    if cand_lower in yeast_deletions:
+        if YEAST_CONTEXT_PATTERN.search(fulltext):
+            return True, f"yeast gene/strain ({candidate})"
 
     # Also check if the candidate appears specifically in yeast context
     # Look for patterns like "yfh1 yeast" or "S. cerevisiae yfh1"
@@ -398,7 +396,7 @@ def filter_false_positive_alleles(
         is_fp, reason = is_false_positive_allele(fulltext, ent)
         if is_fp:
             rejected.append((ent, reason))
-            logger.info("ALLELE-FP-FILTER: rejecting '%s' - %s", ent, reason)
+            logger.debug("ALLELE-FP-FILTER: rejecting '%s' - %s", ent, reason)
         else:
             filtered.append(ent)
 
