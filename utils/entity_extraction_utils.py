@@ -330,7 +330,8 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         # Look for balancer patterns and check if allele appears near them
         # Pattern matches: hT2[...e937...], qC1[...e1259...], hT2/+ [...e937...]
         # Use a window-based approach to handle nested brackets
-        balancer_names = r'(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1)'
+        # NOTE: Keep this list in sync with BALANCER_CHROMOSOME_NAMES
+        balancer_names = r'(hT2|qC1|nT1|mIn1|eT1|mT1|sC1|szT1|hIn1|mnC1|sDp2|sDp3|mDf1|qDf)'
         # Look for balancer name followed by the allele within ~200 chars
         # Exclude periods, semicolons, and newlines to respect sentence boundaries
         balancer_window_str = balancer_names + r'[^.;\n]{0,200}' + re.escape(cand_lower)
@@ -360,9 +361,9 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         return True, f"yeast gene/strain ({candidate})"
 
     # 8. Check for reference-only mentions ("identical to X allele")
+    # Check ALL matches, not just the first one
     for pattern in REFERENCE_ONLY_PATTERNS:
-        match = pattern.search(fulltext)
-        if match:
+        for match in pattern.finditer(fulltext):
             referenced_allele = match.group(1).lower()
             if referenced_allele == cand_lower:
                 # Verify this is the primary/only context for this allele
