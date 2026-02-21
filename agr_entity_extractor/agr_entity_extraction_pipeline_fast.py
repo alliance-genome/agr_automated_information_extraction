@@ -54,6 +54,7 @@ from utils.entity_extraction_utils import (
     resolve_entity_curie,
     has_allele_like_context,
     rescue_short_alleles_from_fulltext,
+    filter_false_positive_alleles,
     SUSPICIOUS_PREFIX_RE,
     ALLELE_NAME_PATTERN,
     GENERIC_NAME_PATTERN,
@@ -201,14 +202,23 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
                 canonical.append(display)
         entities = canonical
 
-        if dropped_suspicious > 0 or dropped_non_curated > 0:
+        # 7) Context-based false positive filtering
+        #    Filter out alleles that are markers, balancers, reagents, etc.
+        #    Note: filter_false_positive_alleles logs each rejection at DEBUG level
+        before_fp_filter = len(entities)
+        entities, _ = filter_false_positive_alleles(entities, fulltext)
+        dropped_false_positives = before_fp_filter - len(entities)
+
+        if dropped_suspicious > 0 or dropped_non_curated > 0 or dropped_false_positives > 0:
             logger.info(
                 "ALLELE-FILTER: start=%d, after_lowercase=%d, "
-                "dropped_suspicious=%d, dropped_non_curated=%d, final=%d",
+                "dropped_suspicious=%d, dropped_non_curated=%d, "
+                "dropped_false_positives=%d, final=%d",
                 original_count,
                 before_suspicious_filter,
                 dropped_suspicious,
                 dropped_non_curated,
+                dropped_false_positives,
                 len(entities),
             )
 
