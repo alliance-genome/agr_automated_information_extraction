@@ -282,7 +282,7 @@ def main():  # noqa C901
 
     tet_source_id = get_tet_source_id(
         mod_abbreviation=args.mod_abbreviation,
-        source_method="abc_entity_extractor",
+        source_method="abc_document_classifier",
         source_description="Alliance entity extraction pipeline using machine learning "
                            "to identify papers of interest for curation data types")
     # If we do other mods this will need changing to a look up
