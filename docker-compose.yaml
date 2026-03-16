@@ -1,7 +1,12 @@
 version: '3'
 services:
   agr_automated_information_extraction:
+    container_name: agr.literature.${ENV_STATE}.aie
     build: .
+    logging:
+      driver: gelf
+      options:
+        gelf-address: 'udp://logs.alliancegenome.org:12201'
     volumes:
       - ${TRAINING_DIR}:/data/agr_document_classifier/training
       - ${CLASSIFICATION_DIR}:/data/agr_document_classifier/to_classify
