@@ -802,14 +802,14 @@ def map_priority_name_to_atpid(priority_name):
 def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
     priority_atp = map_priority_name_to_atpid(priority_name)
     base = blue_api_base_url.rstrip("/")
-    indexing_url = f"{base}/indexing_priority/set_priority"
+    indexing_url = f"{base}/indexing_priority/"
     token = get_authentication_token()
     headers = generate_headers(token)
 
     payload = {
         "reference_curie": ref_curie,
         "mod_abbreviation": mod_abbr,
-        "indexing_priority": priority_atp,
+        "predicted_indexing_priority": priority_atp,
         "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
     }
 
