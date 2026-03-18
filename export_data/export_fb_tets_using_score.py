@@ -60,7 +60,7 @@ def get_data(table_name: str):
     if table_name == 'tet':
 
         # changed query to get tet.confidence_score instead of tet.confidence_level
-        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie
+        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie, tet.validation_by_professional_biocurator
                       FROM topic_entity_tag tet, cross_reference cr, topic_entity_tag_source s
                         WHERE tet.date_created >= '{sql_date}'
                              AND s.topic_entity_tag_source_id = tet.topic_entity_tag_source_id
@@ -117,14 +117,16 @@ def dump_tet():
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
                     f"{atp_to_flag[row[1]]}:{row[2]}\t"
-                    f"{atp_to_dept[row[1]]}\n"
+                    f"{atp_to_dept[row[1]]}\t"
+                    f"{atp_to_dept[row[4]]}\n"
                 )
             else:
                 pos += (
                     f"{row[0].strftime('%y%m%d')}\t\t"
                     f"{row[3][5:]}\t"
                     f"{atp_to_flag[row[1]]}:{row[2]}\t"
-                    f"{atp_to_dept[row[1]]}\n"
+                    f"{atp_to_dept[row[1]]}\t"
+                    f"{atp_to_dept[row[4]]}\n"
                 )
 
     if pos:
