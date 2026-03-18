@@ -71,7 +71,7 @@ def get_data(table_name: str):
                              order by tet.date_created desc;"""
         print(query)
     else:
-        query = f"""SELECT mit.date_created, mit.curation_tag, mit.confidence_score, cr.curie
+        query = f"""SELECT mit.date_created, mit.curation_tag, mit.confidence_score, cr.curie, mit.validation_by_biocurator
                       FROM manual_indexing_tag mit, cross_reference cr
                         WHERE mit.date_created >= '{sql_date}'
                              AND mit.reference_id = cr.reference_id
@@ -118,7 +118,7 @@ def dump_tet():
                     f"{row[3][5:]}\t"
                     f"{atp_to_flag[row[1]]}:{row[2]}\t"
                     f"{atp_to_dept[row[1]]}\t"
-                    f"{atp_to_dept[row[4]]}\n"
+                    f"{row[4]}\n"
                 )
             else:
                 pos += (
@@ -126,7 +126,7 @@ def dump_tet():
                     f"{row[3][5:]}\t"
                     f"{atp_to_flag[row[1]]}:{row[2]}\t"
                     f"{atp_to_dept[row[1]]}\t"
-                    f"{atp_to_dept[row[4]]}\n"
+                    f"{row[4]}\n"
                 )
 
     if pos:
