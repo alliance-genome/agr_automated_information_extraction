@@ -397,18 +397,19 @@ def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_mod
     output_dir = f"{root_data_path}new_to_classify"
     shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
-
+    mod_topic_jobs = load_all_jobs(job_label="indexing_priority")
     # Fetch all “need prioritization” papers into output_dir
-    download_bib_data_for_need_prioritization_references(output_dir, mod_abbr)
+    download_bib_data_for_need_prioritization_references(output_dir, mod_abbr, mod_topic_jobs)
 
     # Only proceed if at least one file was downloaded
     if os.listdir(output_dir):
-        set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path)
+        set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path, mod_topic_jobs)
     else:
         logger.info(f"No papers to classify for MOD '{mod_abbr}'.")
 
 
-def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embedding_model_path: str, ref_curie_to_mod_curie: dict = None):
+def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embedding_model_path: str,
+                            ref_curie_to_mod_curie: dict = None, mod_topic_jobs: dict = None):
 
     # Load classifier and embeddings
     classifier_model_path = f"{root_data_path}training/{mod_abbr}_{topic.replace(':', '_')}_classifier.joblib"
@@ -427,6 +428,10 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
 
     label_mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
     results_file = os.path.join(output_dir, "classification_results.csv")
+    ref_curie_job_map = {}
+    for (mod_id, topic), jobs in mod_topic_jobs.items():
+        for job in jobs:
+            ref_curie_job_map[job["reference_curie"]] = job
     with open(results_file, mode='w', newline='', encoding='utf-8') as outcsv:
         writer = csv.writer(outcsv)
         headers = ['ReferenceID', 'Classification', 'ConfidenceScore', 'ValidEmbedding']
@@ -445,6 +450,10 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
             priority_name = label_mapping.get(label, 'unknown')
             ref_curie = reference_id
             set_indexing_priority(ref_curie, mod_abbr, priority_name, round(py_score, 2))
+            if valid:
+                set_job_success(ref_curie_job_map[reference_id])
+            else:
+                set_job_failure(ref_curie_job_map[reference_id])
 
     logger.info(f"Classification complete. Results saved to {results_file}")
 
