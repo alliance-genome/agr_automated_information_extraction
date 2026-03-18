@@ -112,7 +112,7 @@ def dump_tet():
     for table_name in ('tet', 'mi'):  # topic_entity_tag, Manual_indexing
         rows = get_data(table_name)
         for row in rows:
-            conf_level = 'LOW'
+            conf_level = 'low'
             # do not crash on keyword error. Give message and continue.
             if row[1] not in atp_to_flag:
                 atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
