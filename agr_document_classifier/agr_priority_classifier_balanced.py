@@ -11,6 +11,7 @@ import os.path
 import shutil
 import sys
 import csv
+from types import SimpleNamespace
 
 from pathlib import Path
 from typing import Tuple, List
@@ -397,7 +398,9 @@ def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_mod
     output_dir = f"{root_data_path}new_to_classify"
     shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
-    mod_topic_jobs = load_all_jobs(job_label="indexing_priority")
+    mod_topic_jobs = load_all_jobs(job_label="indexing_priority",
+                                   args=SimpleNamespace(mod_abbreviation=mod_abbr, topic=topic,
+                                                        reference_curie=None))
     # Fetch all “need prioritization” papers into output_dir
     download_bib_data_for_need_prioritization_references(output_dir, mod_abbr, mod_topic_jobs)
 
