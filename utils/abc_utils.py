@@ -574,7 +574,7 @@ def get_reference_title_and_abstract(reference_curie):
         response = requests.request("GET", url, headers=headers)
         if response.status_code == 200:
             content = response.json()
-            return content.get("title", None), content.get("abstract", None)
+            return content.get("title") or "", content.get("abstract") or ""
         else:
             logger.info(f"reference data not found for {url}: status code {response.status_code}")
             raise HTTPError(f"reference data not found for {url}: status code {response.status_code}")

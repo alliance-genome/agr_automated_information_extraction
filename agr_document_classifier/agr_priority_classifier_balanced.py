@@ -513,12 +513,16 @@ def send_priority_results(files_loaded, classifications, conf_scores,
     logger.info("Finished processing batch of %s jobs.", len(files_loaded))
 
 
-def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embedding_model_path: str,
-                            ref_curie_to_mod_curie: dict = None, mod_topic_jobs: dict = None):
+def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str,
+                            embedding_model_path: str,
+                            ref_curie_to_mod_curie: dict = None):
 
     # Load classifier and embeddings
-    classifier_model_path = f"{root_data_path}training/{mod_abbr}_{topic.replace(':', '_')}_classifier.joblib"
-    download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_model_path,
+    classifier_model_path = (
+        f"{root_data_path}training/{mod_abbr}"
+        f"_{topic.replace(':', '_')}_classifier.joblib")
+    download_abc_model(mod_abbreviation=mod_abbr, topic=topic,
+                       output_path=classifier_model_path,
                        task_type="biocuration_pretriage_priority_classification")
     logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
 
@@ -533,10 +537,6 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
 
     label_mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
     results_file = os.path.join(output_dir, "classification_results.csv")
-    ref_curie_job_map = {}
-    for (_mod_id, _topic), jobs in mod_topic_jobs.items():
-        for job in jobs:
-            ref_curie_job_map[job["reference_curie"]] = job
     with open(results_file, mode='w', newline='', encoding='utf-8') as outcsv:
         writer = csv.writer(outcsv)
         headers = ['ReferenceID', 'Classification', 'ConfidenceScore', 'ValidEmbedding']
@@ -544,21 +544,19 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
             headers.insert(1, 'MOD_ReferenceID')
         writer.writerow(headers)
 
-        for path, label, score, valid in zip(files_loaded, classifications, conf_scores, valid_embeddings):
+        for path, label, score, valid in zip(files_loaded, classifications,
+                                             conf_scores, valid_embeddings):
             reference_id = Path(path).stem.replace('_', ':')
-            py_score = float(score)  # ensure native float
+            py_score = float(score)
             row = [reference_id]
             if ref_curie_to_mod_curie:
                 row.append(ref_curie_to_mod_curie.get(reference_id, ''))
-            row.extend([label_mapping.get(label, 'unknown'), round(py_score, 4), bool(valid)])
+            row.extend([label_mapping.get(label, 'unknown'),
+                        round(py_score, 4), bool(valid)])
             writer.writerow(row)
             priority_name = label_mapping.get(label, 'unknown')
-            ref_curie = reference_id
-            set_indexing_priority(ref_curie, mod_abbr, priority_name, round(py_score, 2))
-            if valid:
-                set_job_success(ref_curie_job_map[reference_id])
-            else:
-                set_job_failure(ref_curie_job_map[reference_id])
+            set_indexing_priority(
+                reference_id, mod_abbr, priority_name, round(py_score, 2))
 
     logger.info(f"Classification complete. Results saved to {results_file}")
 
