@@ -1,4 +1,3 @@
-import html
 import io
 import json
 import logging
@@ -549,26 +548,39 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
         logger.error(e)
 
 
-def download_bib_data_for_need_prioritization_references(output_dir: str, mod_abbreviation):
+def download_bib_data_for_need_prioritization_references(output_dir: str, mod_abbreviation, mod_topic_jobs):
     logger.info("Started retrieving bib data")
     os.makedirs(output_dir, exist_ok=True)
-    url = f"{blue_api_base_url}/sort/need_prioritization?mod_abbreviation={mod_abbreviation}"
-    token = get_authentication_token()
-    headers = generate_headers(token)
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            for x in response.json():
-                reference_curie = x['curie']
-                title = html.unescape(x['title'] or "")
-                abstract = html.unescape(x['abstract'] or "")
+    for (_mod_id, _topic), jobs in mod_topic_jobs.items():
+        for job in jobs:
+            try:
+                reference_curie = job['reference_curie']
+                title, abstract = get_reference_title_and_abstract(reference_curie)
                 with open(os.path.join(output_dir, reference_curie + ".txt"), "w") as out_file:
                     out_file.write(f"title|{title}\nabstract|{abstract}\n")
                 logger.info(f"{reference_curie}: the txt file is generated.")
+            except requests.exceptions.RequestException:
+                set_job_failure(job)
+            except HTTPError:
+                set_job_failure(job)
+
+
+def get_reference_title_and_abstract(reference_curie):
+    logger.info("Started retrieving title and abstract for reference")
+    url = f"{blue_api_base_url}/reference/{reference_curie}"
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    try:
+        response = requests.request("GET", url, headers=headers)
+        if response.status_code == 200:
+            content = response.json()
+            return content.get("title") or "", content.get("abstract") or ""
         else:
-            logger.info(f"Bib data not found for {url}: status code {response.status_code}")
+            logger.info(f"reference data not found for {url}: status code {response.status_code}")
+            raise HTTPError(f"reference data not found for {url}: status code {response.status_code}")
     except requests.exceptions.RequestException as e:
         logger.info(f"Error occurred for accessing/retrieving bib data from {url}: error={e}")
+        raise
 
 
 def download_bib_data_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
@@ -802,14 +814,14 @@ def map_priority_name_to_atpid(priority_name):
 def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
     priority_atp = map_priority_name_to_atpid(priority_name)
     base = blue_api_base_url.rstrip("/")
-    indexing_url = f"{base}/indexing_priority/set_priority"
+    indexing_url = f"{base}/indexing_priority/"
     token = get_authentication_token()
     headers = generate_headers(token)
 
     payload = {
         "reference_curie": ref_curie,
         "mod_abbreviation": mod_abbr,
-        "indexing_priority": priority_atp,
+        "predicted_indexing_priority": priority_atp,
         "confidence_score": float(confidence_score) if confidence_score is not None else 0.0,
     }
 
