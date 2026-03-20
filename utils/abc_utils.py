@@ -1,4 +1,3 @@
-import html
 import io
 import json
 import logging
@@ -552,7 +551,7 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
 def download_bib_data_for_need_prioritization_references(output_dir: str, mod_abbreviation, mod_topic_jobs):
     logger.info("Started retrieving bib data")
     os.makedirs(output_dir, exist_ok=True)
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
+    for (_mod_id, _topic), jobs in mod_topic_jobs.items():
         for job in jobs:
             try:
                 reference_curie = job['reference_curie']
@@ -560,9 +559,9 @@ def download_bib_data_for_need_prioritization_references(output_dir: str, mod_ab
                 with open(os.path.join(output_dir, reference_curie + ".txt"), "w") as out_file:
                     out_file.write(f"title|{title}\nabstract|{abstract}\n")
                 logger.info(f"{reference_curie}: the txt file is generated.")
-            except requests.exceptions.RequestException as e:
+            except requests.exceptions.RequestException:
                 set_job_failure(job)
-            except HTTPError as http_e:
+            except HTTPError:
                 set_job_failure(job)
 
 

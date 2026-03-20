@@ -432,7 +432,7 @@ def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embeddin
     label_mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
     results_file = os.path.join(output_dir, "classification_results.csv")
     ref_curie_job_map = {}
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
+    for (_mod_id, _topic), jobs in mod_topic_jobs.items():
         for job in jobs:
             ref_curie_job_map[job["reference_curie"]] = job
     with open(results_file, mode='w', newline='', encoding='utf-8') as outcsv:
