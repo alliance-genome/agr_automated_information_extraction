@@ -395,20 +395,122 @@ def classify_from_csv_file(csv_path: str, mod_abbr: str, topic: str, embedding_m
 
 
 def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_model_path: str):
+    mod_topic_jobs = load_all_jobs(
+        job_label="indexing_priority",
+        args=SimpleNamespace(mod_abbreviation=mod_abbr, topic=topic,
+                             reference_curie=None))
+    if not mod_topic_jobs:
+        logger.info("No papers to classify for MOD '%s'.", mod_abbr)
+        return
+
+    embedding_model = load_embedding_model(model_path=embedding_model_path)
+    failed_processes = []
+    for (mod_id, topic_id), jobs in mod_topic_jobs.items():
+        try:
+            process_priority_classification_jobs(
+                mod_id, topic_id, jobs, embedding_model)
+        except Exception as e:
+            logger.error("Error processing priority jobs for '%s', mod %s.",
+                         topic_id, mod_id)
+            formatted_traceback = traceback.format_tb(e.__traceback__)
+            failed_processes.append({
+                "topic": topic_id,
+                "mod_abbreviation": mod_id,
+                "exception": str(e),
+                "trace": "".join(
+                    f"{line}<br>" for line in formatted_traceback)
+            })
+
+    if failed_processes:
+        subject = "Failed processing of priority classification jobs"
+        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
+        for fp in failed_processes:
+            message += (
+                f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
+                f"Exception: {fp['exception']}<br>\n"
+                f"Stacktrace: {fp['trace']}<br><br>\n\n")
+        send_report(subject, message)
+        sys.exit(-1)
+
+
+def process_priority_classification_jobs(mod_id, topic, jobs, embedding_model):
+    mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     output_dir = f"{root_data_path}new_to_classify"
+    classifier_model_path = (
+        f"{root_data_path}training/{mod_abbr}"
+        f"_{topic.replace(':', '_')}_classifier.joblib")
+    try:
+        download_abc_model(
+            mod_abbreviation=mod_abbr, topic=topic,
+            output_path=classifier_model_path,
+            task_type="biocuration_pretriage_priority_classification")
+        logger.info(
+            "Priority classifier model downloaded for mod: %s, topic: %s.",
+            mod_abbr, topic)
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 404:
+            logger.warning(
+                "Priority classifier model not found for mod: %s, "
+                "topic: %s. Skipping.", mod_abbr, topic)
+            return
+        raise
+
+    classifier_model = joblib.load(classifier_model_path)
+    classification_batch_size = int(
+        os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
+    jobs_to_process = copy.deepcopy(jobs)
+    while jobs_to_process:
+        job_batch = jobs_to_process[:classification_batch_size]
+        jobs_to_process = jobs_to_process[classification_batch_size:]
+        logger.info(
+            "Processing a batch of %s jobs. Jobs remaining to process: %s",
+            len(job_batch), len(jobs_to_process))
+        process_priority_job_batch(
+            job_batch, output_dir, topic, mod_abbr,
+            embedding_model, classifier_model)
+
+
+def process_priority_job_batch(job_batch, output_dir, topic, mod_abbr,
+                               embedding_model, classifier_model):
+    ref_curie_job_map = {job["reference_curie"]: job for job in job_batch}
+
+    # Clean and prepare directory
     shutil.rmtree(output_dir, ignore_errors=True)
     os.makedirs(output_dir, exist_ok=True)
-    mod_topic_jobs = load_all_jobs(job_label="indexing_priority",
-                                   args=SimpleNamespace(mod_abbreviation=mod_abbr, topic=topic,
-                                                        reference_curie=None))
-    # Fetch all “need prioritization” papers into output_dir
-    download_bib_data_for_need_prioritization_references(output_dir, mod_abbr, mod_topic_jobs)
 
-    # Only proceed if at least one file was downloaded
-    if os.listdir(output_dir):
-        set_priority_for_papers(output_dir, topic, mod_abbr, embedding_model_path, mod_topic_jobs)
-    else:
-        logger.info(f"No papers to classify for MOD '{mod_abbr}'.")
+    # Download bib data for this batch
+    download_bib_data_for_need_prioritization_references(
+        output_dir, mod_abbr, {(mod_abbr, topic): job_batch})
+
+    if not os.listdir(output_dir):
+        logger.info("No papers downloaded in this batch for MOD '%s'.",
+                    mod_abbr)
+        return
+
+    files_loaded, classifications, conf_scores, valid_embeddings = (
+        classify_documents(
+            input_docs_dir=output_dir,
+            embedding_model=embedding_model,
+            classifier_model=classifier_model))
+
+    send_priority_results(files_loaded, classifications, conf_scores,
+                          valid_embeddings, ref_curie_job_map, mod_abbr)
+
+
+def send_priority_results(files_loaded, classifications, conf_scores,
+                          valid_embeddings, ref_curie_job_map, mod_abbr):
+    label_mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
+    for path, label, score, valid in zip(files_loaded, classifications,
+                                         conf_scores, valid_embeddings):
+        reference_id = Path(path).stem.replace("_", ":")
+        priority_name = label_mapping.get(label, "unknown")
+        set_indexing_priority(reference_id, mod_abbr, priority_name,
+                              round(float(score), 2))
+        if valid:
+            set_job_success(ref_curie_job_map[reference_id])
+        else:
+            set_job_failure(ref_curie_job_map[reference_id])
+    logger.info("Finished processing batch of %s jobs.", len(files_loaded))
 
 
 def set_priority_for_papers(output_dir: str, topic: str, mod_abbr: str, embedding_model_path: str,
