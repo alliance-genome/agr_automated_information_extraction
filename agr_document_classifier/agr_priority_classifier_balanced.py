@@ -504,9 +504,12 @@ def send_priority_results(files_loaded, classifications, conf_scores,
                                          conf_scores, valid_embeddings):
         reference_id = Path(path).stem.replace("_", ":")
         priority_name = label_mapping.get(label, "unknown")
-        set_indexing_priority(reference_id, mod_abbr, priority_name,
-                              round(float(score), 2))
         if valid:
+            priority_set = set_indexing_priority(reference_id, mod_abbr, priority_name,
+                                                 round(float(score), 2))
+        else:
+            priority_set = False
+        if priority_set:
             set_job_success(ref_curie_job_map[reference_id])
         else:
             set_job_failure(ref_curie_job_map[reference_id])

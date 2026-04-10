@@ -827,7 +827,7 @@ def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
 
     try:
         resp = requests.post(indexing_url, json=_jsonable(payload), headers=headers, timeout=30)
-        if resp.status_code == 200:
+        if resp.status_code in [200, 201]:
             logger.info(f"{ref_curie} is successfully set to {priority_name}")
             return True
 
