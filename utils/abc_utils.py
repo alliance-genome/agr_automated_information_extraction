@@ -930,6 +930,9 @@ def load_all_jobs(job_label: str, args: Namespace) -> Dict[Tuple[str, str], List
             reference_id = job["reference_id"]
             topic = job["topic_id"]
             mod_id = job["mod_id"]
+            if topic is None or mod_id is None:
+                logger.error(f"Skipping job with missing topic_id or mod_id: {job}")
+                continue
             if (mod_id, topic, reference_id) not in jobs_already_added:
                 mod_datatype_jobs[(mod_id, topic)].append(job)
                 jobs_already_added.add((mod_id, topic, reference_id))
