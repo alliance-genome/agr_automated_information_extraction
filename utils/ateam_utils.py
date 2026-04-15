@@ -164,8 +164,11 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
                 elif entity_type_str in ['fish', 'genotype', 'strain']:
                     entity_symbol = entity.agmFullName
                     # Capture taxon for AGM entities (strain, genotype, fish)
-                    if hasattr(entity, 'taxon') and entity.taxon and hasattr(entity.taxon, 'curie'):
-                        curie_to_taxon_mappings[curie] = entity.taxon.curie
+                    # taxon is a dict with 'curie' key, e.g. {'curie': 'NCBITaxon:6239', 'name': '...'}
+                    if hasattr(entity, 'taxon') and entity.taxon:
+                        taxon_curie = entity.taxon.get('curie') if isinstance(entity.taxon, dict) else getattr(entity.taxon, 'curie', None)
+                        if taxon_curie:
+                            curie_to_taxon_mappings[curie] = taxon_curie
                 entity_name = get_name_from_entity(entity_symbol)
             if not entity_name or not curie:
                 continue
