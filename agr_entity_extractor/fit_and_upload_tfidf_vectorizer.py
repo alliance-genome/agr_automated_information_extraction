@@ -52,7 +52,7 @@ def fit_vectorizer_on_agr_corpus(mod_abbreviation: str = None, match_uppercase: 
 
     logger.info("Downloading list of curated genes and alleles from the Alliance ABC API and adding them to the "
                 "tokenizer.")
-    curated_genes, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
+    curated_genes, _, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="gene")
     # curated_alleles, _ = get_all_curated_entities(mod_abbreviation=mod_abbreviation, entity_type_str="allele")
     logger.info("Loading and add curated genes to it.")
     custom_tokenizer = CustomTokenizer(tokens=curated_genes, match_uppercase_entities=match_uppercase)
@@ -123,7 +123,7 @@ def main():
         logger.info(f"TFIDF vectorizer saved to {args.output_path}.")
 
     if args.update_custom_tokenizer:
-        curated_genes, _ = get_all_curated_entities(mod_abbreviation=args.mod_abbreviation, entity_type_str="gene")
+        curated_genes, _, _ = get_all_curated_entities(mod_abbreviation=args.mod_abbreviation, entity_type_str="gene")
         custom_tokenizer = CustomTokenizer(tokens=curated_genes)
         vectorizer = load_vectorizer_from_file(args.output_path)
         vectorizer.tokenizer = lambda doc: custom_tokenizer.tokenize(doc)
