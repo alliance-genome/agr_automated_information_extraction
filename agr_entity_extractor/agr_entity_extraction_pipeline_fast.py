@@ -419,9 +419,14 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         if not ent_curie or ent_curie in seen:
                             continue
                         seen.add(ent_curie)
+                        # For strains, use entity-specific taxon if available
+                        if topic == "ATP:0000027":
+                            entity_species = getattr(model, "curie_to_taxon_mapping", {}).get(ent_curie, species)
+                        else:
+                            entity_species = species
                         send_entity_tag_to_abc(
                             reference_curie=curie,
-                            species=species,
+                            species=entity_species,
                             topic=topic,
                             entity_type=topic,
                             entity=ent_curie,
@@ -550,9 +555,14 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         if not ent_curie or ent_curie in seen:
                             continue
                         seen.add(ent_curie)
+                        # For strains, use entity-specific taxon if available
+                        if topic == "ATP:0000027":
+                            entity_species = getattr(model, "curie_to_taxon_mapping", {}).get(ent_curie, species)
+                        else:
+                            entity_species = species
                         send_entity_tag_to_abc(
                             reference_curie=curie,
-                            species=species,
+                            species=entity_species,
                             topic=topic,
                             entity_type=topic,
                             entity=ent_curie,

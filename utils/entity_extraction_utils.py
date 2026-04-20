@@ -38,7 +38,7 @@ ENTITY_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 _MODEL_CACHE: Dict[Tuple[str, str], object] = {}
 _PIPE_CACHE: Dict[Tuple[str, str], Optional[object]] = {}
-_ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str]]] = {}
+_ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str], Dict[str, str]]] = {}
 
 # --------------------------------------------------------------------- #
 # PATTERNS & TOPIC MAPPING                                              #
@@ -500,10 +500,11 @@ def _entity_cache_path(mod_abbr: str, entity_type: str) -> Path:
 def get_all_curated_entities_cached(
     mod_abbreviation: str,
     entity_type_str: str,
-    loader_fn: Callable[[str, str], Tuple[List[str], Dict[str, str]]],
-) -> Tuple[List[str], Dict[str, str]]:
+    loader_fn: Callable[[str, str], Tuple[List[str], Dict[str, str], Dict[str, str]]],
+) -> Tuple[List[str], Dict[str, str], Dict[str, str]]:
     """
-    Returns (names, mapping) for a (MOD, entity_type) from disk or via loader_fn.
+    Returns (names, mapping, taxon_mapping) for a (MOD, entity_type) from disk or via loader_fn.
+    The taxon_mapping maps entity CURIEs to their specific taxon IDs (for AGM entities like strains).
     """
     key = (mod_abbreviation, entity_type_str)
     if key in _ENTITY_CACHE:
@@ -515,29 +516,32 @@ def get_all_curated_entities_cached(
             data = json.load(fh)
         names = data["names"]
         mapping = data["mapping"]
-        _ENTITY_CACHE[key] = (names, mapping)
-        return names, mapping
+        taxon_mapping = data.get("taxon_mapping", {})
+        _ENTITY_CACHE[key] = (names, mapping, taxon_mapping)
+        return names, mapping, taxon_mapping
 
-    names, mapping = loader_fn(mod_abbreviation, entity_type_str)
+    names, mapping, taxon_mapping = loader_fn(mod_abbreviation, entity_type_str)
     with cache_file.open("w", encoding="utf-8") as fh:
-        json.dump({"names": names, "mapping": mapping}, fh)
-    _ENTITY_CACHE[key] = (names, mapping)
-    return names, mapping
+        json.dump({"names": names, "mapping": mapping, "taxon_mapping": taxon_mapping}, fh)
+    _ENTITY_CACHE[key] = (names, mapping, taxon_mapping)
+    return names, mapping, taxon_mapping
 
 
 def prime_model_entities(
     model: object,
     mod_abbr: str,
     entity_type: str,
-    loader_fn: Callable[[str, str], Tuple[List[str], Dict[str, str]]],
+    loader_fn: Callable[[str, str], Tuple[List[str], Dict[str, str], Dict[str, str]]],
 ) -> None:
     """
-    Populate model.{entities_to_extract, name_to_curie_mapping, upper_to_original_mapping}.
+    Populate model.{entities_to_extract, name_to_curie_mapping, upper_to_original_mapping,
+    curie_to_taxon_mapping}.
     """
-    names, mapping = get_all_curated_entities_cached(mod_abbr, entity_type, loader_fn)
+    names, mapping, taxon_mapping = get_all_curated_entities_cached(mod_abbr, entity_type, loader_fn)
     model.entities_to_extract = names
     model.name_to_curie_mapping = mapping
     model.upper_to_original_mapping = {n.upper(): n for n in names}
+    model.curie_to_taxon_mapping = taxon_mapping
     model.alliance_entities_loaded = True
 
 

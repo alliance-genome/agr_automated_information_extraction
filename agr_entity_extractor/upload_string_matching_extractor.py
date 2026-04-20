@@ -56,7 +56,7 @@ def main():
             )
         )
 
-    entities_to_extract, name_to_curie_mapping = load_entities_dynamically_fnc()
+    entities_to_extract, name_to_curie_mapping, _ = load_entities_dynamically_fnc()
     custom_tokenizer = CustomTokenizer(tokens=entities_to_extract, match_uppercase_entities=args.match_uppercase)
     upper_to_original_mapping = {entity.upper(): entity for entity in entities_to_extract}
 

@@ -14,7 +14,7 @@ MOD_TAXON_MAPPING = {
     'FB': 'NCBITaxon:7227'
 }
 
-_CURATED_ENTITY_CACHE: dict[tuple[str, str], tuple[list[str], dict[str, str]]] = {}
+_CURATED_ENTITY_CACHE: dict[tuple[str, str], tuple[list[str], dict[str, str], dict[str, str]]] = {}
 
 logger = logging.Logger(__name__)
 
@@ -108,17 +108,21 @@ def get_name_from_entity(entity_symbol):
 
 def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, force_refresh: bool = False):  # noqa: C901
     """
-    Return (all_curated_entity_names, entity_name_curie_mappings)
+    Return (all_curated_entity_names, entity_name_curie_mappings, curie_to_taxon_mappings)
     Results are cached per (mod_abbreviation, original_entity_type_str)
+
+    The curie_to_taxon_mappings is populated for AGM entities (strain, genotype, fish)
+    where each entity has its own specific taxon ID.
     """
     cache_key = (mod_abbreviation, entity_type_str)
 
     if not force_refresh and cache_key in _CURATED_ENTITY_CACHE:
-        names, mapping = _CURATED_ENTITY_CACHE[cache_key]
-        return names.copy(), mapping.copy()
+        names, mapping, taxon_mapping = _CURATED_ENTITY_CACHE[cache_key]
+        return names.copy(), mapping.copy(), taxon_mapping.copy()
 
     all_curated_entity_names: list[str] = []
     entity_name_curie_mappings: dict[str, str] = {}
+    curie_to_taxon_mappings: dict[str, str] = {}
 
     api_config = APIConfig()  # type: ignore
     api_client = AGRCurationAPIClient(api_config)
@@ -159,6 +163,12 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
                         entity_symbol = entity.alleleSymbol
                 elif entity_type_str in ['fish', 'genotype', 'strain']:
                     entity_symbol = entity.agmFullName
+                    # Capture taxon for AGM entities (strain, genotype, fish)
+                    # taxon is a dict with 'curie' key, e.g. {'curie': 'NCBITaxon:6239', 'name': '...'}
+                    if hasattr(entity, 'taxon') and entity.taxon:
+                        taxon_curie = entity.taxon.get('curie') if isinstance(entity.taxon, dict) else getattr(entity.taxon, 'curie', None)
+                        if taxon_curie:
+                            curie_to_taxon_mappings[curie] = taxon_curie
                 entity_name = get_name_from_entity(entity_symbol)
             if not entity_name or not curie:
                 continue
@@ -172,10 +182,11 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
 
     _CURATED_ENTITY_CACHE[cache_key] = (
         all_curated_entity_names.copy(),
-        entity_name_curie_mappings.copy()
+        entity_name_curie_mappings.copy(),
+        curie_to_taxon_mappings.copy()
     )
     if mod_abbreviation == 'WB' and entity_type_str == 'strain':
         wbid = entity_name_curie_mappings.get("HT115(DE3)")
         if wbid and entity_name_curie_mappings.get("HT115"):
             entity_name_curie_mappings["HT115"] = wbid
-    return all_curated_entity_names, entity_name_curie_mappings
+    return all_curated_entity_names, entity_name_curie_mappings, curie_to_taxon_mappings

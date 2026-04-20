@@ -141,7 +141,7 @@ def _load_compiled_aliases():
         # Lazy import to avoid circulars at module import time.
         from utils.ateam_utils import get_all_curated_entities
         for mod in mods:
-            names, _mapping = get_all_curated_entities(mod, "species")
+            names, _mapping, _ = get_all_curated_entities(mod, "species")
             curated_names.update(names or [])
     except Exception:
         # If anything fails, fall back to just the handcrafted aliases.

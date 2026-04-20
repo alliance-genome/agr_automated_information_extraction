@@ -85,7 +85,7 @@ def fit_vectorizer_on_agr_corpus(
         else "species" if topic == "ATP:0000123"
         else "gene"
     )
-    curated_entities, _ = get_all_curated_entities(
+    curated_entities, _, _ = get_all_curated_entities(
         mod_abbreviation=mod_abbreviation,
         entity_type_str=entity_type
     )
@@ -219,7 +219,7 @@ def main():
         vect = load_vectorizer_from_file(args.output_path)
 
     if args.update_custom_tokenizer:
-        curated_entities, _ = get_all_curated_entities(
+        curated_entities, _, _ = get_all_curated_entities(
             mod_abbreviation=args.mod_abbreviation,
             entity_type_str='gene'
         )
