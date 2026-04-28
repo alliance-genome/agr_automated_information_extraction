@@ -54,11 +54,15 @@ comment lists the assigned IDs), and the eventual NN-based antibody classifier
 | WF "in progress" | `ATP:0000365` | |
 | WF "complete" | `ATP:0000363` | |
 | WF "failed" | `ATP:0000364` | |
-| Source `source_method` | `abc_antibody_string_matching_classifier` | Specific to this pipeline |
-| Source `source_evidence_assertion` | `ECO:0008021` | string matching |
+| Source `source_method` | `abc_string_matching_antibody` | Per Daniela; distinct from the legacy caltech import which uses `string_matching_antibody` |
+| Source `description` | `"Alliance pipeline that identifies relevant words and/or phrases in C. elegans references to identify references describing production and/or use of antibodies."` | Verbatim from Daniela |
+| Source `source_evidence_assertion` | `ECO:0008021` | string matching; confirmed by Daniela |
+| TET `confidence_score` / `confidence_level` | `None` / `None` | String matching is deterministic; numeric score doesn't apply |
+| TET `data_novelty` | `ATP:0000335` ("data novelty", parent term) | Rule-based pipeline can't determine novelty subtype; declines to over-claim |
 | MOD | `WB` only | Sources are MOD-specific |
 | Species | `NCBITaxon:6239` | from `MOD_TAXON_MAPPING` in `ateam_utils.py` |
 | Job condition / `job_str` | `antibody_string_matching_job` | Deliberately omits the `classification_job` substring to avoid collision with the ML doc classifier's `load_all_jobs("classification_job", …)` poll. The substring filter is exclusive to this pipeline. |
+| Legacy caltech source method | `string_matching_antibody` (no `abc_` prefix) | Read-only — used by the §5.2 backfill to identify references that already have caltech-imported antibody TETs and should be skipped |
 
 ## 4. Architecture — `agr_automated_information_extraction`
 
@@ -140,8 +144,9 @@ Key differences from the ML classifier:
   `get_all_curated_entities(mod_abbreviation="WB", entity_type_str="gene")`,
   used to construct the regexes (with `EXCLUDE_GENES` removed and
   `ADDITIONAL_ANTI_KEYWORDS` appended, exactly matching Caltech behavior).
-- `ml_model_id=None`, `confidence_score`/`confidence_level`/`data_novelty` —
-  see open questions 1 and 2.
+- `ml_model_id=None`, `confidence_score=None`, `confidence_level=None`,
+  `data_novelty="ATP:0000335"` (per the §3 constants table, decisions
+  confirmed with Daniela).
 - Topic is fixed (`ATP:0000096`); we still group by `(mod_id, topic)` from
   `load_all_jobs` for symmetry with the existing pipeline, but expect a single
   group in practice.
@@ -149,9 +154,9 @@ Key differences from the ML classifier:
 ### 4.4 Data flow
 
 ```
-ABC: WB reference enters corpus
-  → mod_corpus_association_crud.create() (literature_service change, §5.1)
-  → WorkflowTagModel(reference_id, mod_id=WB, workflow_tag_id=ATP:0000366) inserted
+ABC: WB Experimental reference completes text conversion
+  → "text conversion needed/in_progress" → "file converted to text" (on_success)
+  → proceed_on_value action chain creates ATP:0000366 (per §5.1 transitions)
 
 Pipeline run (cron / on-demand):
   load_all_jobs("antibody_string_matching_job", args)
@@ -175,8 +180,8 @@ For each batch (size: CLASSIFICATION_BATCH_SIZE, default 1000):
         topic="ATP:0000096",
         negated=negated,
         note=note,
-        confidence_score=<see Q1>, confidence_level=<see Q1>,
-        data_novelty=<see Q2>,
+        confidence_score=None, confidence_level=None,
+        data_novelty="ATP:0000335",
         tet_source_id=tet_source_id,
         ml_model_id=None,
     )
@@ -222,7 +227,7 @@ eco_map = {
     "abc_entity_extractor":                  "ECO:0008021",
     "abc_document_classifier":               "ECO:0008004",
     "abc_literature_system":                 "ATP:0000036",
-    "abc_antibody_string_matching_classifier": "ECO:0008021",   # <-- added
+    "abc_string_matching_antibody":          "ECO:0008021",   # <-- added
 }
 ```
 
@@ -358,10 +363,24 @@ in the same directory.
 
 Sketch:
 
+**Selection criterion (per Daniela):** target only WB in-corpus references
+that **do not** already have a TET emitted by the legacy caltech import
+(the imported caltech antibody pipeline writes TETs with
+`topic_entity_tag_source.source_method = "string_matching_antibody"` — note
+no `abc_` prefix; that's the legacy import row, distinct from the new
+pipeline's `abc_string_matching_antibody` source). The presence of a
+caltech-imported TET means Daniela's existing pipeline already covered
+that paper; the gap we want this pipeline to fill is the references the
+caltech pipeline never reached.
+
+Secondary safety filter: also skip references that already have any tag
+in the new four-state process (so re-runs of the backfill don't disrupt
+in-progress / complete / failed state).
+
 ```python
-"""Backfill ATP:0000366 (antibody string matching classification needed) for all
-WB in-corpus references that don't have a tag in the antibody-string-matching
-classification workflow process yet.
+"""Backfill ATP:0000366 (antibody string matching classification needed)
+for WB in-corpus references that the legacy caltech antibody import did
+NOT cover (no TET with source_method='string_matching_antibody').
 """
 
 WB = "WB"
@@ -371,6 +390,7 @@ ANTIBODY_STR_COMPLETE     = "ATP:0000363"
 ANTIBODY_STR_FAILED       = "ATP:0000364"
 PROCESS_TAGS = (ANTIBODY_STR_NEEDED, ANTIBODY_STR_IN_PROGRESS,
                 ANTIBODY_STR_COMPLETE, ANTIBODY_STR_FAILED)
+LEGACY_CALTECH_SOURCE_METHOD = "string_matching_antibody"
 
 
 def backfill():
@@ -385,15 +405,29 @@ def backfill():
         WHERE mod_id = :mod_id AND corpus = TRUE
     """), {"mod_id": mod_id}))
 
-    # references that already have ANY tag in this process
-    have_tag = set(r[0] for r in db.execute(text("""
+    # references already covered by the legacy caltech antibody import
+    legacy_covered = set(r[0] for r in db.execute(text("""
+        SELECT DISTINCT tet.reference_id
+        FROM topic_entity_tag tet
+        JOIN topic_entity_tag_source tets
+          ON tet.topic_entity_tag_source_id = tets.topic_entity_tag_source_id
+        WHERE tets.source_method = :sm
+    """), {"sm": LEGACY_CALTECH_SOURCE_METHOD}))
+
+    # references that already have a tag in the new four-state process
+    in_new_process = set(r[0] for r in db.execute(text("""
         SELECT reference_id FROM workflow_tag
         WHERE mod_id = :mod_id AND workflow_tag_id IN :tags
     """).bindparams(bindparam("tags", expanding=True)),
         {"mod_id": mod_id, "tags": PROCESS_TAGS}))
 
-    missing = in_corpus - have_tag
-    logger.info(f"WB in-corpus references missing antibody process tag: {len(missing)}")
+    missing = in_corpus - legacy_covered - in_new_process
+    logger.info(
+        f"WB in-corpus: {len(in_corpus)}, "
+        f"legacy-caltech-covered: {len(legacy_covered & in_corpus)}, "
+        f"already in new process: {len(in_new_process & in_corpus)}, "
+        f"to backfill: {len(missing)}"
+    )
 
     inserted = 0
     for ref_id in missing:
@@ -413,124 +447,60 @@ if __name__ == "__main__":
 
 The script:
 - Touches WB only.
-- Skips references that already have *any* tag in the four-state process
-  (i.e. don't overwrite an in-progress / complete / failed state from a
-  previous run).
-- Filters references by publication date if a `--since YYYY-MM-DD` argument
-  is provided; otherwise backfills all in-corpus references. The exact
-  cutoff to use at rollout is open — see Q4 in §6.
+- Skips references already covered by the legacy caltech import (TETs
+  with `source_method = "string_matching_antibody"`).
+- Skips references that already have any tag in the new four-state
+  process (so re-runs are idempotent and don't clobber existing state).
+- No publication-date cutoff — the caltech-coverage filter naturally
+  bounds the set to the gap left by the previous pipeline.
 - Commits in batches of 250 to keep transaction sizes reasonable, matching
   the existing `backfill_file_upload_WFT.py` style.
 
 **Test plan:** run on a stage DB snapshot, count tags before/after, sanity
-check that no non-WB or non-corpus references were touched.
+check that no non-WB or non-corpus references were touched, and that no
+reference with an existing caltech-imported antibody TET received the
+new tag.
 
-## 6. Open questions
+## 6. Decisions (resolved with curation)
 
-Only the items below remain undecided; everything else (job condition format,
-auto-create mechanism, backfill cutoff) is settled in §3 / §5.
+All previously open questions have been resolved with Daniela. Recorded
+here for design provenance; the values are reflected in §3 (constants),
+§4.4 (data flow), §4.5 (eco_map), and §5.2 (backfill).
 
-### Q1. `confidence_score` / `confidence_level` for a deterministic classifier
-The existing `send_classification_tag_to_abc` requires both. Two reasonable
-choices:
-- **`1.0` / `"HIGH"`** — accurate (string matching is deterministic; if a
-  rule fired, we are 100% sure it fired) and matches `get_confidence_level`
-  thresholds (`agr_document_classifier_classify.py:228`). Downside:
-  conflates "rule fired" with "biological certainty"; a curator filtering
-  "high confidence positives" might over-trust string matches.
-- **`None` / `None`** — the schema's `Optional`. Communicates "score not
-  applicable to this method." Downside: breaks any UI assumption that
-  every TET has a score.
+### D1. `confidence_score` / `confidence_level`
+**Decision:** `None` / `None`.
+String matching is deterministic; a numeric score would conflate "rule
+fired" with "biological certainty." Leaving both empty signals to
+consumers that a score isn't applicable.
 
-**Recommendation:** `None` / `None` — string matching is deterministic, so a
-numeric score conflates "rule fired" with "biological certainty"; leaving
-both empty signals to consumers that a score isn't applicable to this
-method. Confirm with curators.
-
-### Q2. `data_novelty` value
-The ML pipeline reads `data_novelty` from per-model metadata stored in ABC.
-The string matching classifier has no such metadata, and we don't want
-null values in this column. Available ATP terms:
-- **`"ATP:0000335"`** ("data novelty") — the parent term in the ontology;
-  same default as `agr_document_classifier_trainer.py:394`.
-- **`"ATP:0000334"`** ("existing data") — leaf term.
-- **`"ATP:0000321"`** ("new data") — leaf term.
-- **`"ATP:0000228"`** ("new to database") — leaf term.
-- **`"ATP:0000229"`** ("new to field") — leaf term.
-
+### D2. `data_novelty`
+**Decision:** `ATP:0000335` ("data novelty", the parent term).
 A rule-based string matcher cannot semantically distinguish between
-"new data" / "new to database" / "new to field" / "existing data" — that
-classification requires reading the paper's claims, not just matching
-antibody-related strings. So the leaf terms over-claim.
+the leaf novelty subtypes (`ATP:0000334` "existing data",
+`ATP:0000321` "new data", `ATP:0000228` "new to database",
+`ATP:0000229` "new to field") — that judgment requires reading the
+paper's claims. Using the parent term declines to over-claim.
 
-**Recommendation:** `"ATP:0000335"` ("data novelty", parent term),
-matching the default in `agr_document_classifier_trainer.py:394`. It
-declines to specify novelty subtype, which is the honest answer for a
-deterministic regex pipeline. Confirm with curators.
+### D3. TET source row
+- **`source_method`** = `abc_string_matching_antibody`
+  (note: distinct from the legacy caltech import's `string_matching_antibody`).
+- **`description`** = *"Alliance pipeline that identifies relevant words
+  and/or phrases in C. elegans references to identify references
+  describing production and/or use of antibodies."* (verbatim from
+  Daniela).
+- **`source_evidence_assertion`** = `ECO:0008021` ("string matching").
 
-### Q3. TET source row — method, description, ECO code
-The source row for the TETs this pipeline emits has three fields curators
-should review (`get_tet_source_id` in `utils/abc_utils.py:131`).
+### D4. Backfill scope
+**Decision:** target only WB in-corpus references that **do not** have a
+TET emitted by the legacy caltech import (TET source row with
+`source_method = "string_matching_antibody"`). The new ABC pipeline
+fills the gap left by the previous caltech run; references already
+covered there are skipped. As a secondary safety filter, references
+that already have any tag in the new four-state process are also
+skipped (idempotent re-runs).
 
-**a) `source_method`** (string, used in the API URL):
-Proposed `"abc_antibody_string_matching_classifier"`. Alternative:
-`"abc_string_matching_classifier"` (more reusable for future similar
-pipelines). Sources are MOD-specific by URL, not topic-specific, so
-either works.
-
-**Recommendation:** keep the antibody-specific name. If we later add
-other string-matching topic classifiers they can register their own
-sources; mixing them under one source row would lose per-topic
-attribution.
-
-**b) `description`** (free text, shown to curators in the source listing):
-Proposed `"Alliance string matching topic classification pipeline for
-antibody"`. **This wording should come from the curators.** Daniela —
-what would you like this row to say?
-
-**c) `source_evidence_assertion`** (ECO code):
-Proposed `"ECO:0008021"` ("string matching") to mirror what the existing
-entity extractor uses (`abc_utils.py:133`). **TBC** — confirm with
-curators that this is the correct code for a string-matching *topic
-classifier* (vs. entity extractor) before the source is provisioned in
-prod.
-
-### Q4. Backfill scope — all WB in-corpus references, or a date-bounded subset?
-The §5.2 backfill currently plans to add `ATP:0000366` ("antibody string
-matching classification needed") to **every** WB in-corpus reference that
-doesn't already have a tag in the antibody string-matching process. WB's in-corpus reference count is in the tens of
-thousands; classifying all of them entails proportional TEI downloads,
-text parsing, and TET POSTs.
-
-Options:
-- **All in-corpus references** — completest coverage; lets curators see
-  string-matching results on the whole back catalog. Cost: large initial
-  pipeline run, possibly creating TETs that conflict (or duplicate notes
-  via the `" | "` merge logic) with manual curation already present on
-  older papers.
-- **Date-bounded** (e.g., references published in the last year, or since
-  2019 — the cutoff used for the NN training set in SCRUM-4688) — focuses
-  on papers most likely to need fresh curation. Cheaper and lower noise
-  for curators. Downside: older papers added to the corpus *after* the
-  rollout would still need attention via the auto-create chain (which
-  fires regardless of pub date), so the date-bound is only an initial
-  catch-up filter.
-- **In-corpus *and* never previously antibody-curated** — the most
-  surgical. Skips papers where Daniela's manual curation already lives,
-  avoiding any TET note merging. Requires checking the WB-side antibody
-  curation status, which we can pull via wbtools or a CSV from Daniela.
-
-Cost concerns to factor in:
-- Each backfill row inserts only ATP:0000366; the work happens later when
-  the pipeline picks up jobs. So the backfill itself is cheap. The real
-  cost is the downstream pipeline run.
-- TEI files are cached per reference, so once per paper the GROBID PDF
-  conversion is paid; re-runs on the same paper hit the cache.
-
-**Recommendation pending input:** lean toward "last 5 years" (since 2020)
-as a reasonable middle ground — recent enough that curators care, narrow
-enough that the initial run completes in days rather than weeks. Confirm
-with Daniela.
+No publication-date cutoff is needed — the caltech-coverage filter
+naturally bounds the set to the gap.
 
 ## 7. Files changed / created
 
