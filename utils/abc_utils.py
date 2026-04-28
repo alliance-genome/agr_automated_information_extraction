@@ -133,6 +133,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
         "abc_entity_extractor": "ECO:0008021",  # string matching
         "abc_document_classifier": "ECO:0008004",  # ML
         "abc_literature_system": "ATP:0000036",
+        "abc_string_matching_antibody": "ECO:0008021",  # WB antibody string matching topic classifier
     }
     eco_code = eco_map.get(source_method)
     if eco_code is None:
