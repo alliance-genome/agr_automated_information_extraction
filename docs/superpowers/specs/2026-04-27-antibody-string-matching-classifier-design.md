@@ -301,19 +301,25 @@ Idempotent script that does two things on a database:
 **a) INSERT four new `workflow_transition` rows for WB**, mirroring the
 state-machine the existing classifier processes have:
 
-| transition_from | transition_to | condition | actions | Why |
-|---|---|---|---|---|
-| `ATP:0000166` (`reference classification needed`) | `ATP:0000366` (`antibody string matching classification needed`) | `antibody_string_matching_job` | none | makes ATP:0000366 poll-able as a job (join target for `load_all_jobs("antibody_string_matching_job")`) |
-| `ATP:0000366` (needed) | `ATP:0000365` (in progress) | `on_start` | `["sub_task_in_progress::reference classification"]` | `set_job_started` path |
-| `ATP:0000365` (in progress) | `ATP:0000363` (complete) | `on_success` | `["sub_task_complete::reference classification"]` | `set_job_success` path |
-| `ATP:0000365` (in progress) | `ATP:0000364` (failed) | `on_failed` | `["sub_task_failed::reference classification"]` | `set_job_failure` path |
+| transition_from | transition_to | condition | actions | transition_type | Why |
+|---|---|---|---|---|---|
+| `ATP:0000163` (`file converted to text`) | `ATP:0000366` (`antibody string matching classification needed`) | `antibody_string_matching_job` | none | `action` | Virtual job-poll connector. Makes ATP:0000366 poll-able by `load_all_jobs("antibody_string_matching_job")`. `transition_type='action'` ensures `transition_to_workflow_status` (which only matches `any`/`automated_only`) ignores this row. |
+| `ATP:0000366` (needed) | `ATP:0000365` (in progress) | `on_start` | none | `any` | `set_job_started` path |
+| `ATP:0000365` (in progress) | `ATP:0000363` (complete) | `on_success` | none | `any` | `set_job_success` path |
+| `ATP:0000365` (in progress) | `ATP:0000364` (failed) | `on_failed` | none | `any` | `set_job_failure` path |
 
-The `transition_from` for the first row uses the existing parent
-`ATP:0000166` "reference classification needed" tag (the same parent the
-other classifier subtasks hang off of in the seed `classification.py:38-44`,
-docstring at `classification.py:23`). All ATP curies are hardcoded in a
-small dict at the top of the script — same pattern as
-`6755b395f397-SCRUM-4112.py:14-19`.
+**Important:** antibody string matching is its OWN workflow process — NOT a
+sub-task of "reference classification". The intra-process transitions
+therefore have **no** `sub_task_*::reference classification` actions
+(which would aggregate up to ATP:0000178/169/189 of a different process).
+The entry transition's `transition_from` is `ATP:0000163`
+("file converted to text") — the same state whose `actions` chain creates
+ATP:0000366 in step (b) — mirroring `entity_extraction.py:65-73` which
+uses `'reference classification complete' -> '<entry> extraction needed'`
+with `transition_type='action'` for its own standalone-process entry.
+
+All ATP curies are hardcoded in a small dict at the top of the script —
+same pattern as `6755b395f397-SCRUM-4112.py:14-19`.
 
 The script uses `INSERT … ON CONFLICT DO NOTHING` (or a pre-`SELECT` check
 on `(mod_id, transition_from, transition_to)` if the table doesn't have a
