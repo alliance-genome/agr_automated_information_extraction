@@ -133,6 +133,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
         "abc_entity_extractor": "ECO:0008021",  # string matching
         "abc_document_classifier": "ECO:0008004",  # ML
         "abc_literature_system": "ATP:0000036",
+        "abc_string_matching_antibody": "ECO:0008021",  # WB antibody string matching topic classifier
     }
     eco_code = eco_map.get(source_method)
     if eco_code is None:
@@ -210,11 +211,13 @@ def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str,
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
-                                   data_novelty: str, confidence_score: float,
-                                   confidence_level: str, tet_source_id, ml_model_id: Optional[int] = None):
+                                   data_novelty: str, confidence_score: Optional[float],
+                                   confidence_level: Optional[str], tet_source_id,
+                                   ml_model_id: Optional[int] = None,
+                                   note: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
-    tet_data = json.dumps({
+    payload = {
         "created_by": "default_user",
         "updated_by": "default_user",
         "topic": topic,
@@ -222,12 +225,15 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "topic_entity_tag_source_id": tet_source_id,
         "negated": negated,
         "data_novelty": data_novelty,
-        "confidence_score": float(confidence_score),
+        "confidence_score": float(confidence_score) if confidence_score is not None else None,
         "confidence_level": confidence_level,
         "reference_curie": reference_curie,
         "ml_model_id": ml_model_id,
-        "force_insertion": True
-    }).encode('utf-8')
+        "force_insertion": True,
+    }
+    if note is not None:
+        payload["note"] = note
+    tet_data = json.dumps(payload).encode('utf-8')
     headers = generate_headers(token)
     attempts = 0
     while attempts < 3:

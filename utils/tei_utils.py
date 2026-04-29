@@ -18,10 +18,17 @@ def _normalize_text(text: str) -> str:
     return text
 
 
+_SENTENCE_SPLIT_RE = re.compile(r'(?<=[.!?])\s+')
+
+
 def get_sentences_from_tei_section(section):
     """
-    Extract cleaned sentences from a TEI section, ensuring each ends with a period.
-    Returns (sentences, num_errors).
+    Extract cleaned paragraphs from a TEI section, ensuring each ends with a period.
+    Returns (paragraphs, num_errors).
+
+    Note: GROBID's TEI parser does not split paragraphs into sentences, so each
+    item returned here is a paragraph. Callers that need sentence-level units
+    should split further (see `AllianceTEI.get_sentences`).
     """
     sentences = []
     num_errors = 0
@@ -300,13 +307,21 @@ class AllianceTEI:
     def get_sentences(self):
         """
         Return a list of all sentences in the document, normalized.
+
+        GROBID emits each paragraph as a single TextWithRefs (no sentence
+        segmentation), so we split paragraphs on terminal punctuation
+        (`. ! ?` followed by whitespace) before normalizing.
         """
         if not self.tei_obj:
             return []
         sentences = []
         for section in self.tei_obj.sections:
-            sec_sentences, _ = get_sentences_from_tei_section(section)
-            sentences.extend(sec_sentences)
+            paragraphs, _ = get_sentences_from_tei_section(section)
+            for paragraph in paragraphs:
+                for sentence in _SENTENCE_SPLIT_RE.split(paragraph):
+                    sentence = sentence.strip()
+                    if sentence:
+                        sentences.append(sentence)
         return [_normalize_text(s) for s in sentences]
 
 
