@@ -20,7 +20,6 @@ from argparse import Namespace
 from agr_document_classifier.antibody_rules import build_regexes, match_antibody_spans
 from utils.abc_utils import (
     download_tei_files_for_references,
-    get_cached_mod_abbreviation_from_id,
     get_cached_mod_id_from_abbreviation,
     get_tet_source_id,
     load_all_jobs,
@@ -101,18 +100,14 @@ def _curie_from_filename(file_path: str) -> str:
     return name.replace("_", ":")
 
 
-def process_antibody_jobs(mod_id, topic: str, jobs: list, *, test_mode: bool = False) -> None:
-    """Process all jobs for a single (mod_id, topic). Used by both
-    classify_mode (cron) and direct_classify_mode (--test_mode).
-    """
-    if isinstance(mod_id, int):
-        mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    else:
-        mod_abbr = mod_id
-    if mod_abbr != "WB":
-        logger.info(f"Skipping non-WB jobs: mod={mod_abbr}")
-        return
+def process_antibody_jobs(topic: str, jobs: list, *, test_mode: bool = False) -> None:
+    """Process all jobs for a single topic. Used by both classify_mode
+    (cron) and direct_classify_mode (--test_mode).
 
+    Cron mode is WB-only by virtue of the `antibody_string_matching_job`
+    workflow tag being wired up only for WB; test mode validates the
+    --mod_abbreviation up front in direct_classify_mode.
+    """
     curated_genes, _, _ = get_all_curated_entities(
         mod_abbreviation="WB", entity_type_str="gene")
     if not curated_genes:
@@ -204,7 +199,7 @@ def classify_mode(args: Namespace) -> None:
     failed = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            process_antibody_jobs(mod_id, topic, jobs)
+            process_antibody_jobs(topic, jobs)
         except Exception as exc:
             logger.error(f"Error processing antibody batch (mod={mod_id} topic={topic}): {exc}")
             failed.append({
@@ -228,13 +223,15 @@ def direct_classify_mode(args: Namespace) -> None:
     if not args.reference_curie or not args.mod_abbreviation:
         logger.error("--test_mode requires --reference_curie and --mod_abbreviation")
         sys.exit(2)
+    if args.mod_abbreviation != "WB":
+        logger.error(f"--test_mode only supports WB; got {args.mod_abbreviation}")
+        sys.exit(2)
 
     curies = [c.strip() for c in args.reference_curie.split(",") if c.strip()]
     mod_id = get_cached_mod_id_from_abbreviation(args.mod_abbreviation)
     jobs = [{"reference_curie": c, "reference_workflow_tag_id": None,
              "mod_id": mod_id} for c in curies]
     process_antibody_jobs(
-        mod_id=mod_id,
         topic=args.topic or ANTIBODY_TOPIC,
         jobs=jobs,
         test_mode=True,

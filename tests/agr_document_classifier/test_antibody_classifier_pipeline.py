@@ -24,8 +24,7 @@ def patched_pipeline():
          patch(f"{p}.AllianceTEI") as m_tei_cls, \
          patch(f"{p}.os.listdir", return_value=["AGRKB_101000000000001.tei"]), \
          patch(f"{p}.os.remove"), \
-         patch(f"{p}.os.makedirs"), \
-         patch(f"{p}.get_cached_mod_abbreviation_from_id", return_value="WB"):
+         patch(f"{p}.os.makedirs"):
         m_genes.return_value = (["pdr-1", "unc-54"], {}, {})
         yield {
             "genes": m_genes,
@@ -54,9 +53,7 @@ def test_positive_paper_emits_tet_with_sorted_note(patched_pipeline):
         "The antibody was raised against UNC-54.",
         "We also used anti-PDR-1 in some experiments.",
     ])
-    pipe.process_antibody_jobs(
-        mod_id=3, topic="ATP:0000096", jobs=[_job()],
-    )
+    pipe.process_antibody_jobs(topic="ATP:0000096", jobs=[_job()])
 
     assert patched_pipeline["send"].call_count == 1
     kwargs = patched_pipeline["send"].call_args.kwargs
@@ -80,7 +77,7 @@ def test_negative_paper_emits_negated_tet_without_note(patched_pipeline):
         "We bought a commercial reagent from Sigma.",
         "The animals were maintained at 20 degrees.",
     ])
-    pipe.process_antibody_jobs(mod_id=3, topic="ATP:0000096", jobs=[_job()])
+    pipe.process_antibody_jobs(topic="ATP:0000096", jobs=[_job()])
 
     kwargs = patched_pipeline["send"].call_args.kwargs
     assert kwargs["negated"] is True
@@ -91,7 +88,7 @@ def test_negative_paper_emits_negated_tet_without_note(patched_pipeline):
 def test_tei_parse_failure_marks_job_failed(patched_pipeline):
     from agr_document_classifier import agr_antibody_string_matching_classifier as pipe
     patched_pipeline["tei_cls"].return_value.load_from_file.side_effect = ValueError("bad TEI")
-    pipe.process_antibody_jobs(mod_id=3, topic="ATP:0000096", jobs=[_job()])
+    pipe.process_antibody_jobs(topic="ATP:0000096", jobs=[_job()])
 
     patched_pipeline["failure"].assert_called_once()
     patched_pipeline["send"].assert_not_called()
@@ -102,5 +99,5 @@ def test_empty_curated_gene_list_aborts(patched_pipeline):
     from agr_document_classifier import agr_antibody_string_matching_classifier as pipe
     patched_pipeline["genes"].return_value = ([], {}, {})
     with pytest.raises(RuntimeError, match="curated gene list"):
-        pipe.process_antibody_jobs(mod_id=3, topic="ATP:0000096", jobs=[_job()])
+        pipe.process_antibody_jobs(topic="ATP:0000096", jobs=[_job()])
     patched_pipeline["send"].assert_not_called()
