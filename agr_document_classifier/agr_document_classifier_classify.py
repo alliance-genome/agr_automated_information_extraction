@@ -13,7 +13,7 @@ import numpy as np
 import requests.exceptions
 from gensim.models import KeyedVectors
 
-from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
+from utils.abc_utils import download_md_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
@@ -142,8 +142,8 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
                       test_mode):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
-    download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                      "/data/agr_document_classifier/to_classify", mod_abbr)
+    download_md_files_for_references(list(reference_curie_job_map.keys()),
+                                     "/data/agr_document_classifier/to_classify", mod_abbr)
     files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
         embedding_model=embedding_model,
         classifier_model=classifier_model,
@@ -151,7 +151,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
     if test_mode:
         for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                           valid_embeddings):
-            reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
+            reference_curie = os.path.splitext(file_path.split("/")[-1])[0].replace("_", ":")
             if not valid_embedding:
                 logger.warning(f"Invalid embedding for file: {file_path}. Skipping.")
                 continue
@@ -186,7 +186,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
-        reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
+        reference_curie = os.path.splitext(file_path.split("/")[-1])[0].replace("_", ":")
         if not valid_embedding:
             logger.warning(f"Invalid embedding for file: {file_path}. Setting job to failed.")
             set_job_started(reference_curie_job_map[reference_curie])

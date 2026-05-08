@@ -22,10 +22,6 @@ import nltk
 import numpy as np
 import requests.exceptions
 from gensim.models import KeyedVectors
-from grobid_client import Client
-from grobid_client.api.pdf import process_fulltext_document
-from grobid_client.models import Article, ProcessForm
-from grobid_client.types import TEI, File
 from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 from sklearn.model_selection import train_test_split, RandomizedSearchCV, StratifiedKFold
@@ -37,13 +33,13 @@ from sklearn.ensemble import RandomForestClassifier
 from imblearn.under_sampling import RandomUnderSampler
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
-from utils.abc_utils import download_tei_files_for_references, send_classification_tag_to_abc, \
+from utils.abc_utils import download_md_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_prioritization_references, set_job_success, get_tet_source_id, \
     set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
     set_job_failure, load_all_jobs, set_indexing_priority, get_model_data
 from utils.embedding import load_embedding_model, get_document_embedding
-from utils.tei_utils import get_sentences_from_tei_section
+from utils.md_utils import AllianceMarkdown
 from agr_literature_service.lit_processing.utils.report_utils import send_report
 
 nltk.download('stopwords')
@@ -273,43 +269,20 @@ def remove_stopwords(text):
 
 def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
     documents = []
-    client = None
     for file_path in glob.glob(os.path.join(input_docs_dir, "*")):
         num_errors = 0
-        file_obj = Path(file_path)
-        # Process TEI or PDF files as before
-        if file_path.endswith(".tei") or file_path.endswith(".pdf"):
-            with file_obj.open("rb") as fin:
-                if file_path.endswith(".pdf"):
-                    if client is None:
-                        client = Client(base_url=os.environ.get("GROBID_API_URL"), timeout=1000, verify_ssl=False)
-                    logger.info("Started pdf to TEI conversion")
-                    form = ProcessForm(
-                        segment_sentences="1",
-                        input_=File(file_name=file_obj.name, payload=fin, mime_type="application/pdf")
-                    )
-                    r = process_fulltext_document.sync_detailed(client=client, multipart_data=form)
-                    file_stream = r.content
-                else:
-                    file_stream = fin
-                try:
-                    article: Article = TEI.parse(file_stream, figures=True)
-                except Exception:
-                    num_errors += 1
-                    continue
-                sentences = []
-                for section in article.sections:
-                    sec_sentences, sec_num_errors = get_sentences_from_tei_section(section)
-                    sentences.extend(sec_sentences)
-                    num_errors += sec_num_errors
-                abstract = ""
-                for section in article.sections:
-                    if section.name == "ABSTRACT":
-                        abs_sentences, num_errors = get_sentences_from_tei_section(section)
-                        abstract = " ".join(abs_sentences)
-                        break
-                documents.append((file_path, " ".join(sentences), article.title, abstract))
-        # process plain text files with metadata in key|value format
+        if file_path.endswith(".md"):
+            if ".supp_" in os.path.basename(file_path):
+                # Supplement files are folded in via AllianceMarkdown when callers
+                # opt in to include_supplements; never load them as standalone docs.
+                continue
+            try:
+                md = AllianceMarkdown()
+                md.load_from_file(file_path)
+                documents.append((file_path, md.get_fulltext(), md.get_title(), md.get_abstract()))
+            except Exception as e:
+                num_errors += 1
+                logger.error(f"Error parsing MD file {file_path}: {e}")
         elif file_path.endswith(".txt"):
             try:
                 with file_obj.open("r", encoding="utf-8") as fin:
@@ -664,8 +637,8 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
-    download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                      f"{root_data_path}to_classify", mod_abbr)
+    download_md_files_for_references(list(reference_curie_job_map.keys()),
+                                     f"{root_data_path}to_classify", mod_abbr)
     files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
         embedding_model=embedding_model,
         classifier_model=classifier_model,
@@ -686,7 +659,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
     logger.info("Sending classification tags to ABC.")
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
-        reference_curie = file_path.split("/")[-1].replace("_", ":")[:-4]
+        reference_curie = os.path.splitext(file_path.split("/")[-1])[0].replace("_", ":")
         if not valid_embedding:
             logger.warning(f"Invalid embedding for file: {file_path}. Setting job to failed.")
             set_job_started(reference_curie_job_map[reference_curie])

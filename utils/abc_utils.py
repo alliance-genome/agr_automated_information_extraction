@@ -637,6 +637,245 @@ def download_tei_files_for_references(reference_curies: List[str], output_dir: s
     logger.info("Finished downloading TEI files")
 
 
+def request_conversion_for_reference(reference_curie: str,
+                                     poll_interval_seconds: float = 15.0,
+                                     timeout_seconds: float = 1200.0,
+                                     wait_for_supplements: bool = False) -> str:
+    """Trigger and poll the ABC on-demand conversion endpoint for ``reference_curie``.
+
+    Calls ``GET /reference/referencefile/conversion_request/{curie}`` and polls
+    every ``poll_interval_seconds`` until a terminal condition is reached.
+
+    Returns one of:
+
+    * ``converted`` — the main MD row is now in ABC. When
+      ``wait_for_supplements`` is False (the default), this is returned as
+      soon as ``converted_merged_main`` appears in ``converted_classes``,
+      *even if* the overall job is still running because supplement
+      conversion is in progress server-side. When ``wait_for_supplements``
+      is True, this is only returned once the overall job status is
+      ``converted`` (i.e. main + every supplement done).
+    * ``failed`` — the job failed or the API call errored out.
+    * ``no_sources`` — the reference has nothing to convert.
+    * ``timeout`` — the deadline elapsed before a terminal status was
+      reached.
+    """
+    url = f"{blue_api_base_url}/reference/referencefile/conversion_request/{reference_curie}"
+    deadline = time.monotonic() + timeout_seconds
+    last_status = "unknown"
+    first_call = True
+    while True:
+        token = get_authentication_token()
+        headers = generate_headers(token)
+        try:
+            resp = requests.get(url, headers=headers, timeout=60)
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Conversion request HTTP error for {reference_curie}: {e}")
+            return "failed"
+
+        if resp.status_code in (200, 202):
+            try:
+                body = resp.json()
+            except ValueError:
+                logger.error(f"Conversion request returned non-JSON for {reference_curie}: "
+                             f"{resp.text[:200]}")
+                return "failed"
+            last_status = body.get("status", "unknown")
+            converted_classes = body.get("converted_classes", []) or []
+            if first_call:
+                logger.info(f"Conversion request for {reference_curie}: status={last_status}, "
+                            f"job_id={body.get('job_id')}")
+                first_call = False
+            if last_status in ("converted", "failed", "no_sources"):
+                return last_status
+            # status == "running"
+            if not wait_for_supplements and "converted_merged_main" in converted_classes:
+                logger.info(
+                    f"Main MD ready for {reference_curie}; supplement conversion continues "
+                    f"in the background server-side"
+                )
+                return "converted"
+        else:
+            logger.error(f"Conversion request for {reference_curie} returned "
+                         f"HTTP {resp.status_code}: {resp.text[:200]}")
+            return "failed"
+
+        if time.monotonic() >= deadline:
+            logger.warning(f"Conversion request for {reference_curie} timed out after "
+                           f"{timeout_seconds:.0f}s (last status: {last_status})")
+            return "timeout"
+        time.sleep(poll_interval_seconds)
+
+
+def download_md_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation,
+                                     include_supplements: bool = False,
+                                     request_conversion: bool = False):
+    """Download main-document Markdown files for the given references.
+
+    Resolution order for the main file, per curie:
+
+    1. ``file_class == "converted_merged_main"``, ``file_extension == "md"``
+       — fetched directly.
+    2. ``file_class == "tei"``, ``file_extension == "tei"`` — fetched and
+       converted in-process via
+       :func:`agr_abc_document_parsers.convert_xml_to_markdown`.
+    3. (Only when ``request_conversion`` is True) trigger server-side
+       conversion via
+       ``GET /reference/referencefile/conversion_request/{curie}``, poll
+       until the job terminates, then re-fetch the resulting MD row from
+       ABC. This replaces the older local-Grobid PDF→TEI→MD path.
+
+    When ``include_supplements`` is True, also download every available
+    ``converted_merged_supplement`` MD row for the same MOD. Supplements are
+    *not* converted from any other format — if a supplement is not stored
+    as MD it is skipped. Supplement files are written alongside the main
+    file as ``<curie>.supp_<N>.md``.
+
+    All output files are named ``<curie>.md`` (main) or
+    ``<curie>.supp_<N>.md`` (supplements).
+    """
+    logger.info(
+        "Started downloading Markdown files (with TEI->MD fallback%s%s)",
+        ", server-side conversion fallback" if request_conversion else "",
+        ", supplements included" if include_supplements else "",
+    )
+    os.makedirs(output_dir, exist_ok=True)
+    for reference_curie in reference_curies:
+        main_written = _try_download_main_md(
+            reference_curie, output_dir, mod_abbreviation,
+        )
+
+        if not main_written and request_conversion:
+            logger.info(f"No MD/TEI for {reference_curie}; requesting on-demand conversion")
+            conv_status = request_conversion_for_reference(
+                reference_curie, wait_for_supplements=include_supplements,
+            )
+            if conv_status == "converted":
+                main_written = _try_download_main_md(
+                    reference_curie, output_dir, mod_abbreviation,
+                )
+                if not main_written:
+                    logger.error(
+                        f"{reference_curie}: conversion reported converted but main MD "
+                        f"still not available for MOD={mod_abbreviation}"
+                    )
+            else:
+                logger.warning(
+                    f"{reference_curie}: on-demand conversion ended with status={conv_status}"
+                )
+
+        if not main_written:
+            logger.warning(f"No main MD or TEI file available for {reference_curie}")
+            continue
+
+        if include_supplements:
+            _download_main_md_supplements(
+                reference_curie, output_dir, mod_abbreviation,
+            )
+
+    logger.info("Finished downloading Markdown files")
+
+
+def _show_all_for_reference(reference_curie: str) -> Optional[list]:
+    """Fetch and return the JSON list from ``/reference/referencefile/show_all/{curie}``,
+    or None on failure."""
+    token = get_authentication_token()
+    headers = generate_headers(token)
+    url = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
+    request = urllib.request.Request(url=url, headers=headers)
+    request.add_header("Content-type", "application/json")
+    request.add_header("Accept", "application/json")
+    try:
+        with urllib.request.urlopen(request) as response:
+            return json.loads(response.read().decode("utf8"))
+    except HTTPError as e:
+        logger.error(e)
+        return None
+
+
+def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviation: str) -> bool:
+    """Try to write a ``<curie>.md`` file using the main MD row first, then a
+    TEI-row fallback converted in-process. Returns True iff a file was written.
+    """
+    from agr_abc_document_parsers import convert_xml_to_markdown
+
+    resp_obj = _show_all_for_reference(reference_curie)
+    if resp_obj is None:
+        return False
+
+    base_name = reference_curie.replace(":", "_")
+    out_path = os.path.join(output_dir, base_name + ".md")
+
+    md_ref_file = next(
+        (rf for rf in resp_obj
+         if rf.get("file_extension") == "md"
+         and rf.get("file_class") == "converted_merged_main"
+         and any(m.get("mod_abbreviation") == mod_abbreviation
+                 for m in rf.get("referencefile_mods", []))),
+        None,
+    )
+    if md_ref_file is not None:
+        content = get_file_from_abc_reffile_obj(md_ref_file)
+        if content:
+            with open(out_path, "wb") as out_file:
+                out_file.write(content)
+            return True
+        logger.error(f"Main MD entry exists but download returned no bytes for {reference_curie}")
+
+    tei_ref_file = next(
+        (rf for rf in resp_obj
+         if rf.get("file_extension") == "tei"
+         and rf.get("file_class") == "tei"
+         and any(m.get("mod_abbreviation") == mod_abbreviation
+                 for m in rf.get("referencefile_mods", []))),
+        None,
+    )
+    if tei_ref_file is None:
+        return False
+
+    tei_bytes = get_file_from_abc_reffile_obj(tei_ref_file)
+    if not tei_bytes:
+        logger.error(f"TEI download returned no bytes for {reference_curie}")
+        return False
+    try:
+        md_text = convert_xml_to_markdown(tei_bytes, "tei")
+    except Exception as e:
+        logger.error(f"Failed to convert TEI to MD for {reference_curie}: {e}")
+        return False
+    with open(out_path, "w", encoding="utf-8") as out_file:
+        out_file.write(md_text)
+    return True
+
+
+def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abbreviation: str) -> None:
+    """Download every ``converted_merged_supplement`` MD row for ``mod_abbreviation``
+    and write them as ``<curie>.supp_<N>.md`` (numbered in API order).
+    """
+    resp_obj = _show_all_for_reference(reference_curie)
+    if resp_obj is None:
+        return
+
+    base_name = reference_curie.replace(":", "_")
+    supp_ref_files = [
+        rf for rf in resp_obj
+        if rf.get("file_extension") == "md"
+        and rf.get("file_class") == "converted_merged_supplement"
+        and any(m.get("mod_abbreviation") == mod_abbreviation
+                for m in rf.get("referencefile_mods", []))
+    ]
+    for idx, supp in enumerate(supp_ref_files, start=1):
+        supp_bytes = get_file_from_abc_reffile_obj(supp)
+        if not supp_bytes:
+            logger.error(
+                f"Supplement MD entry exists but download returned no bytes "
+                f"for {reference_curie} (supp_{idx})"
+            )
+            continue
+        supp_path = os.path.join(output_dir, f"{base_name}.supp_{idx}.md")
+        with open(supp_path, "wb") as out_file:
+            out_file.write(supp_bytes)
+
+
 def convert_pdf_with_grobid(file_content):
     grobid_api_url = os.environ.get("GROBID_API_URL",
                                     "https://grobid.alliancegenome.org/api/processFulltextDocument")

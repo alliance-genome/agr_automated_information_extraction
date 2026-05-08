@@ -9,13 +9,13 @@ import pandas as pd
 from gensim.models import KeyedVectors
 
 from utils.embedding import get_document_embedding, load_embedding_model
-from utils.tei_utils import AllianceTEI
+from utils.md_utils import AllianceMarkdown
 
 
 logger = logging.getLogger(__name__)
 
 
-def process_tei_files(base_folder, all_mods, embedding_model, output_file):
+def process_md_files(base_folder, all_mods, embedding_model, output_file):
     embeddings = defaultdict(lambda: defaultdict(list))
     processed_curies = 0
 
@@ -31,7 +31,9 @@ def process_tei_files(base_folder, all_mods, embedding_model, output_file):
             logger.warning(f"Warning: MOD folder {mod} does not exist.")
             continue
         for filename in os.listdir(mod_folder):
-            curie = filename.replace(".tei", "").replace("_", ":")
+            if not filename.endswith(".md"):
+                continue
+            curie = os.path.splitext(filename)[0].replace("_", ":")
             file_path = os.path.join(mod_folder, filename)
             all_files[curie].append((file_path, mod))
     curies_to_process = list(all_files.keys())
@@ -40,14 +42,13 @@ def process_tei_files(base_folder, all_mods, embedding_model, output_file):
     for curie in curies_to_process:
         for file_path, mod in all_files[curie]:
             filename = os.path.basename(file_path)
-            curie = filename.replace(".tei", "").replace("_", ":")
+            curie = os.path.splitext(filename)[0].replace("_", ":")
 
             logger.debug(f"Processing file {filename} for {mod}...")
-            # Extract fulltext using AllianceTEI
-            tei_parser = AllianceTEI()
+            md_parser = AllianceMarkdown()
             try:
-                tei_parser.load_from_file(file_path)
-                fulltext = tei_parser.get_fulltext()
+                md_parser.load_from_file(file_path)
+                fulltext = md_parser.get_fulltext()
             except Exception as e:
                 logger.error(f"Error processing file {filename}: {e}")
                 continue
@@ -103,12 +104,12 @@ def save_to_csv(aggregated_embedding_data, output_file):
 # Main function
 def main():
     # Parse arguments
-    parser = argparse.ArgumentParser(description="Generate a matrix of average word embeddings for TEI files.")
+    parser = argparse.ArgumentParser(description="Generate a matrix of average word embeddings for Markdown files.")
     parser.add_argument(
         "--input_folder",
         type=str,
         required=True,
-        help="Path to the base folder containing MOD subfolders with TEI files."
+        help="Path to the base folder containing MOD subfolders with Markdown files."
     )
     parser.add_argument(
         "--output_file",
@@ -144,9 +145,9 @@ def main():
 
     embedding_model = load_embedding_model(args.embedding_model_path)
 
-    # Process TEI files and generate embeddings
-    print(f"Processing TEI files in folder: {input_folder}")
-    process_tei_files(input_folder, mods, embedding_model, output_file)
+    # Process Markdown files and generate embeddings
+    print(f"Processing Markdown files in folder: {input_folder}")
+    process_md_files(input_folder, mods, embedding_model, output_file)
 
 
 # Entry point

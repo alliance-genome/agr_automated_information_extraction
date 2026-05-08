@@ -19,7 +19,7 @@ from sklearn.ensemble import IsolationForest
 from sklearn.covariance import EllipticEnvelope
 from sklearn.neighbors import LocalOutlierFactor
 
-from agr_dataset_manager.dataset_downloader import download_tei_files_from_abc_or_convert_pdf
+from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
 from utils.embedding import load_embedding_model, get_document_embedding
@@ -479,9 +479,9 @@ def download_training_set(args, training_data_dir):
     shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
     os.makedirs(os.path.join(training_data_dir, "positive"), exist_ok=True)
     os.makedirs(os.path.join(training_data_dir, "negative"), exist_ok=True)
-    download_tei_files_from_abc_or_convert_pdf(reference_ids_positive, reference_ids_negative,
-                                               output_dir=training_data_dir,
-                                               mod_abbreviation=args.mod_train)
+    download_md_files_from_abc_or_convert_pdf(reference_ids_positive, reference_ids_negative,
+                                              output_dir=training_data_dir,
+                                              mod_abbreviation=args.mod_train)
     return training_set
 
 
