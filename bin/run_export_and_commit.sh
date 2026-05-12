@@ -123,8 +123,9 @@ fi
 resolve_conflicts "theirs-full" >/dev/null
 
 log "Running export scripts"
-if ! run_export; then
-    export_rc=$?
+run_export
+export_rc=$?
+if (( export_rc != 0 )); then
     log "Export runner exited $export_rc"
     # The Python scripts call send_report() themselves on exception. Re-alert here
     # in case the failure was the docker invocation itself (image missing, mount denied).
