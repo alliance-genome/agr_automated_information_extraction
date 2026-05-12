@@ -13,8 +13,15 @@
 #
 # Required env vars (typically set by the GoCD pipeline):
 #   CRONTAB_EMAIL, SENDER_EMAIL, SENDER_PASSWORD   - for alert dispatch
-#   BLUE_USERNAME, BLUE_PASSWORD, BLUE_HOST,       - for the export scripts' DB access
-#     BLUE_PORT, BLUE_DATABASE                       (pulled from --env-file by docker)
+#   BLUE_PASSWORD                                  - forwarded into docker for the
+#                                                    export scripts' DB access. The
+#                                                    other BLUE_* vars (USERNAME,
+#                                                    HOST, PORT, DATABASE) have prod
+#                                                    defaults baked into the Python
+#                                                    scripts and are not required.
+#   SVN_PASSWORD                                   - consumed by svn via cached
+#                                                    credentials on the GoCD agent
+#                                                    (not read by this script directly)
 #
 # Optional overrides:
 #   CURATION_STATUS_DIR  host path of the SVN working copy. Defaults to
@@ -27,17 +34,14 @@
 #                        (default: docker run agr_document_classifier ... for both scripts)
 #   DOCKER_IMAGE         docker image name used by the default EXPORT_RUNNER
 #                        (default: agr_document_classifier)
-#   ENV_FILE             env file passed to docker (default: $REPO_ROOT/.env)
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Capture $PWD before we cd anywhere, so the default is the GoCD task's CWD.
 CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-agr_document_classifier}"
-ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -72,7 +76,7 @@ resolve_conflicts() {
 
 default_export_runner() {
     docker run --rm \
-        --env-file "$ENV_FILE" \
+        -e BLUE_PASSWORD \
         -v "$CURATION_STATUS_DIR:/curation_status" \
         "$DOCKER_IMAGE" \
         python3 /usr/src/app/export_fb_tets.py
@@ -80,7 +84,7 @@ default_export_runner() {
     if (( rc1 != 0 )); then return "$rc1"; fi
 
     docker run --rm \
-        --env-file "$ENV_FILE" \
+        -e BLUE_PASSWORD \
         -v "$CURATION_STATUS_DIR:/curation_status" \
         "$DOCKER_IMAGE" \
         python3 /usr/src/app/export_fb_tets_using_score.py
