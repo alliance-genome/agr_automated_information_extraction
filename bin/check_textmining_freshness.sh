@@ -6,8 +6,12 @@
 # place that can stat the real SVN working copy directly).
 #
 # Optional env vars:
-#   CURATION_STATUS_DIR     host path of the SVN working copy
-#                           (default: /var/go/alliance_gocd/go-agent-flybase-3/pipelines/ExportFBClassifiers/curation_status)
+#   CURATION_STATUS_DIR     host path of the SVN working copy. Defaults to
+#                           "$PWD/curation_status" — set this in the cron entry
+#                           by `cd`-ing into the pipeline working directory
+#                           first (the agent name is part of the path so it
+#                           can't sensibly be hardcoded), e.g.:
+#                             30 13 * * * cd /var/go/<agent>/pipelines/ExportFBClassifiers && /var/go/.../bin/check_textmining_freshness.sh
 #   STALE_THRESHOLD_DAYS    age cutoff in days (default: 3)
 #
 # Always exits 0 — alerting is the side effect; we don't want a stale-files alarm
@@ -16,7 +20,9 @@
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-/var/go/alliance_gocd/go-agent-flybase-3/pipelines/ExportFBClassifiers/curation_status}"
+# Capture $PWD before any cd; lets the cron entry control the working copy
+# location simply by `cd`-ing into the pipeline directory first.
+CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
 STALE_THRESHOLD_DAYS="${STALE_THRESHOLD_DAYS:-3}"
 
 FILES=(

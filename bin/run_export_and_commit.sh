@@ -17,8 +17,12 @@
 #     BLUE_PORT, BLUE_DATABASE                       (pulled from --env-file by docker)
 #
 # Optional overrides:
-#   CURATION_STATUS_DIR  host path of the SVN working copy
-#                        (default: /var/go/alliance_gocd/go-agent-flybase-3/pipelines/ExportFBClassifiers/curation_status)
+#   CURATION_STATUS_DIR  host path of the SVN working copy. Defaults to
+#                        "$PWD/curation_status" — when this script is invoked
+#                        as a GoCD pipeline task, $PWD is the pipeline working
+#                        directory (e.g. /var/go/<agent>/pipelines/ExportFBClassifiers),
+#                        so the default resolves correctly regardless of which
+#                        agent the job lands on.
 #   EXPORT_RUNNER        command that runs both export scripts; receives no args
 #                        (default: docker run agr_document_classifier ... for both scripts)
 #   DOCKER_IMAGE         docker image name used by the default EXPORT_RUNNER
@@ -30,7 +34,8 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-/var/go/alliance_gocd/go-agent-flybase-3/pipelines/ExportFBClassifiers/curation_status}"
+# Capture $PWD before we cd anywhere, so the default is the GoCD task's CWD.
+CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-agr_document_classifier}"
 ENV_FILE="${ENV_FILE:-$REPO_ROOT/.env}"
 
