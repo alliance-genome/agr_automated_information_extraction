@@ -285,7 +285,7 @@ def get_documents(input_docs_dir: str) -> List[Tuple[str, str, str, str]]:
                 logger.error(f"Error parsing MD file {file_path}: {e}")
         elif file_path.endswith(".txt"):
             try:
-                with file_obj.open("r", encoding="utf-8") as fin:
+                with open(file_path, "r", encoding="utf-8") as fin:
                     content = fin.read()
                 data = {}
                 for line in content.splitlines():

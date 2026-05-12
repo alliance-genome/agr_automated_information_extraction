@@ -277,7 +277,11 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
 
                 nlp = pipeline("ner", model=entity_model, tokenizer=entity_model.tokenizer)
                 try:
-                    fulltext = md.get_fulltext()
+                    fulltext = (
+                        md.get_fulltext(include_attributes=True)
+                        if entity_model.topic == "ATP:0000006"
+                        else md.get_fulltext()
+                    )
                 except Exception as e:
                     logger.error("Error getting fulltext for %s: %s. Skipping.", curie, e)
                     continue
@@ -362,7 +366,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 md.load_from_file(path)
                 title = md.get_title() or ""
                 abstract = md.get_abstract() or ""
-                fulltext = md.get_fulltext() or ""
+                fulltext = (
+                    md.get_fulltext(include_attributes=True)
+                    if model.topic == "ATP:0000006"
+                    else md.get_fulltext()
+                ) or ""
             except Exception as e:
                 logger.warning("Failed to load/process %s: %s", fname, e)
                 continue
@@ -468,7 +476,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 continue
 
             try:
-                fulltext = md.get_fulltext() or ""
+                fulltext = (
+                    md.get_fulltext(include_attributes=True)
+                    if model.topic == "ATP:0000006"
+                    else md.get_fulltext()
+                ) or ""
             except Exception as e:
                 logger.error("Fulltext error for %s: %s. Marking failure.", curie, e)
                 set_job_started(job)
