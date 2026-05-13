@@ -10,9 +10,9 @@ import requests
 from transformers import pipeline
 
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
-    download_tei_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
+    download_md_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
     set_job_failure, set_blue_api_base_url
-from utils.tei_utils import AllianceTEI
+from utils.md_utils import AllianceMarkdown
 
 logger = logging.getLogger(__name__)
 
@@ -76,8 +76,8 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
         os.makedirs("/data/agr_entity_extraction/to_extract", exist_ok=True)
         for file in os.listdir("/data/agr_entity_extraction/to_extract"):
             os.remove(os.path.join("/data/agr_entity_extraction/to_extract", file))
-        download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                          "/data/agr_entity_extraction/to_extract", mod_abbr)
+        download_md_files_for_references(list(reference_curie_job_map.keys()),
+                                         "/data/agr_entity_extraction/to_extract", mod_abbr)
 
         for threshold in thresholds:
             entity_extraction_model.tfidf_threshold = threshold
@@ -86,16 +86,16 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
             for file in os.listdir("/data/agr_entity_extraction/to_extract"):
                 curie = file.split(".")[0].replace("_", ":")
                 try:
-                    tei_obj = AllianceTEI()
-                    tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
+                    md_obj = AllianceMarkdown()
+                    md_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
                 except Exception as e:
-                    logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
+                    logger.warning(f"Error loading MD file for {curie}: {str(e)}. Skipping.")
                     continue
 
                 nlp_pipeline = pipeline("ner", model=entity_extraction_model,
                                         tokenizer=entity_extraction_model.tokenizer)
                 try:
-                    fulltext = tei_obj.get_fulltext()
+                    fulltext = md_obj.get_fulltext(include_keywords=True)
                 except Exception as e:
                     logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
                     continue
@@ -104,10 +104,10 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
                 entities_in_fulltext = [result['word'] for result in results if result['entity'] == "ENTITY"]
                 entities_to_extract = set(entity_extraction_model.entities_to_extract)
                 entities_in_title = set(
-                    entity_extraction_model.tokenizer.tokenize(tei_obj.get_title() or "")).intersection(
+                    entity_extraction_model.tokenizer.tokenize(md_obj.get_title() or "")).intersection(
                     entities_to_extract)
                 entities_in_abstract = set(
-                    entity_extraction_model.tokenizer.tokenize(tei_obj.get_abstract() or "")).intersection(
+                    entity_extraction_model.tokenizer.tokenize(md_obj.get_abstract() or "")).intersection(
                     entities_to_extract)
                 all_entities = set(entities_in_fulltext).union(entities_in_title).union(entities_in_abstract)
 
@@ -166,16 +166,16 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
         logger.info("Cleaning up existing files in the to_extract directory")
         for file in os.listdir("/data/agr_entity_extraction/to_extract"):
             os.remove(os.path.join("/data/agr_entity_extraction/to_extract", file))
-        download_tei_files_for_references(list(reference_curie_job_map.keys()),
-                                          "/data/agr_entity_extraction/to_extract", mod_abbr)
+        download_md_files_for_references(list(reference_curie_job_map.keys()),
+                                         "/data/agr_entity_extraction/to_extract", mod_abbr)
         for file in os.listdir("/data/agr_entity_extraction/to_extract"):
             curie = file.split(".")[0].replace("_", ":")
             job = reference_curie_job_map[curie]
             try:
-                tei_obj = AllianceTEI()
-                tei_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
+                md_obj = AllianceMarkdown()
+                md_obj.load_from_file(f"/data/agr_entity_extraction/to_extract/{file}")
             except Exception as e:
-                logger.warning(f"Error loading TEI file for {curie}: {str(e)}. Skipping.")
+                logger.warning(f"Error loading MD file for {curie}: {str(e)}. Skipping.")
                 continue
             entity_extraction_model.load_entities_dynamically()
             nlp_pipeline = pipeline("ner", model=entity_extraction_model,
@@ -183,17 +183,17 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
             title = ""
             abstract = ""
             try:
-                fulltext = tei_obj.get_fulltext()
+                fulltext = md_obj.get_fulltext()
             except Exception as e:
                 logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
                 set_job_started(job)
                 set_job_failure(job)
             try:
-                abstract = tei_obj.get_abstract()
+                abstract = md_obj.get_abstract()
             except Exception as e:
                 logger.warning(f"Error getting abstract for {curie}: {str(e)}. Ignoring field.")
             try:
-                title = tei_obj.get_title()
+                title = md_obj.get_title()
             except Exception as e:
                 logger.warning(f"Error getting title for {curie}: {str(e)}. Ignoring field.")
             all_entities = extract_all_entities(nlp_pipeline=nlp_pipeline, fulltext=fulltext, title=title,

@@ -1,8 +1,8 @@
 """WB antibody string-matching topic classifier (SCRUM-5601).
 
-Pulls jobs from ABC, downloads TEIs, applies the rule engine in
-`antibody_rules.py`, and POSTs TopicEntityTags with positive/negative +
-matched-span notes back to ABC.
+Pulls jobs from ABC, downloads main MD (with TEI fallback), applies the
+rule engine in `antibody_rules.py`, and POSTs TopicEntityTags with
+positive/negative + matched-span notes back to ABC.
 
 Mirrors the structure of agr_document_classifier_classify.py without the
 ML-model download/predict path.
@@ -19,7 +19,7 @@ from argparse import Namespace
 
 from agr_document_classifier.antibody_rules import build_regexes, match_antibody_spans
 from utils.abc_utils import (
-    download_tei_files_for_references,
+    download_md_files_for_references,
     get_cached_mod_id_from_abbreviation,
     get_tet_source_id,
     load_all_jobs,
@@ -30,7 +30,7 @@ from utils.abc_utils import (
     set_job_success,
 )
 from utils.ateam_utils import get_all_curated_entities
-from utils.tei_utils import AllianceTEI
+from utils.md_utils import AllianceMarkdown
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
 
@@ -94,7 +94,7 @@ def _prepare_dir() -> None:
 
 
 def _curie_from_filename(file_path: str) -> str:
-    """`AGRKB_101000000000001.tei` -> `AGRKB:101000000000001`."""
+    """`AGRKB_101000000000001.md` -> `AGRKB:101000000000001`."""
     base = os.path.basename(file_path)
     name = base.split(".")[0]
     return name.replace("_", ":")
@@ -138,22 +138,22 @@ def _process_batch(batch: list, rules, tet_source_id: int, topic: str,
                    *, test_mode: bool) -> None:
     curie_to_job = {job["reference_curie"]: job for job in batch}
     _prepare_dir()
-    download_tei_files_for_references(list(curie_to_job.keys()), TO_CLASSIFY_DIR, "WB")
+    download_md_files_for_references(list(curie_to_job.keys()), TO_CLASSIFY_DIR, "WB")
 
     for fname in os.listdir(TO_CLASSIFY_DIR):
         path = os.path.join(TO_CLASSIFY_DIR, fname)
         curie = _curie_from_filename(path)
         job = curie_to_job.get(curie)
         if job is None:
-            logger.warning(f"TEI {fname} has no matching job; skipping")
+            logger.warning(f"MD {fname} has no matching job; skipping")
             continue
 
         try:
-            tei = AllianceTEI()
-            tei.load_from_file(path)
-            sentences = tei.get_sentences()
+            md = AllianceMarkdown()
+            md.load_from_file(path)
+            sentences = md.get_sentences()
         except Exception as exc:
-            logger.error(f"TEI parse failed for {curie}: {exc}")
+            logger.error(f"MD parse failed for {curie}: {exc}")
             if not test_mode:
                 set_job_started(job)
                 set_job_failure(job)

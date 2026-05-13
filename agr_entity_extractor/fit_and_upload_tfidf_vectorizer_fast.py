@@ -14,11 +14,11 @@ from scipy.sparse import diags
 from agr_entity_extractor.models import CustomTokenizer
 from utils.abc_utils import (
     get_all_ref_curies,
-    download_tei_files_for_references,
+    download_md_files_for_references,
     upload_ml_model
 )
 from utils.ateam_utils import get_all_curated_entities
-from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
+from utils.md_utils import convert_all_md_files_in_dir_to_txt
 
 logger = logging.getLogger(__name__)
 
@@ -47,32 +47,32 @@ def fit_vectorizer_on_agr_corpus(
         os.makedirs(download_dir, exist_ok=True)
         logger.info("Wipe complete.")
 
-    # Check for existing TEI/TXT
-    tei_present = False
+    # Check for existing MD/TXT
+    md_present = False
     txt_present = False
     if not continue_download and os.path.exists(download_dir):
         files = os.listdir(download_dir)
-        tei_present = any(f.endswith('.tei') for f in files)
+        md_present = any(f.endswith('.md') for f in files)
         txt_present = any(f.endswith('.txt') for f in files)
-        logger.info(f"Found TEI: {tei_present}, TXT: {txt_present}")
+        logger.info(f"Found MD: {md_present}, TXT: {txt_present}")
 
-    # Download TEIs if needed
-    if not tei_present and not txt_present:
-        logger.info("Downloading TEI files...")
+    # Download Markdown files (with TEI->MD fallback) if needed
+    if not md_present and not txt_present:
+        logger.info("Downloading Markdown files...")
         ref_curies = get_all_ref_curies(mod_abbreviation=mod_abbreviation)
         logger.info(f"References to download: {len(ref_curies)}")
         if continue_download:
-            present = {f.replace('_', ':')[:-4] for f in files if f.endswith('.tei')}
+            present = {os.path.splitext(f)[0].replace('_', ':') for f in files if f.endswith('.md')}
             ref_curies = [r for r in ref_curies if r not in present]
-            logger.info(f"Skipping already present TEIs, remaining: {len(ref_curies)}")
-        download_tei_files_for_references(ref_curies, download_dir, mod_abbreviation)
-        logger.info("TEI download complete.")
-        tei_present = True
+            logger.info(f"Skipping already present MDs, remaining: {len(ref_curies)}")
+        download_md_files_for_references(ref_curies, download_dir, mod_abbreviation)
+        logger.info("MD download complete.")
+        md_present = True
 
-    # Convert TEI to TXT
-    if tei_present and not txt_present:
-        logger.info("Converting TEI to TXT...")
-        convert_all_tei_files_in_dir_to_txt(download_dir)
+    # Convert MD to TXT
+    if md_present and not txt_present:
+        logger.info("Converting MD to TXT...")
+        convert_all_md_files_in_dir_to_txt(download_dir)
         logger.info("Conversion complete.")
 
     # Fetch curated entities

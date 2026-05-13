@@ -14,7 +14,7 @@ from utils.abc_utils import (
     get_cached_mod_abbreviation_from_id,
     get_tet_source_id,
     download_abc_model,
-    download_tei_files_for_references,
+    download_md_files_for_references,
     set_job_started,
     set_job_success,
     send_entity_tag_to_abc,
@@ -22,7 +22,7 @@ from utils.abc_utils import (
     set_job_failure
 )
 from utils.ateam_utils import get_all_curated_entities
-from utils.tei_utils import AllianceTEI
+from utils.md_utils import AllianceMarkdown
 from utils.species_text_norm import (
     normalize_species_aliases,
     expand_species_abbreviations,
@@ -109,7 +109,7 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
 # applying an NER (Named Entity Recognition) model to extract entities      #
 # for a specific mod_id and topic.                                          #
 # ------------------------------------------------------------------------- #
-def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10, combined_tei_dir: bool = False, refresh_taxa_cache: bool = False):  # noqa: C901
+def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10, combined_md_dir: bool = False, refresh_taxa_cache: bool = False):  # noqa: C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
 
     tet_source_id = None
@@ -171,23 +171,23 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         logger.warning("Parent/child map is empty — ancestor pruning disabled for this run. Aborting.")
         return
 
-    # ---------------- NEW combined TEI DIR handling -------------------- #
-    if combined_tei_dir:
+    # ---------------- combined MD DIR handling ------------------------- #
+    if combined_md_dir:
         logger.info(
-            "Processing all combined TEI files in %s (files will not be deleted)",
-            combined_tei_dir
+            "Processing all combined MD files in %s (files will not be deleted)",
+            combined_md_dir
         )
-        for fname in sorted(os.listdir(combined_tei_dir)):
-            if not fname.endswith(".combined.tei"):
+        for fname in sorted(os.listdir(combined_md_dir)):
+            if not fname.endswith(".md"):
                 continue
-            curie = fname[:-len(".combined.tei")].replace("_", ":")
-            path = os.path.join(combined_tei_dir, fname)
+            curie = fname[:-len(".md")].replace("_", ":")
+            path = os.path.join(combined_md_dir, fname)
             try:
-                tei = AllianceTEI()
-                tei.load_from_file(path)
-                title = tei.get_title() or ""
-                abstract = tei.get_abstract() or ""
-                fulltext = tei.get_fulltext() or ""
+                md = AllianceMarkdown()
+                md.load_from_file(path)
+                title = md.get_title() or ""
+                abstract = md.get_abstract() or ""
+                fulltext = md.get_fulltext() or ""
             except Exception as e:
                 logger.warning("Failed to load/process %s: %s", fname, e)
                 continue
@@ -243,7 +243,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     logger.info("%s: dropping ancestor '%s' (has a more specific descendant)", curie, d)
             logger.info("%s (raw)  = %s", curie, all_entities)
             logger.info("%s (dedup)= %s", curie, deduped_names)
-        logger.info("Finished processing combined TEI directory.")
+        logger.info("Finished processing combined MD directory.")
         return
 
     # --------------------------------------------------------------------- #
@@ -265,12 +265,12 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         for f in os.listdir(out_dir):
             os.remove(os.path.join(out_dir, f))
 
-        download_tei_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
+        download_md_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
 
         metas: List[Tuple[str, dict, str, str, str]] = []  # (curie, job, title, abstract, fulltext)
         texts_for_ner: List[str] = []
 
-        # ---- Prepare TEIs ----
+        # ---- Prepare MDs ----
         for fname in os.listdir(out_dir):
             curie = fname.split(".")[0].replace("_", ":")
             job = ref_map.get(curie)
@@ -278,14 +278,14 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 continue
 
             try:
-                tei = AllianceTEI()
-                tei.load_from_file(os.path.join(out_dir, fname))
+                md = AllianceMarkdown()
+                md.load_from_file(os.path.join(out_dir, fname))
             except Exception as e:
-                logger.warning("TEI load failed for %s: %s. Skipping.", curie, e)
+                logger.warning("MD load failed for %s: %s. Skipping.", curie, e)
                 continue
 
             try:
-                fulltext = tei.get_fulltext() or ""
+                fulltext = md.get_fulltext() or ""
             except Exception as e:
                 logger.error("Fulltext error for %s: %s. Marking failure.", curie, e)
                 set_job_started(job)
@@ -293,12 +293,12 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 continue
 
             try:
-                abstract = tei.get_abstract() or ""
+                abstract = md.get_abstract() or ""
             except Exception as e:
                 logger.warning("Abstract error for %s: %s. Ignoring.", curie, e)
                 abstract = ""
             try:
-                title = tei.get_title() or ""
+                title = md.get_title() or ""
             except Exception as e:
                 logger.warning("Title error for %s: %s. Ignoring.", curie, e)
                 title = ""
@@ -309,7 +309,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             metas.append((curie, job, title, abstract, fulltext))
 
         if not texts_for_ner:
-            logger.info("No valid TEIs in this batch.")
+            logger.info("No valid MDs in this batch.")
             continue
 
         # ---- Run NER ----
@@ -377,8 +377,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
 def main():
     parser = argparse.ArgumentParser(description='Extract biological entities from documents')
     parser.add_argument(
-        "--combined-tei-dir", metavar="DIR",
-        help="Process every .combined.tei under this directory instead of downloading TEIs."
+        "--combined-md-dir", metavar="DIR",
+        help="Process every .md file under this directory instead of downloading MDs."
     )
     parser.add_argument("--refresh-taxa-cache", action="store_true",
                         help="Ignore on-disk parent/children cache and rebuild from NCBI API")
@@ -459,7 +459,7 @@ def main():
                 ner_batch_size=args.ner_batch,
                 prefilter=not args.no_prefilter,
                 log_every=args.log_every,
-                combined_tei_dir=args.combined_tei_dir,
+                combined_md_dir=args.combined_md_dir,
                 refresh_taxa_cache=args.refresh_taxa_cache,
             )
     finally:

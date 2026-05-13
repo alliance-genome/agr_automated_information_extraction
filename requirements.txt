@@ -91,3 +91,4 @@ pubmed_parser @ git+https://github.com/titipata/pubmed_parser
 retry==0.9.2
 matplotlib
 agr-curation-api-client==0.8.0
+agr-abc-document-parsers==1.5.1

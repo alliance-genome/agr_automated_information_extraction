@@ -2,10 +2,12 @@ import argparse
 import os
 import logging
 from utils.abc_utils import (
+    download_md_files_for_references,
     download_tei_files_for_references,
     download_main_pdf,
-    get_pmids_from_reference_curies
+    get_pmids_from_reference_curies,
 )
+from utils.md_utils import convert_all_md_files_in_dir_to_txt
 from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 # Configure the logger
@@ -62,6 +64,21 @@ def download_tei_files(output_directory, mod_abbreviation, curie_list):
         logger.error(f"Error downloading TEI files: {e}")
 
 
+def download_md_files(output_directory, mod_abbreviation, curie_list):
+    """
+    Download Markdown files (with TEI->MD fallback) for references and save them
+    in the specified directory.
+    """
+    os.makedirs(output_directory, exist_ok=True)
+    logger.info(f"Downloading Markdown files to {output_directory} for MOD {mod_abbreviation}...")
+
+    try:
+        download_md_files_for_references(reference_curies=curie_list, mod_abbreviation=mod_abbreviation,
+                                         output_dir=output_directory)
+    except Exception as e:
+        logger.error(f"Error downloading Markdown files: {e}")
+
+
 def convert_tei_to_txt(tei_directory):
     """
     Convert TEI files in the specified directory to text files
@@ -74,6 +91,16 @@ def convert_tei_to_txt(tei_directory):
         logger.info("TEI files converted to text successfully.")
     except Exception as e:
         logger.error(f"Error converting TEI files: {e}")
+
+
+def convert_md_to_txt(md_directory):
+    """Convert Markdown files in ``md_directory`` to plain-text ``.txt`` files."""
+    logger.info(f"Converting Markdown files in {md_directory} to text files...")
+    try:
+        convert_all_md_files_in_dir_to_txt(md_directory)
+        logger.info("Markdown files converted to text successfully.")
+    except Exception as e:
+        logger.error(f"Error converting Markdown files: {e}")
 
 
 def rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict: dict, dir_to_convert: str, file_extension: str = "pdf"):
@@ -98,9 +125,9 @@ def main():
     )
     parser.add_argument(
         "--download",
-        choices=["pdf", "tei", "text"],
+        choices=["pdf", "tei", "md", "text"],
         required=True,
-        help="Specify the type of file to download or save. Options: 'pdf', 'tei', or 'text' (converted from TEI)."
+        help="Specify the type of file to download or save. Options: 'pdf', 'tei', 'md' (with TEI->MD fallback), or 'text' (Markdown converted to plain text)."
     )
     parser.add_argument(
         "--input-file",
@@ -132,13 +159,16 @@ def main():
     elif args.download == "tei":
         download_tei_files(output_directory, args.mod_abbreviation, curie_list)
         rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="tei")
+    elif args.download == "md":
+        download_md_files(output_directory, args.mod_abbreviation, curie_list)
+        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="md")
     elif args.download == "text":
-        # First, download TEI files, then convert them to text files
-        download_tei_files(output_directory, args.mod_abbreviation, curie_list)
-        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="tei")
-        convert_tei_to_txt(output_directory)
+        # Download MD files (with TEI->MD fallback), then convert them to plain text.
+        download_md_files(output_directory, args.mod_abbreviation, curie_list)
+        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="md")
+        convert_md_to_txt(output_directory)
     else:
-        logger.error("Invalid option for --download. Use 'pdf', 'tei', or 'text'.")
+        logger.error("Invalid option for --download. Use 'pdf', 'tei', 'md', or 'text'.")
 
 
 if __name__ == "__main__":
