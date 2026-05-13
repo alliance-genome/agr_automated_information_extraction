@@ -1,11 +1,24 @@
 #!/usr/bin/env bash
 # Self-healing wrapper for the FlyBase ABC textmining export + SVN commit step.
 #
+# This script is intended to run INSIDE the agr_document_classifier container.
+# The GoCD task should `docker run` the image with the SVN working copy bind-
+# mounted at /curation_status and the agent's ~/.subversion/ at /root/.subversion/,
+# e.g.:
+#
+#   docker run --rm \
+#     -e BLUE_PASSWORD -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
+#     -e CURATION_STATUS_DIR=/curation_status \
+#     -v "$PWD/curation_status:/curation_status" \
+#     -v "$HOME/.subversion:/root/.subversion" \
+#     agr_document_classifier \
+#     ./bin/run_export_and_commit.sh
+#
 # Flow:
 #   1. svn update; auto-resolve any pre-existing C-state entries with --accept=theirs-full
 #      (so the export writes onto a clean file, not one full of conflict markers)
-#   2. Run the two export scripts (inside the agr_document_classifier docker image
-#      by default; override EXPORT_RUNNER to swap in your own invocation)
+#   2. Run the two export scripts directly via python3 (override EXPORT_RUNNER to swap
+#      in your own invocation)
 #   3. svn add --force; svn commit
 #   4. On commit failure with E155015: re-resolve with --accept=mine-full, retry once
 #   5. On any unrecoverable failure: send_report via the Python shim, exit non-zero
@@ -13,35 +26,29 @@
 #
 # Required env vars (typically set by the GoCD pipeline):
 #   CRONTAB_EMAIL, SENDER_EMAIL, SENDER_PASSWORD   - for alert dispatch
-#   BLUE_PASSWORD                                  - forwarded into docker for the
-#                                                    export scripts' DB access. The
-#                                                    other BLUE_* vars (USERNAME,
-#                                                    HOST, PORT, DATABASE) have prod
-#                                                    defaults baked into the Python
-#                                                    scripts and are not required.
-#   SVN_PASSWORD                                   - consumed by svn via cached
-#                                                    credentials on the GoCD agent
-#                                                    (not read by this script directly)
+#   BLUE_PASSWORD                                  - DB access for the export scripts.
+#                                                    Other BLUE_* vars (USERNAME, HOST,
+#                                                    PORT, DATABASE) have prod defaults
+#                                                    baked into the Python scripts.
+#   SVN_PASSWORD                                   - consumed by svn via the cached
+#                                                    credentials bind-mounted from the
+#                                                    agent (not read by this script
+#                                                    directly)
 #
 # Optional overrides:
-#   CURATION_STATUS_DIR  host path of the SVN working copy. Defaults to
-#                        "$PWD/curation_status" — when this script is invoked
-#                        as a GoCD pipeline task, $PWD is the pipeline working
-#                        directory (e.g. /var/go/<agent>/pipelines/ExportFBClassifiers),
-#                        so the default resolves correctly regardless of which
-#                        agent the job lands on.
+#   CURATION_STATUS_DIR  path of the SVN working copy inside the container. Defaults
+#                        to "$PWD/curation_status"; the GoCD invocation above sets it
+#                        explicitly to /curation_status (the bind-mount target).
 #   EXPORT_RUNNER        command that runs both export scripts; receives no args
-#                        (default: docker run agr_document_classifier ... for both scripts)
-#   DOCKER_IMAGE         docker image name used by the default EXPORT_RUNNER
-#                        (default: agr_document_classifier)
+#                        (default: invoke export_fb_tets.py and export_fb_tets_using_score.py
+#                        via python3)
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Capture $PWD before we cd anywhere, so the default is the GoCD task's CWD.
+# Capture $PWD before we cd anywhere, so the default is the caller's CWD.
 CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
-DOCKER_IMAGE="${DOCKER_IMAGE:-agr_document_classifier}"
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -75,19 +82,8 @@ resolve_conflicts() {
 }
 
 default_export_runner() {
-    docker run --rm \
-        -e BLUE_PASSWORD \
-        -v "$CURATION_STATUS_DIR:/curation_status" \
-        "$DOCKER_IMAGE" \
-        python3 /usr/src/app/export_fb_tets.py
-    local rc1=$?
-    if (( rc1 != 0 )); then return "$rc1"; fi
-
-    docker run --rm \
-        -e BLUE_PASSWORD \
-        -v "$CURATION_STATUS_DIR:/curation_status" \
-        "$DOCKER_IMAGE" \
-        python3 /usr/src/app/export_fb_tets_using_score.py
+    python3 /usr/src/app/export_fb_tets.py || return $?
+    python3 /usr/src/app/export_fb_tets_using_score.py
 }
 
 run_export() {
@@ -128,7 +124,7 @@ export_rc=$?
 if (( export_rc != 0 )); then
     log "Export runner exited $export_rc"
     # The Python scripts call send_report() themselves on exception. Re-alert here
-    # in case the failure was the docker invocation itself (image missing, mount denied).
+    # in case the failure was the runner itself (e.g. EXPORT_RUNNER override broken).
     send_alert "FB ABC textmining: export scripts failed" \
                "Host: $(hostname)
 Working copy: $CURATION_STATUS_DIR
