@@ -18,6 +18,13 @@ import os
 import sys
 from pathlib import Path
 
+# Add parent directory to path so agr_entity_extractor module can be found
+# when deserializing models with dill
+_script_dir = Path(__file__).resolve().parent
+_project_root = _script_dir.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
 import dill
 
 logger = logging.getLogger(__name__)
