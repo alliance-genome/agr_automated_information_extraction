@@ -4,17 +4,18 @@
 # This script is intended to run INSIDE the agr_document_classifier container.
 # The container owns the SVN working copy end-to-end: it checks it out on every
 # run (the WC is ephemeral; no host bind-mount), the export scripts write to it,
-# and the wrapper commits back. Freshness monitoring no longer depends on a
-# host-side file — it queries SVN directly (see bin/check_textmining_freshness.sh).
+# and the wrapper commits back. SVN auth comes from $SVN_USERNAME / $SVN_PASSWORD
+# (passed to every svn call via --username/--password --no-auth-cache), so no
+# ~/.subversion/ mount is needed. Freshness monitoring queries SVN directly
+# (see bin/check_textmining_freshness.sh).
 #
-# The GoCD task only needs to mount the agent's ~/.subversion/ for cached
-# credentials:
+# Example GoCD task:
 #
 #   docker run --rm \
 #     -e BLUE_PASSWORD -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
+#     -e SVN_USERNAME -e SVN_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
 #     -e CURATION_STATUS_DIR=/curation_status \
-#     -v "$HOME/.subversion:/root/.subversion" \
 #     agr_document_classifier \
 #     ./bin/run_export_and_commit.sh
 #
@@ -45,10 +46,9 @@
 #                                                    first run (when .svn/ is missing).
 #                                                    Unused once the working copy
 #                                                    exists but cheap to keep set.
-#   SVN_PASSWORD                                   - consumed by svn via the cached
-#                                                    credentials bind-mounted from the
-#                                                    agent (not read by this script
-#                                                    directly)
+#   SVN_USERNAME, SVN_PASSWORD                     - passed to every svn call as
+#                                                    --username/--password
+#                                                    --no-auth-cache
 #
 # Optional overrides:
 #   CURATION_STATUS_DIR  path of the SVN working copy inside the container. Defaults
@@ -64,6 +64,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Capture $PWD before we cd anywhere, so the default is the caller's CWD.
 CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
+
+: "${SVN_USERNAME:?SVN_USERNAME must be set}"
+: "${SVN_PASSWORD:?SVN_PASSWORD must be set}"
+SVN_AUTH=(--non-interactive --no-auth-cache --username "$SVN_USERNAME" --password "$SVN_PASSWORD")
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -127,7 +131,7 @@ wrapper cannot bootstrap the working copy. Set SVN_REPO_URL in the GoCD task."
         exit 2
     fi
     log "No .svn/ found in $CURATION_STATUS_DIR; running svn checkout $SVN_REPO_URL"
-    checkout_out=$(svn checkout "$SVN_REPO_URL" "$CURATION_STATUS_DIR" 2>&1)
+    checkout_out=$(svn "${SVN_AUTH[@]}" checkout "$SVN_REPO_URL" "$CURATION_STATUS_DIR" 2>&1)
     checkout_rc=$?
     log "$checkout_out"
     if (( checkout_rc != 0 )); then
@@ -143,14 +147,14 @@ $checkout_out"
 fi
 
 log "Running svn update in $CURATION_STATUS_DIR"
-update_out=$(svn update 2>&1)
+update_out=$(svn "${SVN_AUTH[@]}" update 2>&1)
 update_rc=$?
 log "$update_out"
 if (( update_rc != 0 )) && grep -q "E155036" <<< "$update_out"; then
     log "Working copy is in an older format; running svn upgrade and retrying"
     upgrade_out=$(svn upgrade "$CURATION_STATUS_DIR" 2>&1)
     log "$upgrade_out"
-    update_out=$(svn update 2>&1)
+    update_out=$(svn "${SVN_AUTH[@]}" update 2>&1)
     update_rc=$?
     log "$update_out"
 fi
@@ -187,7 +191,7 @@ svn add --force "$CURATION_STATUS_DIR" 2>&1 | while IFS= read -r line; do log " 
 
 commit_msg="automated textmining ABC update $(date -u +%FT%TZ)"
 log "Running svn commit: $commit_msg"
-commit_out=$(svn commit -m "$commit_msg" "$CURATION_STATUS_DIR" 2>&1)
+commit_out=$(svn "${SVN_AUTH[@]}" commit -m "$commit_msg" "$CURATION_STATUS_DIR" 2>&1)
 commit_rc=$?
 log "$commit_out"
 
@@ -199,7 +203,7 @@ fi
 if grep -q "E155015" <<< "$commit_out"; then
     log "Detected E155015 conflict on commit; auto-resolving with --accept=mine-full and retrying once"
     resolved_files=$(resolve_conflicts "mine-full")
-    retry_out=$(svn commit -m "$commit_msg (post-resolve retry)" "$CURATION_STATUS_DIR" 2>&1)
+    retry_out=$(svn "${SVN_AUTH[@]}" commit -m "$commit_msg (post-resolve retry)" "$CURATION_STATUS_DIR" 2>&1)
     retry_rc=$?
     log "$retry_out"
     if (( retry_rc == 0 )); then

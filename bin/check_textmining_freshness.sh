@@ -8,14 +8,17 @@
 #
 #   30 13 * * * docker run --rm \
 #     -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
+#     -e SVN_USERNAME -e SVN_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
-#     -v "$HOME/.subversion:/root/.subversion" \
 #     agr_document_classifier \
 #     ./bin/check_textmining_freshness.sh
 #
 # Required env vars:
 #   SVN_REPO_URL                                   - parent URL of the
 #                                                    textmining_*.txt files
+#   SVN_USERNAME, SVN_PASSWORD                     - passed to svn as
+#                                                    --username/--password
+#                                                    --no-auth-cache
 #   CRONTAB_EMAIL, SENDER_EMAIL, SENDER_PASSWORD   - for alert dispatch
 #
 # Optional:
@@ -32,6 +35,9 @@ if [[ -z "${SVN_REPO_URL:-}" ]]; then
     echo "ERROR: SVN_REPO_URL must be set" >&2
     exit 0
 fi
+: "${SVN_USERNAME:?SVN_USERNAME must be set}"
+: "${SVN_PASSWORD:?SVN_PASSWORD must be set}"
+SVN_AUTH=(--non-interactive --no-auth-cache --username "$SVN_USERNAME" --password "$SVN_PASSWORD")
 
 STALE_THRESHOLD_DAYS="${STALE_THRESHOLD_DAYS:-3}"
 
@@ -48,7 +54,7 @@ stale_report=""
 
 for f in "${FILES[@]}"; do
     url="${SVN_REPO_URL%/}/$f"
-    iso=$(svn info --show-item last-changed-date "$url" 2>/dev/null | tr -d '[:space:]')
+    iso=$(svn "${SVN_AUTH[@]}" info --show-item last-changed-date "$url" 2>/dev/null | tr -d '[:space:]')
     if [[ -z "$iso" ]]; then
         stale_report+="MISSING/UNREADABLE: $url"$'\n'
         continue
