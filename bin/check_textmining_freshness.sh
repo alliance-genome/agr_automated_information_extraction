@@ -1,28 +1,44 @@
 #!/usr/bin/env bash
-# Daily freshness check for the four FB ABC textmining output files.
-# If any file's mtime is older than STALE_THRESHOLD_DAYS (default 3), emails curators.
+# Daily freshness check for the four FB ABC textmining output files in SVN.
+# If any file's last commit is older than STALE_THRESHOLD_DAYS (default 3),
+# emails curators.
 #
-# Designed to run as a cron entry on the FlyBase GoCD agent (which is the only
-# place that can stat the real SVN working copy directly).
+# Designed to run inside the agr_document_classifier container so it has access
+# to svn 1.14 and to send_report. The cron entry on the GoCD agent should be:
 #
-# Optional env vars:
-#   CURATION_STATUS_DIR     host path of the SVN working copy. Defaults to
-#                           "$PWD/curation_status" — set this in the cron entry
-#                           by `cd`-ing into the pipeline working directory
-#                           first (the agent name is part of the path so it
-#                           can't sensibly be hardcoded), e.g.:
-#                             30 13 * * * cd /var/go/<agent>/pipelines/ExportFBClassifiers && /var/go/.../bin/check_textmining_freshness.sh
+#   30 13 * * * docker run --rm \
+#     -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
+#     -e SVN_USERNAME -e SVN_PASSWORD \
+#     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
+#     agr_document_classifier \
+#     ./bin/check_textmining_freshness.sh
+#
+# Required env vars:
+#   SVN_REPO_URL                                   - parent URL of the
+#                                                    textmining_*.txt files
+#   SVN_USERNAME, SVN_PASSWORD                     - passed to svn as
+#                                                    --username/--password
+#                                                    --no-auth-cache
+#   CRONTAB_EMAIL, SENDER_EMAIL, SENDER_PASSWORD   - for alert dispatch
+#
+# Optional:
 #   STALE_THRESHOLD_DAYS    age cutoff in days (default: 3)
 #
-# Always exits 0 — alerting is the side effect; we don't want a stale-files alarm
-# to also fail the cron entry itself.
+# Always exits 0 — alerting is the side effect; we don't want a stale-files
+# alarm to also fail the cron entry itself.
 
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Capture $PWD before any cd; lets the cron entry control the working copy
-# location simply by `cd`-ing into the pipeline directory first.
-CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
+
+if [[ -z "${SVN_REPO_URL:-}" ]]; then
+    echo "ERROR: SVN_REPO_URL must be set" >&2
+    exit 0
+fi
+: "${SVN_USERNAME:?SVN_USERNAME must be set}"
+: "${SVN_PASSWORD:?SVN_PASSWORD must be set}"
+SVN_AUTH=(--non-interactive --no-auth-cache --username "$SVN_USERNAME" --password "$SVN_PASSWORD")
+
 STALE_THRESHOLD_DAYS="${STALE_THRESHOLD_DAYS:-3}"
 
 FILES=(
@@ -30,38 +46,29 @@ FILES=(
     "textmining_negative_ABC.txt"
     "textmining_positive_ABC_using_score.txt"
     "textmining_negative_ABC_using_score.txt"
-    ".last_success"
 )
 
-# stat varies between GNU (Linux) and BSD (macOS); try both.
-file_mtime() {
-    stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null
-}
-
-format_epoch() {
-    date -u -d "@$1" +%FT%TZ 2>/dev/null || date -u -r "$1" +%FT%TZ 2>/dev/null
-}
-
 threshold_seconds=$(( STALE_THRESHOLD_DAYS * 86400 ))
-now_epoch=$(date +%s)
+now_epoch=$(date -u +%s)
 stale_report=""
 
 for f in "${FILES[@]}"; do
-    path="$CURATION_STATUS_DIR/$f"
-    if [[ ! -e "$path" ]]; then
-        stale_report+="MISSING: $path"$'\n'
+    url="${SVN_REPO_URL%/}/$f"
+    iso=$(svn "${SVN_AUTH[@]}" info --show-item last-changed-date "$url" 2>/dev/null | tr -d '[:space:]')
+    if [[ -z "$iso" ]]; then
+        stale_report+="MISSING/UNREADABLE: $url"$'\n'
         continue
     fi
-    mtime=$(file_mtime "$path")
+    # svn emits e.g. 2026-05-14T12:48:26.123456Z; GNU date handles that directly.
+    mtime=$(date -u -d "$iso" +%s 2>/dev/null)
     if [[ -z "$mtime" ]]; then
-        stale_report+="UNREADABLE: $path"$'\n'
+        stale_report+="UNPARSEABLE DATE for $url: $iso"$'\n'
         continue
     fi
     age=$(( now_epoch - mtime ))
     if (( age > threshold_seconds )); then
         days=$(( age / 86400 ))
-        human=$(format_epoch "$mtime")
-        stale_report+="STALE (${days}d old, last modified $human): $path"$'\n'
+        stale_report+="STALE (${days}d old, last commit $iso): $url"$'\n'
     fi
 done
 
@@ -69,15 +76,15 @@ if [[ -z "$stale_report" ]]; then
     exit 0
 fi
 
-body="The following FB ABC textmining files in $CURATION_STATUS_DIR on $(hostname)
-have not been refreshed within the last $STALE_THRESHOLD_DAYS days.
+body="The following FB ABC textmining files under $SVN_REPO_URL
+have not been re-committed within the last $STALE_THRESHOLD_DAYS days.
 The ExportFBClassifiers pipeline may be wedged.
 
 $stale_report
 Suggested checks:
   * GoCD pipeline 'ExportFBClassifiers' run history
-  * svn status in $CURATION_STATUS_DIR (look for 'C' entries)
-  * Latest run_export_and_commit.sh log on this agent"
+  * Latest run_export_and_commit.sh log on the agent
+  * svn log -l 5 $SVN_REPO_URL"
 
 if ! python3 "$SCRIPT_DIR/_send_report_shim.py" \
         "FB ABC textmining files are stale (>${STALE_THRESHOLD_DAYS}d)" \

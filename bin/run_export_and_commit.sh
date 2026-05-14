@@ -2,27 +2,39 @@
 # Self-healing wrapper for the FlyBase ABC textmining export + SVN commit step.
 #
 # This script is intended to run INSIDE the agr_document_classifier container.
-# The GoCD task should `docker run` the image with the SVN working copy bind-
-# mounted at /curation_status and the agent's ~/.subversion/ at /root/.subversion/,
-# e.g.:
+# The container owns the SVN working copy end-to-end: it checks it out on every
+# run (the WC is ephemeral; no host bind-mount), the export scripts write to it,
+# and the wrapper commits back. SVN auth comes from $SVN_USERNAME / $SVN_PASSWORD
+# (passed to every svn call via --username/--password --no-auth-cache), so no
+# ~/.subversion/ mount is needed. Freshness monitoring queries SVN directly
+# (see bin/check_textmining_freshness.sh).
+#
+# Example GoCD task:
 #
 #   docker run --rm \
 #     -e BLUE_PASSWORD -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
+#     -e SVN_USERNAME -e SVN_PASSWORD \
+#     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
 #     -e CURATION_STATUS_DIR=/curation_status \
-#     -v "$PWD/curation_status:/curation_status" \
-#     -v "$HOME/.subversion:/root/.subversion" \
 #     agr_document_classifier \
 #     ./bin/run_export_and_commit.sh
 #
+# CURATION_STATUS_DIR must be /curation_status: the export scripts hardcode
+# /curation_status/textmining_*.txt as their output path.
+#
 # Flow:
-#   1. svn update; auto-resolve any pre-existing C-state entries with --accept=theirs-full
-#      (so the export writes onto a clean file, not one full of conflict markers)
-#   2. Run the two export scripts directly via python3 (override EXPORT_RUNNER to swap
-#      in your own invocation)
-#   3. svn add --force; svn commit
-#   4. On commit failure with E155015: re-resolve with --accept=mine-full, retry once
-#   5. On any unrecoverable failure: send_report via the Python shim, exit non-zero
-#   6. On success: touch .last_success sentinel for the freshness checker
+#   1. If /curation_status has no .svn/, run `svn checkout $SVN_REPO_URL` to
+#      create the working copy. Otherwise `svn update`; on E155036 (format too
+#      old), run `svn upgrade` and retry once.
+#   2. Auto-resolve any pre-existing C-state entries with --accept=theirs-full
+#      (so the export writes onto a clean file, not one full of conflict markers).
+#   3. Run the two export scripts directly via python3 (override EXPORT_RUNNER
+#      to swap in your own invocation).
+#   4. svn add --force; svn commit.
+#   5. On commit failure with E155015: re-resolve with --accept=mine-full, retry once.
+#   6. On any unrecoverable failure: send_report via the Python shim, exit non-zero.
+#   7. On success: exit 0. Freshness is monitored separately via the wrapper's
+#      SVN commits (see bin/check_textmining_freshness.sh).
 #
 # Required env vars (typically set by the GoCD pipeline):
 #   CRONTAB_EMAIL, SENDER_EMAIL, SENDER_PASSWORD   - for alert dispatch
@@ -30,10 +42,13 @@
 #                                                    Other BLUE_* vars (USERNAME, HOST,
 #                                                    PORT, DATABASE) have prod defaults
 #                                                    baked into the Python scripts.
-#   SVN_PASSWORD                                   - consumed by svn via the cached
-#                                                    credentials bind-mounted from the
-#                                                    agent (not read by this script
-#                                                    directly)
+#   SVN_REPO_URL                                   - the SVN URL to check out from on
+#                                                    first run (when .svn/ is missing).
+#                                                    Unused once the working copy
+#                                                    exists but cheap to keep set.
+#   SVN_USERNAME, SVN_PASSWORD                     - passed to every svn call as
+#                                                    --username/--password
+#                                                    --no-auth-cache
 #
 # Optional overrides:
 #   CURATION_STATUS_DIR  path of the SVN working copy inside the container. Defaults
@@ -49,6 +64,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Capture $PWD before we cd anywhere, so the default is the caller's CWD.
 CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
+
+: "${SVN_USERNAME:?SVN_USERNAME must be set}"
+: "${SVN_PASSWORD:?SVN_PASSWORD must be set}"
+SVN_AUTH=(--non-interactive --no-auth-cache --username "$SVN_USERNAME" --password "$SVN_PASSWORD")
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -96,16 +115,49 @@ run_export() {
 
 # ---- main ----
 
+mkdir -p "$CURATION_STATUS_DIR"
 if ! cd "$CURATION_STATUS_DIR"; then
     send_alert "FB ABC textmining: working copy unreachable" \
                "Cannot cd into CURATION_STATUS_DIR=$CURATION_STATUS_DIR on $(hostname)."
     exit 2
 fi
 
+if [[ ! -d "$CURATION_STATUS_DIR/.svn" ]]; then
+    if [[ -z "${SVN_REPO_URL:-}" ]]; then
+        send_alert "FB ABC textmining: SVN_REPO_URL not set on first run" \
+                   "Host: $(hostname)
+$CURATION_STATUS_DIR has no .svn/ directory and SVN_REPO_URL is unset, so the
+wrapper cannot bootstrap the working copy. Set SVN_REPO_URL in the GoCD task."
+        exit 2
+    fi
+    log "No .svn/ found in $CURATION_STATUS_DIR; running svn checkout $SVN_REPO_URL"
+    checkout_out=$(svn "${SVN_AUTH[@]}" checkout "$SVN_REPO_URL" "$CURATION_STATUS_DIR" 2>&1)
+    checkout_rc=$?
+    log "$checkout_out"
+    if (( checkout_rc != 0 )); then
+        send_alert "FB ABC textmining: svn checkout failed" \
+                   "Host: $(hostname)
+Working copy: $CURATION_STATUS_DIR
+SVN_REPO_URL: $SVN_REPO_URL
+
+svn checkout output:
+$checkout_out"
+        exit "$checkout_rc"
+    fi
+fi
+
 log "Running svn update in $CURATION_STATUS_DIR"
-update_out=$(svn update 2>&1)
+update_out=$(svn "${SVN_AUTH[@]}" update 2>&1)
 update_rc=$?
 log "$update_out"
+if (( update_rc != 0 )) && grep -q "E155036" <<< "$update_out"; then
+    log "Working copy is in an older format; running svn upgrade and retrying"
+    upgrade_out=$(svn upgrade "$CURATION_STATUS_DIR" 2>&1)
+    log "$upgrade_out"
+    update_out=$(svn "${SVN_AUTH[@]}" update 2>&1)
+    update_rc=$?
+    log "$update_out"
+fi
 if (( update_rc != 0 )); then
     send_alert "FB ABC textmining: svn update failed" \
                "Host: $(hostname)
@@ -139,24 +191,22 @@ svn add --force "$CURATION_STATUS_DIR" 2>&1 | while IFS= read -r line; do log " 
 
 commit_msg="automated textmining ABC update $(date -u +%FT%TZ)"
 log "Running svn commit: $commit_msg"
-commit_out=$(svn commit -m "$commit_msg" "$CURATION_STATUS_DIR" 2>&1)
+commit_out=$(svn "${SVN_AUTH[@]}" commit -m "$commit_msg" "$CURATION_STATUS_DIR" 2>&1)
 commit_rc=$?
 log "$commit_out"
 
 if (( commit_rc == 0 )); then
-    date -u +%FT%TZ > "$CURATION_STATUS_DIR/.last_success"
-    log "Commit succeeded; .last_success updated"
+    log "Commit succeeded"
     exit 0
 fi
 
 if grep -q "E155015" <<< "$commit_out"; then
     log "Detected E155015 conflict on commit; auto-resolving with --accept=mine-full and retrying once"
     resolved_files=$(resolve_conflicts "mine-full")
-    retry_out=$(svn commit -m "$commit_msg (post-resolve retry)" "$CURATION_STATUS_DIR" 2>&1)
+    retry_out=$(svn "${SVN_AUTH[@]}" commit -m "$commit_msg (post-resolve retry)" "$CURATION_STATUS_DIR" 2>&1)
     retry_rc=$?
     log "$retry_out"
     if (( retry_rc == 0 )); then
-        date -u +%FT%TZ > "$CURATION_STATUS_DIR/.last_success"
         log "Retry commit succeeded after auto-resolve"
         # Still inform humans that self-heal kicked in, so a curator can sanity-check
         # the committed content. Non-fatal but worth eyes on.
