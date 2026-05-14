@@ -27,6 +27,7 @@ ADD agr_document_classifier/models.py .
 ADD export_data/export_fb_tets.py .
 ADD export_data/export_fb_tets_using_score.py .
 ADD bin/ ./bin/
+ADD scripts/ ./scripts/
 RUN chmod +x ./bin/run_export_and_commit.sh ./bin/check_textmining_freshness.sh ./bin/_send_report_shim.py
 RUN apt-get -y install git-lfs wget
 RUN apt-get update && apt-get install --no-install-recommends --yes build-essential git cron subversion
