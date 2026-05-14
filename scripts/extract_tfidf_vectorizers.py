@@ -14,8 +14,8 @@ Usage:
 
 import argparse
 import logging
-import os
 import sys
+import dill
 from pathlib import Path
 
 # Add parent directory to path so agr_entity_extractor module can be found
@@ -24,8 +24,6 @@ _script_dir = Path(__file__).resolve().parent
 _project_root = _script_dir.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
-
-import dill
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +111,7 @@ def print_sample_vocabulary(model, num_samples: int = 10):
     print(f"\n  Sample Vocabulary ({min(num_samples, len(vocab))} entries):")
     print("  " + "-" * 50)
 
-    for i, (token, idx) in enumerate(list(vocab.items())[:num_samples]):
+    for _i, (token, idx) in enumerate(list(vocab.items())[:num_samples]):
         idf_val = idf[idx] if idf is not None and idx < len(idf) else "N/A"
         if isinstance(idf_val, float):
             print(f"    {token:30s} idx={idx:8d}  idf={idf_val:.4f}")
