@@ -2,23 +2,24 @@
 # Self-healing wrapper for the FlyBase ABC textmining export + SVN commit step.
 #
 # This script is intended to run INSIDE the agr_document_classifier container.
-# The container owns the SVN working copy end-to-end: it checks it out on first
-# run, updates it on subsequent runs, and commits back. GoCD must NOT also fetch
-# the SVN repo as a pipeline material into the same path, or the agent's svn
-# version may rewrite the working copy in an incompatible format.
+# The container owns the SVN working copy end-to-end: it checks it out on every
+# run (the WC is ephemeral; no host bind-mount), the export scripts write to it,
+# and the wrapper commits back. Freshness monitoring no longer depends on a
+# host-side file — it queries SVN directly (see bin/check_textmining_freshness.sh).
 #
-# The GoCD task should `docker run` the image with a persistent host directory
-# bind-mounted at /curation_status and the agent's ~/.subversion/ at
-# /root/.subversion/, e.g.:
+# The GoCD task only needs to mount the agent's ~/.subversion/ for cached
+# credentials:
 #
 #   docker run --rm \
 #     -e BLUE_PASSWORD -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
 #     -e CURATION_STATUS_DIR=/curation_status \
-#     -v "$PWD/curation_status:/curation_status" \
 #     -v "$HOME/.subversion:/root/.subversion" \
 #     agr_document_classifier \
 #     ./bin/run_export_and_commit.sh
+#
+# CURATION_STATUS_DIR must be /curation_status: the export scripts hardcode
+# /curation_status/textmining_*.txt as their output path.
 #
 # Flow:
 #   1. If /curation_status has no .svn/, run `svn checkout $SVN_REPO_URL` to
@@ -31,7 +32,8 @@
 #   4. svn add --force; svn commit.
 #   5. On commit failure with E155015: re-resolve with --accept=mine-full, retry once.
 #   6. On any unrecoverable failure: send_report via the Python shim, exit non-zero.
-#   7. On success: touch .last_success sentinel for the freshness checker.
+#   7. On success: exit 0. Freshness is monitored separately via the wrapper's
+#      SVN commits (see bin/check_textmining_freshness.sh).
 #
 # Required env vars (typically set by the GoCD pipeline):
 #   CRONTAB_EMAIL, SENDER_EMAIL, SENDER_PASSWORD   - for alert dispatch
@@ -190,8 +192,7 @@ commit_rc=$?
 log "$commit_out"
 
 if (( commit_rc == 0 )); then
-    date -u +%FT%TZ > "$CURATION_STATUS_DIR/.last_success"
-    log "Commit succeeded; .last_success updated"
+    log "Commit succeeded"
     exit 0
 fi
 
@@ -202,7 +203,6 @@ if grep -q "E155015" <<< "$commit_out"; then
     retry_rc=$?
     log "$retry_out"
     if (( retry_rc == 0 )); then
-        date -u +%FT%TZ > "$CURATION_STATUS_DIR/.last_success"
         log "Retry commit succeeded after auto-resolve"
         # Still inform humans that self-heal kicked in, so a curator can sanity-check
         # the committed content. Non-fatal but worth eyes on.
