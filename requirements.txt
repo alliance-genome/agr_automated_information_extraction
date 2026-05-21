@@ -1,4 +1,4 @@
-agr_literature_service @ git+https://github.com/alliance-genome/agr_literature_service
+agr_literature_service @ git+https://github.com/alliance-genome/agr_literature_service@cd202b2959ca4331eb92e0f00dcb0f194f1ee408
 annotated-types==0.7.0
 anyio==3.7.1
 attrs==21.4.0
