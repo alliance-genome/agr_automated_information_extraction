@@ -17,12 +17,15 @@
  # along with Fly Base Annotation Helper. If not, see <http://www.gnu.org/licenses/>.
 """
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
+import logging
 import os
 import sys
 import pubmed_parser as pp
 import typing
 from .get_genes import get_genes
 
+
+logger = logging.getLogger(__name__)
 
 model_pipeline = None
 tokenizer_kwargs = {'padding': "max_length", 'truncation': True, 'max_length': 512}
@@ -34,7 +37,7 @@ def initialize(path_to_model):
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         scibert = "allenai/scibert_scivocab_uncased"
         tokenizer = AutoTokenizer.from_pretrained(scibert, model_max_length=512)
-        print(f"Model path is {path_to_model}")
+        logger.info(f"Model path is {path_to_model}")
         model = AutoModelForSequenceClassification.from_pretrained(path_to_model, num_labels=2)
         model_pipeline = pipeline("sentiment-analysis", model=model, tokenizer=tokenizer, device=-1)
 
@@ -55,6 +58,8 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str],
         abstract = pubmed_dict["abstract"]  # abstract
         _, candidates = get_genes(paper_file, gene_dict, 'none', True,
                                   False, False, False, exceptions_path)
+        if not candidates:
+            logger.info(f"no italic gene candidates found in body of {paper_file}")
         results = {}
         for fbrf in candidates:
             gene = get_gene(fbrf, candidates[fbrf], fbid_to_symbol)
@@ -65,6 +70,7 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str],
         else:
             return results, 0  # No genes found.
     else:
+        logger.error("File does not exist or is not an nxml file: %s", paper_file)
         print("File does not exist or is not an nxml file: " + paper_file, file=sys.stderr)
         return {}, -1  # No nxml error
 
