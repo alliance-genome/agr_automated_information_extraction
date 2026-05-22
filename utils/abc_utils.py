@@ -801,9 +801,28 @@ def _show_all_for_reference(reference_curie: str) -> Optional[list]:
         return None
 
 
+def _reffile_matches_mod(rf: dict, mod_abbreviation: str) -> bool:
+    """Return True if ``rf`` is in scope for ``mod_abbreviation``.
+
+    A referencefile row is in scope when it is either mod-scoped to
+    ``mod_abbreviation`` or stored as a global (mod-less) file. ABC stores
+    ``converted_merged_main`` MDs globally (``mod_id IS NULL``, surfaced by the
+    API as ``mod_abbreviation = None``); TEIs are mod-scoped. Both must be
+    selectable here.
+    """
+    mods = rf.get("referencefile_mods") or []
+    if not mods:
+        return True
+    return any(
+        m.get("mod_abbreviation") in (mod_abbreviation, None)
+        for m in mods
+    )
+
+
 def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviation: str) -> bool:
-    """Try to write a ``<curie>.md`` file using the main MD row first, then a
-    TEI-row fallback converted in-process. Returns True iff a file was written.
+    """Try to write a ``<curie>.md`` file, preferring an existing main MD row
+    and falling back to in-process TEI->MD conversion. Returns True iff a file
+    was written.
     """
     from agr_abc_document_parsers import convert_xml_to_markdown
 
@@ -818,8 +837,7 @@ def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviatio
         (rf for rf in resp_obj
          if rf.get("file_extension") == "md"
          and rf.get("file_class") == "converted_merged_main"
-         and any(m.get("mod_abbreviation") == mod_abbreviation
-                 for m in rf.get("referencefile_mods", []))),
+         and _reffile_matches_mod(rf, mod_abbreviation)),
         None,
     )
     if md_ref_file is not None:
@@ -834,8 +852,7 @@ def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviatio
         (rf for rf in resp_obj
          if rf.get("file_extension") == "tei"
          and rf.get("file_class") == "tei"
-         and any(m.get("mod_abbreviation") == mod_abbreviation
-                 for m in rf.get("referencefile_mods", []))),
+         and _reffile_matches_mod(rf, mod_abbreviation)),
         None,
     )
     if tei_ref_file is None:
@@ -856,8 +873,9 @@ def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviatio
 
 
 def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abbreviation: str) -> None:
-    """Download every ``converted_merged_supplement`` MD row for ``mod_abbreviation``
-    and write them as ``<curie>.supp_<N>.md`` (numbered in API order).
+    """Download every ``converted_merged_supplement`` MD row in scope for
+    ``mod_abbreviation`` (mod-scoped or global) and write them as
+    ``<curie>.supp_<N>.md`` (numbered in API order).
     """
     resp_obj = _show_all_for_reference(reference_curie)
     if resp_obj is None:
@@ -868,8 +886,7 @@ def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abb
         rf for rf in resp_obj
         if rf.get("file_extension") == "md"
         and rf.get("file_class") == "converted_merged_supplement"
-        and any(m.get("mod_abbreviation") == mod_abbreviation
-                for m in rf.get("referencefile_mods", []))
+        and _reffile_matches_mod(rf, mod_abbreviation)
     ]
     for idx, supp in enumerate(supp_ref_files, start=1):
         supp_bytes = get_file_from_abc_reffile_obj(supp)
