@@ -331,6 +331,12 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
 
     del embedding_model
     X = np.array(X)
+    if X.size == 0:
+        logger.warning(
+            "classify_documents called with zero loaded documents for input_docs_dir=%s; "
+            "skipping predict()", input_docs_dir,
+        )
+        return files_loaded, np.array([]), [], valid_embeddings
     classifications = classifier_model.predict(X)
 
     # For multi-class, use the probability corresponding to the predicted class

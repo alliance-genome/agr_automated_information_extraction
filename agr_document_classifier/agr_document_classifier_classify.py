@@ -67,6 +67,12 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
 
     del embedding_model
     X = np.array(X)
+    if X.size == 0:
+        logger.warning(
+            "classify_documents called with zero loaded documents for input_docs_dir=%s; "
+            "skipping predict()", input_docs_dir,
+        )
+        return files_loaded, np.array([]), [], valid_embeddings
     classifications = classifier_model.predict(X)
     try:
         confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
@@ -144,6 +150,24 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
     prepare_classification_directory()
     download_md_files_for_references(list(reference_curie_job_map.keys()),
                                      "/data/agr_document_classifier/to_classify", mod_abbr)
+    expected_curies = set(reference_curie_job_map.keys())
+    downloaded_curies = {
+        os.path.splitext(f)[0].replace("_", ":")
+        for f in os.listdir("/data/agr_document_classifier/to_classify")
+        if f.endswith(".md") and ".supp_" not in f
+    }
+    missing_curies = expected_curies - downloaded_curies
+    if missing_curies:
+        logger.warning(
+            "No MD available in ABC for %d/%d references in this batch (mod=%s topic=%s); "
+            "marking those jobs failed",
+            len(missing_curies), len(expected_curies), mod_abbr, topic,
+        )
+        if not test_mode:
+            for curie in missing_curies:
+                job = reference_curie_job_map[curie]
+                set_job_started(job)
+                set_job_failure(job)
     files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
         embedding_model=embedding_model,
         classifier_model=classifier_model,

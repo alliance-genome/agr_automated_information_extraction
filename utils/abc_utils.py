@@ -773,6 +773,14 @@ def download_md_files_for_references(reference_curies: List[str], output_dir: st
                 reference_curie, output_dir, mod_abbreviation,
             )
 
+    written = sum(
+        1 for f in os.listdir(output_dir)
+        if f.endswith(".md") and ".supp_" not in f
+    )
+    logger.info(
+        "Markdown download summary: requested=%d, written=%d, missing=%d",
+        len(reference_curies), written, len(reference_curies) - written,
+    )
     logger.info("Finished downloading Markdown files")
 
 
