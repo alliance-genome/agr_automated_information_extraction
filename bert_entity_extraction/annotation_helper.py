@@ -140,21 +140,19 @@ def getFtpPath(pmcid: str):
 
 @retry(subprocess.CalledProcessError, delay=30, backoff=2, tries=10)
 def download(ftp: str):
-    """Downloads a paper given its ftp path
+    """Downloads a paper given its ftp path. Raises CalledProcessError on failure
+    so callers can react; the @retry decorator handles transient errors.
 
     Parameters:
         ftp, str
             The ftp path to the paper
     """
     wget = f"wget -nc --timeout=10 --no-verbose -P {config_parser.get('PATHS', 'corpus')} {ftp}"
-    try:
-        subprocess.run(wget, shell=True, check=True)
-    except subprocess.CalledProcessError as e:
-        logging.warning(f"Failed to download {ftp}: {str(e)}")
+    subprocess.run(wget, shell=True, check=True)
 
 
 def getXmlFromTar(pmcid: str):
-    """Extracts the xml file from the tar.gz file
+    """Extracts the xml file from the tar.gz file. Raises CalledProcessError on failure.
 
     Parameters:
         pmcid, str
@@ -162,15 +160,12 @@ def getXmlFromTar(pmcid: str):
     """
     f = f"{config_parser.get('PATHS', 'corpus')}/{pmcid}.tar.gz"
     untar = f"tar -xf {f} -C {config_parser.get('PATHS', 'corpus')}"
-    try:
-        subprocess.run(untar, shell=True, check=True)
-        # make xml directory if it doesn't exist
-        if not os.path.exists(config_parser.get('PATHS', 'xml')):
-            os.makedirs(config_parser.get('PATHS', 'xml'))
-        copy_xml = f"cp {config_parser.get('PATHS', 'corpus')}/{pmcid}/*.nxml {config_parser.get('PATHS', 'xml')}/{pmcid}.nxml"
-        subprocess.run(copy_xml, shell=True, check=True)
-    except subprocess.CalledProcessError as e:
-        logging.warning(f"Failed to extract XML from tar for {pmcid}: {str(e)}")
+    subprocess.run(untar, shell=True, check=True)
+    # make xml directory if it doesn't exist
+    if not os.path.exists(config_parser.get('PATHS', 'xml')):
+        os.makedirs(config_parser.get('PATHS', 'xml'))
+    copy_xml = f"cp {config_parser.get('PATHS', 'corpus')}/{pmcid}/*.nxml {config_parser.get('PATHS', 'xml')}/{pmcid}.nxml"
+    subprocess.run(copy_xml, shell=True, check=True)
 
 
 def get_ateam_dicts() -> (dict[str, str], dict[str, str]):
@@ -188,6 +183,7 @@ def get_ateam_dicts() -> (dict[str, str], dict[str, str]):
         and ot.curie = 'NCBITaxon:7227'"""
     rows = db.execute(text(sql)).all()
     gene_dict = {}
+
     fbid_to_symbol = {}
     for row in rows:
         # if just a number then ignore
@@ -225,12 +221,14 @@ def get_data_from_alliance_db():
     Get jobs to run.
     Get pmc to reference_id for those jobs
     """
-    jobs = {}
     mod_topic_jobs = load_all_jobs("gene_extraction_job", args=args)
+    all_jobs = []
     ref_to_pmc = {}
-    for (_, _), jobs in mod_topic_jobs.items():
-        ref_to_pmc = get_pmcids_for_references(jobs)
-    return jobs, ref_to_pmc
+    for (mod_id, topic), mt_jobs in mod_topic_jobs.items():
+        logger.debug(f"Loaded {len(mt_jobs)} jobs for mod_id={mod_id} topic={topic}")
+        all_jobs.extend(mt_jobs)
+        ref_to_pmc.update(get_pmcids_for_references(mt_jobs))
+    return all_jobs, ref_to_pmc
 
 
 def removeFiles(pmcid: str):
@@ -256,26 +254,50 @@ def removeFiles(pmcid: str):
 
 
 def main():  # noqa C901
-    if args.stage:
-        set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
-        os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
-
+    # Configure logging FIRST, before anything else can install handlers.
+    # force=True wins over any prior basicConfig() call from imported modules.
     logging.basicConfig(
         level=getattr(logging, args.log_level.upper(), logging.INFO),
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
-        stream=sys.stdout
+        stream=sys.stdout,
+        force=True,
     )
+    # Probes prove which source file is running and that logging is alive.
+    print(f"[PROBE] annotation_helper.py running from {__file__}", flush=True)
+    print(f"[PROBE] args = {args}", flush=True)
+    logger.info("annotation_helper starting (log_level=%s)", args.log_level)
+    logger.debug("annotation_helper DEBUG-level test message")
+
+    if args.stage:
+        set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
+        os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
+
+    counters = {
+        "jobs_loaded": 0, "no_pmcid": 0, "ftp_missing": 0,
+        "download_failed": 0, "extract_failed": 0, "no_candidates": 0,
+        "no_nxml": 0, "matches_high": 0, "matches_medium": 0, "matches_low": 0,
+        "tet_upload_failed": 0, "job_status_set_failed": 0,
+    }
+
     jobs, ref_to_pmc = get_data_from_alliance_db()
-    logger.debug(f"Number of jobs: {len(jobs)}")
+    counters["jobs_loaded"] = len(jobs)
+    logger.info(f"Number of jobs: {len(jobs)}")
+    if not jobs:
+        logger.warning(
+            "No jobs returned from ABC for mod_abbreviation=%s topic=%s; nothing to do.",
+            args.mod_abbreviation, args.topic,
+        )
 
     gene_dict, fbid_to_symbol = get_ateam_dicts()
     logger.debug(f"gene_dict has {len(gene_dict)} keys")
-    key = list(gene_dict.keys())[0]
-    logger.debug(f"gene_dict Example: key -> {key} {gene_dict[key]}")
-    key = list(fbid_to_symbol.keys())[0]
+    if gene_dict:
+        key = list(gene_dict.keys())[0]
+        logger.debug(f"gene_dict Example: key -> {key} {gene_dict[key]}")
     logger.debug(f"fbid_to_symbol has {len(fbid_to_symbol)} keys")
-    logger.debug(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
+    if fbid_to_symbol:
+        key = list(fbid_to_symbol.keys())[0]
+        logger.debug(f"fbid Exmaple: key -> {key} {fbid_to_symbol[key]}")
 
     if config_parser.getboolean('PARAMETERS', 'use_deep_learning'):
         deep_learning.initialize(config_parser.get('PATHS', 'deep_learning_model'))
@@ -291,87 +313,128 @@ def main():  # noqa C901
         logger.debug(f"Start Job {job}")
         if not set_job_started(job):
             logger.error(f"Problem setting to job started {job}!!!")
+            counters["job_status_set_failed"] += 1
         ref_id = job['reference_id']
         if ref_id not in ref_to_pmc:
-            logger.debug(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
+            logger.info(f"job failed NO PMCID for reference: {ref_id} and job: {job['reference_workflow_tag_id']}")
+            counters["no_pmcid"] += 1
             if not set_job_failure(job):
                 logger.error(f"Problem setting to job failed {job}!!!")
+                counters["job_status_set_failed"] += 1
             continue
         pmcid = ref_to_pmc[ref_id]
         logger.debug(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
+
         ftp = getFtpPath(pmcid)
-        if ftp is not None:
+        if ftp is None:
+            logger.warning(f"Error processing {pmcid}: No ftp file available")
+            counters["ftp_missing"] += 1
+            if not set_job_failure(job):
+                logger.error(f"Problem setting to job failure {job}!!!")
+                counters["job_status_set_failed"] += 1
+            continue
+
+        try:
             download(ftp)
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"download failed for pmcid={pmcid} after retries: {e}")
+            counters["download_failed"] += 1
+            if not set_job_failure(job):
+                logger.error(f"Problem setting to job failure {job}!!!")
+                counters["job_status_set_failed"] += 1
+            continue
+
+        try:
             getXmlFromTar(pmcid)
-            try:
-                results, status = deep_learning.get_genes_with_dl(
-                    os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
-                    gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
-                if results:
-                    okay = True
-                    for fbgn in results:
-                        confidence_level = 'LOW'
-                        if results[fbgn] > 0.7:
-                            confidence_level = 'HIGH'
-                        elif results[fbgn] > 0.5:
-                            confidence_level = 'MEDIUM'
-                        logger.debug(f"MATCH: reference_curie={ref_id}, entity={fbgn}, confidence_score={round(results[fbgn], 2)}")
-                        try:
-                            stat = send_entity_tag_to_abc(
-                                reference_curie=str(ref_id),
-                                species=species,
-                                data_novelty='ATP:0000334',
-                                topic=job['topic_id'],
-                                tet_source_id=tet_source_id,
-                                entity_type=job['topic_id'],
-                                entity=fbgn,
-                                confidence_score=round(results[fbgn], 2),
-                                confidence_level=confidence_level)
-                            if not stat:
-                                logger.debug(f"""reference_curie={str(ref_id)},
-                                species={species},
-                                topic={job['topic_id']},
-                                entity_type={job['topic_id']},
-                                entity={fbgn},
-                                confidence_score={round(results[fbgn], 2)},
-                                confidence_level={confidence_level},
-                                tet_source_id={tet_source_id}""")
-                                okay = False
-                        except Exception as e:
-                            okay = False
-                            logger.error(f"Problem sending entity tag to abc: {e}")
-                    if okay:
-                        logger.debug("Finished successfully but with results :-)")
-                        if not set_job_success(job):
-                            logger.error(f"Problem setting to job success {job}!!!")
-                else:
-                    if status == 0:
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"extract failed for pmcid={pmcid}: {e}")
+            counters["extract_failed"] += 1
+            if not set_job_failure(job):
+                logger.error(f"Problem setting to job failure {job}!!!")
+                counters["job_status_set_failed"] += 1
+            continue
+
+        try:
+            results, status = deep_learning.get_genes_with_dl(
+                os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
+                gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
+            if results:
+                okay = True
+                for fbgn in results:
+                    confidence_level = 'LOW'
+                    if results[fbgn] > 0.7:
+                        confidence_level = 'HIGH'
+                        counters["matches_high"] += 1
+                    elif results[fbgn] > 0.5:
+                        confidence_level = 'MEDIUM'
+                        counters["matches_medium"] += 1
+                    else:
+                        counters["matches_low"] += 1
+                    logger.info(f"MATCH: reference_curie={ref_id}, entity={fbgn}, "
+                                f"confidence_score={round(results[fbgn], 2)}, "
+                                f"confidence_level={confidence_level}")
+                    try:
                         stat = send_entity_tag_to_abc(
                             reference_curie=str(ref_id),
                             species=species,
-                            data_novelty='ATP:0000335',
+                            data_novelty='ATP:0000334',
                             topic=job['topic_id'],
                             tet_source_id=tet_source_id,
-                            negated=True)
+                            entity_type=job['topic_id'],
+                            entity=fbgn,
+                            confidence_score=round(results[fbgn], 2),
+                            confidence_level=confidence_level)
                         if not stat:
-                            logger.error(f"PROBLEM sending negated job data {job}!!!")
-                        logger.debug(f"Job finished BUT No data. reference_curie={ref_id}")
-                        if not set_job_success(job):
-                            logger.error(f"Problem setting to job success {job}!!!")
-                    else:
-                        logger.debug("job failed NO nxml")
-                        if not set_job_failure(job):
-                            logger.error(f"Problem setting to job failure {job}!!!")
-                if config_parser.getboolean('PARAMETERS', 'remove_files'):
-                    removeFiles(pmcid)
-            except Exception as e:
-                logger.error(f"job failed some thing went pear shaped. {e}")
-                if not set_job_failure(job):
-                    logger.debug(f"Problem setting to job started {job}!!!")
-                logging.error(f"Error processing {pmcid}: {str(e)}")
-        else:
-            logging.warning(f"Error processing {pmcid}: No ftp file available")
-            set_job_failure(job)
+                            logger.debug(f"""reference_curie={str(ref_id)},
+                            species={species},
+                            topic={job['topic_id']},
+                            entity_type={job['topic_id']},
+                            entity={fbgn},
+                            confidence_score={round(results[fbgn], 2)},
+                            confidence_level={confidence_level},
+                            tet_source_id={tet_source_id}""")
+                            okay = False
+                            counters["tet_upload_failed"] += 1
+                    except Exception:
+                        okay = False
+                        counters["tet_upload_failed"] += 1
+                        logger.exception(f"Problem sending entity tag to abc for pmcid={pmcid} ref={ref_id}")
+                if okay:
+                    logger.info("Finished successfully but with results :-)")
+                    if not set_job_success(job):
+                        logger.error(f"Problem setting to job success {job}!!!")
+                        counters["job_status_set_failed"] += 1
+            else:
+                if status == 0:
+                    counters["no_candidates"] += 1
+                    stat = send_entity_tag_to_abc(
+                        reference_curie=str(ref_id),
+                        species=species,
+                        data_novelty='ATP:0000335',
+                        topic=job['topic_id'],
+                        tet_source_id=tet_source_id,
+                        negated=True)
+                    if not stat:
+                        logger.error(f"PROBLEM sending negated job data {job}!!!")
+                    logger.info(f"Job finished BUT No data. reference_curie={ref_id}")
+                    if not set_job_success(job):
+                        logger.error(f"Problem setting to job success {job}!!!")
+                        counters["job_status_set_failed"] += 1
+                else:
+                    counters["no_nxml"] += 1
+                    logger.info(f"job failed NO nxml for pmcid={pmcid}")
+                    if not set_job_failure(job):
+                        logger.error(f"Problem setting to job failure {job}!!!")
+                        counters["job_status_set_failed"] += 1
+            if config_parser.getboolean('PARAMETERS', 'remove_files'):
+                removeFiles(pmcid)
+        except Exception:
+            logger.exception(f"job failed during deep_learning for pmcid={pmcid} ref={ref_id}")
+            if not set_job_failure(job):
+                logger.error(f"Problem setting to job failure {job}!!!")
+                counters["job_status_set_failed"] += 1
+
+    logger.info("RUN SUMMARY: %s", counters)
 
 
 if __name__ == '__main__':

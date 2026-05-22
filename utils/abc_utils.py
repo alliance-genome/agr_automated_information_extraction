@@ -263,8 +263,9 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
     url = f'{blue_api_base_url}/topic_entity_tag/'
     try:
         token = get_authentication_token()
-    except Exception as exc:
-        logger.error(f"Error getting token: {str(exc)}")
+    except Exception:
+        logger.exception(f"{reference_curie}: token fetch failed; cannot send entity tag")
+        return False
     try:
         tet_data = json.dumps({
             "created_by": "default_user",
@@ -283,8 +284,9 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
             "force_insertion": True,
             "ml_model_id": ml_model_id
         }).encode('utf-8')
-    except Exception as e:
-        logger.error(f"PROBLEM with json dumps. Exception: {e}")
+    except Exception:
+        logger.exception(f"{reference_curie}: json.dumps failed; cannot send entity tag")
+        return False
     headers = generate_headers(token)
     try:
         create_request = urllib.request.Request(url=url, data=tet_data, method='POST', headers=headers)
@@ -297,11 +299,11 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
             else:
                 logger.error(f"Failed to create TET: {str(tet_data)}")
                 return False
-    except requests.exceptions.RequestException as e:
-        logger.error(f"{reference_curie}: Error occurred during TET upload: {e}")
+    except requests.exceptions.RequestException:
+        logger.exception(f"{reference_curie}: RequestException during TET upload")
         return False
-    except Exception as e:
-        logger.error(f"{reference_curie}: Diff Error occurred during TET upload: {e}")
+    except Exception:
+        logger.exception(f"{reference_curie}: unexpected error during TET upload")
         return False
 
 
