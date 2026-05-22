@@ -23,9 +23,7 @@ import argparse
 import configparser
 import sys
 import logging
-import subprocess
 import requests
-import xmltodict
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
@@ -107,65 +105,37 @@ def create_postgres_session(db):
     return session
 
 
-@retry(requests.exceptions.RequestException, delay=30, backoff=2, tries=10)
-def getFtpPath(pmcid: str):
-    """Returns the ftp path to a paper given its pmcid
+@retry(requests.exceptions.RequestException, delay=30, backoff=2, tries=5)
+def fetch_pmc_xml(pmcid: str) -> str:
+    """Fetch the PMC article XML via NCBI eutils efetch and write it to
+    ``{PATHS.xml}/{pmcid}.nxml``. Returns the path to the written file.
 
-    Parameters:
-        pmcid, str
-            The pmcid of the paper
+    Raises ``requests.exceptions.RequestException`` after retries on persistent
+    failure; the caller should catch and mark the job failed.
+
+    Replaces the retired OA bulk-tar pipeline (see SCRUM-6123). NCBI removed
+    ``/pub/pmc/oa_package/`` from ftp.ncbi.nlm.nih.gov; efetch returns the
+    article XML directly in a single GET.
     """
-    pmc_api_url = "https://www.ncbi.nlm.nih.gov/pmc/utils/oa/oa.fcgi?id=" + pmcid
-    try:
-        response = requests.get(pmc_api_url)
-        response.raise_for_status()  # Check for any request errors
-        dict_data = xmltodict.parse(response.content)
-        ftplink = ""
-        if "error" in dict_data['OA']:
-            error_code = dict_data['OA']['error']['@code']
-            logging.warning(f"ERROR: Could not find FTP path for {pmcid}: {error_code}")
-        else:
-            link = dict_data['OA']['records']['record']['link']
-            if isinstance(link, list):
-                ftplink = link[0]['@href']
-            else:
-                ftplink = link['@href']
-            assert (".tar.gz" in ftplink)
-        time.sleep(config_parser.getint('PARAMETERS', 'sleep_time_between_requests'))
-        return ftplink
-    except (requests.exceptions.RequestException, KeyError, AssertionError) as e:
-        logging.warning(f"Failed to get FTP path for {pmcid}: {str(e)}")
-    return None
-
-
-@retry(subprocess.CalledProcessError, delay=30, backoff=2, tries=10)
-def download(ftp: str):
-    """Downloads a paper given its ftp path. Raises CalledProcessError on failure
-    so callers can react; the @retry decorator handles transient errors.
-
-    Parameters:
-        ftp, str
-            The ftp path to the paper
-    """
-    wget = f"wget -nc --timeout=10 --no-verbose -P {config_parser.get('PATHS', 'corpus')} {ftp}"
-    subprocess.run(wget, shell=True, check=True)
-
-
-def getXmlFromTar(pmcid: str):
-    """Extracts the xml file from the tar.gz file. Raises CalledProcessError on failure.
-
-    Parameters:
-        pmcid, str
-            The pmcid of the paper
-    """
-    f = f"{config_parser.get('PATHS', 'corpus')}/{pmcid}.tar.gz"
-    untar = f"tar -xf {f} -C {config_parser.get('PATHS', 'corpus')}"
-    subprocess.run(untar, shell=True, check=True)
-    # make xml directory if it doesn't exist
-    if not os.path.exists(config_parser.get('PATHS', 'xml')):
-        os.makedirs(config_parser.get('PATHS', 'xml'))
-    copy_xml = f"cp {config_parser.get('PATHS', 'corpus')}/{pmcid}/*.nxml {config_parser.get('PATHS', 'xml')}/{pmcid}.nxml"
-    subprocess.run(copy_xml, shell=True, check=True)
+    xml_dir = config_parser.get('PATHS', 'xml')
+    os.makedirs(xml_dir, exist_ok=True)
+    out_path = os.path.join(xml_dir, f"{pmcid}.nxml")
+    pmc_id_num = pmcid.removeprefix("PMC")
+    params = {"db": "pmc", "id": pmc_id_num}
+    api_key = os.environ.get("NCBI_API_KEY")
+    if api_key:
+        params["api_key"] = api_key
+    email = os.environ.get("NCBI_EMAIL")
+    if email:
+        params["email"] = email
+    url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    response = requests.get(url, params=params, timeout=60)
+    response.raise_for_status()
+    with open(out_path, "wb") as f:
+        f.write(response.content)
+    # Stay polite to eutils between calls; same param the OA-API path used.
+    time.sleep(config_parser.getint('PARAMETERS', 'sleep_time_between_requests'))
+    return out_path
 
 
 def get_ateam_dicts() -> (dict[str, str], dict[str, str]):
@@ -232,20 +202,7 @@ def get_data_from_alliance_db():
 
 
 def removeFiles(pmcid: str):
-    """Removes paper files that were downloaded
-
-    Parameters:
-        pmcid, str
-            The pmcid of the paper
-    """
-    f = f"{config_parser.get('PATHS', 'corpus')}/{pmcid}.tar.gz"
-    try:
-        os.remove(f)
-    except FileNotFoundError:
-        pass
-    f = f"{config_parser.get('PATHS', 'corpus')}/{pmcid}"
-    # remove extracted directory
-    subprocess.run(f"rm -r {f}", shell=True, check=False)
+    """Removes the downloaded XML for a paper."""
     f = f"{config_parser.get('PATHS', 'xml')}/{pmcid}.nxml"
     try:
         os.remove(f)
@@ -274,9 +231,9 @@ def main():  # noqa C901
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"
 
     counters = {
-        "jobs_loaded": 0, "no_pmcid": 0, "ftp_missing": 0,
-        "download_failed": 0, "extract_failed": 0, "no_candidates": 0,
-        "no_nxml": 0, "matches_high": 0, "matches_medium": 0, "matches_low": 0,
+        "jobs_loaded": 0, "no_pmcid": 0, "xml_fetch_failed": 0,
+        "no_candidates": 0, "no_nxml": 0,
+        "matches_high": 0, "matches_medium": 0, "matches_low": 0,
         "tet_upload_failed": 0, "job_status_set_failed": 0,
     }
 
@@ -325,30 +282,11 @@ def main():  # noqa C901
         pmcid = ref_to_pmc[ref_id]
         logger.debug(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
 
-        ftp = getFtpPath(pmcid)
-        if ftp is None:
-            logger.warning(f"Error processing {pmcid}: No ftp file available")
-            counters["ftp_missing"] += 1
-            if not set_job_failure(job):
-                logger.error(f"Problem setting to job failure {job}!!!")
-                counters["job_status_set_failed"] += 1
-            continue
-
         try:
-            download(ftp)
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"download failed for pmcid={pmcid} after retries: {e}")
-            counters["download_failed"] += 1
-            if not set_job_failure(job):
-                logger.error(f"Problem setting to job failure {job}!!!")
-                counters["job_status_set_failed"] += 1
-            continue
-
-        try:
-            getXmlFromTar(pmcid)
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"extract failed for pmcid={pmcid}: {e}")
-            counters["extract_failed"] += 1
+            xml_path = fetch_pmc_xml(pmcid)
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"efetch failed for pmcid={pmcid} after retries: {e}")
+            counters["xml_fetch_failed"] += 1
             if not set_job_failure(job):
                 logger.error(f"Problem setting to job failure {job}!!!")
                 counters["job_status_set_failed"] += 1
@@ -356,7 +294,7 @@ def main():  # noqa C901
 
         try:
             results, status = deep_learning.get_genes_with_dl(
-                os.path.join(config_parser.get('PATHS', 'xml'), pmcid + ".nxml"),
+                xml_path,
                 gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
             if results:
                 okay = True
