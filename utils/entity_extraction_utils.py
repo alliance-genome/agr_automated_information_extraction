@@ -201,6 +201,44 @@ MARKER_CONTEXT_KEYWORDS = (
     r'expressing|expression\s+pattern|visualize|labeled|tag(ged)?)'
 )
 
+# ---------------------------------------------------------------------------
+# Additional false positive patterns (Phase 1 of allele extraction plan)
+# ---------------------------------------------------------------------------
+
+# Figure/panel label detection (for context checking)
+# Matches patterns like "Figure 1A", "Fig. 2B", "Panel C2"
+FIGURE_PANEL_CONTEXT_RE = re.compile(
+    r'(?:Fig(?:ure)?\.?\s*\d+\s*|[Pp]anel\s+)([A-Za-z]\d?)',
+    re.IGNORECASE
+)
+
+# Histone/protein names that could match allele patterns
+# h1, h2, h3, h4, H2A, H2B, H3X, etc.
+HISTONE_PROTEIN_RE = re.compile(r'^[Hh][1234][ABXabx]?$')
+
+# Timepoint/measurement patterns
+# t1, t2, d1, d2 (timepoints), 10mM, 5uM, 25C (measurements)
+MEASUREMENT_RE = re.compile(
+    r'^[td]\d{1,2}$|'           # t1, t2, d1, d2 (timepoints)
+    r'^\d+[munp]?[MmCc]$',      # 10mM, 5uM, 25C
+    re.IGNORECASE
+)
+
+# Common fluorescent protein/reagent names that should not be extracted as alleles
+REAGENT_NAMES_LOWER = {
+    'gfp', 'mcherry', 'rfp', 'yfp', 'cfp', 'bfp',
+    'dsred', 'tdtomato', 'venus', 'cerulean',
+}
+
+# Supplementary material reference patterns (Fig. S7, Table S10, etc.)
+# These match patterns like "fig. S7", "Fig. [S7]", "table S10", "Movie S3"
+SUPPLEMENTARY_REF_CONTEXT_RE = re.compile(
+    r'(?:fig(?:ure)?\.?\s*\[?|table\s+|movie\s+|video\s+|'
+    r'supplementary\s+(?:fig(?:ure)?|table|movie|video|material)\s*)'
+    r'([sS]\d{1,2})',
+    re.IGNORECASE
+)
+
 
 def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:  # noqa: C901
     """
@@ -363,6 +401,44 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
                 # Found candidate in this pattern but count is high; skip remaining
                 # matches for this pattern but continue checking other patterns
                 break
+
+    # 9. Check for histone/protein name patterns (h1, h2, H2A, H3, etc.)
+    if HISTONE_PROTEIN_RE.match(candidate):
+        return True, f"histone/protein name ({candidate})"
+
+    # 10. Check for timepoint/measurement patterns (t1, d2, 25c, etc.)
+    if MEASUREMENT_RE.match(candidate):
+        return True, f"measurement pattern ({candidate})"
+
+    # 11. Check for fluorescent protein/reagent names (gfp, rfp, mcherry, etc.)
+    if cand_lower in REAGENT_NAMES_LOWER:
+        return True, f"reagent name ({candidate})"
+
+    # 12. Check for figure/panel label context (for short alleles like e1, b2, f1)
+    if len(candidate) <= 3:
+        # Count occurrences in figure context vs allele context
+        fig_matches = FIGURE_PANEL_CONTEXT_RE.findall(fulltext)
+        fig_count = sum(1 for m in fig_matches if m.lower() == cand_lower)
+        allele_count = len(re.findall(
+            r'\w+-?\d*\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
+            fulltext, re.IGNORECASE
+        ))
+        if fig_count > 0 and fig_count >= allele_count:
+            return True, f"figure/panel label ({candidate})"
+
+    # 13. Check for supplementary material references (Fig. S7, Table S10, etc.)
+    # These are common false positives for alleles like s7, s8, s10, etc.
+    if cand_lower.startswith('s') and cand_lower[1:].isdigit():
+        supp_matches = SUPPLEMENTARY_REF_CONTEXT_RE.findall(fulltext)
+        supp_count = sum(1 for m in supp_matches if m.lower() == cand_lower)
+        # Count gene(allele) context mentions
+        allele_context_count = len(re.findall(
+            r'[a-z]+-\d+\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
+            fulltext, re.IGNORECASE
+        ))
+        # If supplementary refs dominate, it's likely not an allele being studied
+        if supp_count > 0 and supp_count > allele_context_count:
+            return True, f"supplementary reference ({candidate})"
 
     return False, ""
 
@@ -956,6 +1032,24 @@ def has_allele_like_context(fulltext: str, candidate: str) -> bool:
 
     text = fulltext.lower()
     cand = candidate.lower()
+
+    # NEW: Negative context - if candidate appears primarily in figure/panel context, reject
+    # This catches cases like "Figure 1A", "Panel B2", etc.
+    fig_context_pattern = re.compile(
+        r'(?:fig(?:ure)?\.?\s*\d+\s*|panel\s+)' + re.escape(cand),
+        re.IGNORECASE
+    )
+    if fig_context_pattern.search(fulltext):
+        # Count figure context vs allele context mentions
+        fig_mentions = len(fig_context_pattern.findall(fulltext))
+        allele_context_pattern = re.compile(
+            r'\w+-?\d*\s*\(\s*' + re.escape(cand) + r'\s*\)',
+            re.IGNORECASE
+        )
+        allele_mentions = len(allele_context_pattern.findall(fulltext))
+        # If figure mentions dominate, reject
+        if fig_mentions > 0 and fig_mentions >= allele_mentions:
+            return False
 
     # Is this a "suspicious" ultra-short allele like e5, b2, s7, etc.?
     is_suspicious_short = bool(SUSPICIOUS_PREFIX_RE.match(cand))
