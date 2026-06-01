@@ -246,12 +246,24 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
             create_request.add_header("Content-type", "application/json")
             create_request.add_header("Accept", "application/json")
             with urllib.request.urlopen(create_request) as create_response:
-                if create_response.getcode() == 201:
-                    logger.debug("TET created")
+                # 201 = new tag inserted, 200 = idempotent upsert (existing tag with a
+                # note appended in place) per the SCRUM-5716 strict-REST redesign. Both
+                # mean the tag is present as intended.
+                if create_response.getcode() in (200, 201):
+                    logger.debug("TET created or upserted")
                 else:
                     logger.error(f"Failed to create TET (attempt {attempts}): {str(tet_data)}")
             return True
-        except requests.exceptions.RequestException as exc:
+        except (HTTPError, requests.exceptions.RequestException) as exc:
+            # 409 = the tag already exists. force_insertion=True bypasses the
+            # different-creator conflict branches and this source is not
+            # abc_literature_system, so the only 409 reachable here is an exact
+            # duplicate — a benign no-op for an idempotent re-run.
+            if isinstance(exc, HTTPError) and exc.code == 409:
+                logger.debug(f"{reference_curie}: TET already exists (409 duplicate); skipping")
+                return True
+            # Other HTTP errors (e.g. 5xx) and network errors are transient: retry,
+            # and raise after the final attempt.
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
                 logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, ")
