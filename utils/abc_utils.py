@@ -169,8 +169,11 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             create_request.add_header("Accept", "application/json")
             try:
                 with urllib.request.urlopen(create_request) as create_response:
-                    create_resp = create_response.read().decode("utf8")
-                    return int(create_resp)
+                    # POST /topic_entity_tag/source now returns the full
+                    # TopicEntityTagSourceSchemaShow object (SCRUM-5716), not a
+                    # bare integer id, so parse the JSON and pull the id field.
+                    create_resp = json.loads(create_response.read().decode("utf8"))
+                    return int(create_resp["topic_entity_tag_source_id"])
             except HTTPError as create_e:
                 logger.error(f"Failed to create source: {create_e}")
         else:
@@ -293,12 +296,25 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
         create_request.add_header("Content-type", "application/json")
         create_request.add_header("Accept", "application/json")
         with urllib.request.urlopen(create_request) as create_response:
-            if create_response.getcode() == 201:
-                logger.debug("TET created")
+            # 201 = new tag inserted, 200 = idempotent upsert (existing tag with a
+            # new note appended in place) per the SCRUM-5716 strict-REST redesign.
+            # Both outcomes mean the tag is present as intended.
+            if create_response.getcode() in (200, 201):
+                logger.debug("TET created or upserted")
                 return True
             else:
                 logger.error(f"Failed to create TET: {str(tet_data)}")
                 return False
+    except HTTPError as exc:
+        # 409 = the tag already exists. force_insertion=True bypasses the
+        # different-creator conflict branches and this source is not
+        # abc_literature_system, so the only 409 reachable here is an exact
+        # duplicate — a benign no-op for an idempotent re-run.
+        if exc.code == 409:
+            logger.debug(f"{reference_curie}: TET already exists (409 duplicate); skipping")
+            return True
+        logger.exception(f"{reference_curie}: HTTPError during TET upload")
+        return False
     except requests.exceptions.RequestException:
         logger.exception(f"{reference_curie}: RequestException during TET upload")
         return False
