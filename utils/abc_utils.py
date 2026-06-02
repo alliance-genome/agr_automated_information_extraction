@@ -7,7 +7,7 @@ import urllib.request
 from argparse import Namespace
 from collections import defaultdict
 from typing import List, Tuple, Dict, Union, Optional
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 import numpy as np
 import psycopg2
@@ -181,6 +181,14 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             raise
 
 
+def _read_http_error_body(exc: HTTPError) -> str:
+    """Return the response body of an HTTPError as text, swallowing read errors."""
+    try:
+        return exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str, confidence_score: float):
     url = f'{blue_api_base_url}/manual_indexing_tag/'
     token = get_authentication_token()
@@ -199,16 +207,40 @@ def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str,
             create_request.add_header("Content-type", "application/json")
             create_request.add_header("Accept", "application/json")
             with urllib.request.urlopen(create_request) as create_response:
-                if create_response.getcode() == 201:
+                # 200/201 both mean the tag is present as intended.
+                if create_response.getcode() in (200, 201):
                     logger.debug("Manual Indexing Tag created")
                 else:
                     logger.error(f"Failed to create Manual Indexing Tag (attempt {attempts}): {str(mit_data)}")
             return True
-        except requests.exceptions.RequestException as exc:
+        except HTTPError as exc:
+            # urllib raises HTTPError (a URLError subclass, NOT a requests exception) on any
+            # 4xx/5xx, so catch it here to stop a single reference from crashing the batch.
+            if 400 <= exc.code < 500:
+                # Client errors (incl. the 422 "already exists" duplicate from
+                # POST /manual_indexing_tag/) are deterministic, so do not retry. Per
+                # SCRUM-6062 we deliberately do NOT treat "already exists" as success:
+                # returning True would mask other validation failures and incorrectly
+                # advance failed jobs to done. Skip the reference and return False.
+                if exc.code == 422 and "already exists" in _read_http_error_body(exc):
+                    logger.warning(f"{reference_curie}: manual indexing tag already exists; "
+                                   f"not retrying and not marking the job done")
+                else:
+                    logger.error(f"{reference_curie}: HTTP {exc.code} creating manual indexing tag; "
+                                 f"not retrying")
+                return False
+            # Server errors (5xx) are transient: retry, then give up without crashing.
             if attempts >= 3:
-                logger.error(f"Error trying to send manual indexing tag to ABC {attempts} times.")
-                logger.error(f"curie: {reference_curie}, mod_abbr: {mod_abbr}, topic: {topic}, confidence_score: {confidence_score}")
-                raise RuntimeError("Error Sending manual indexing tag to abc FAILED") from exc
+                logger.error(f"{reference_curie}: HTTP {exc.code} creating manual indexing tag after "
+                             f"{attempts} attempts; giving up")
+                return False
+            time.sleep(attempts)
+        except (URLError, requests.exceptions.RequestException) as exc:
+            if attempts >= 3:
+                logger.error(f"Error trying to send manual indexing tag to ABC {attempts} times: {exc}")
+                logger.error(f"curie: {reference_curie}, mod_abbr: {mod_abbr}, topic: {topic}, "
+                             f"confidence_score: {confidence_score}")
+                return False
             time.sleep(attempts)
     return False
 
@@ -521,14 +553,19 @@ def get_pmids_from_reference_curies(curies: List[str]):
         request = urllib.request.Request(url=ref_data_api, headers=headers)
         request.add_header("Content-type", "application/json")
         request.add_header("Accept", "application/json")
-        with urllib.request.urlopen(request) as response:
-            resp = response.read().decode("utf8")
-            resp_obj = json.loads(resp)
-            try:
-                curie_pmid[curie] = [xref["curie"] for xref in resp_obj["cross_references"]
-                                     if xref["curie"].startswith("PMID")][0]
-            except IndexError:
-                curie_pmid[curie] = None
+        try:
+            with urllib.request.urlopen(request) as response:
+                resp = response.read().decode("utf8")
+                resp_obj = json.loads(resp)
+            curie_pmid[curie] = [xref["curie"] for xref in resp_obj.get("cross_references", [])
+                                 if xref["curie"].startswith("PMID")][0]
+        except IndexError:
+            # No PMID cross-reference for this reference.
+            curie_pmid[curie] = None
+        except (HTTPError, URLError) as exc:
+            # A failed lookup for one reference must not abort the whole batch.
+            logger.error(f"Error fetching reference {curie} for PMID lookup: {exc}")
+            curie_pmid[curie] = None
     return curie_pmid
 
 
