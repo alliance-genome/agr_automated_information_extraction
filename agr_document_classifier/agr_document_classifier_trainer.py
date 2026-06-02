@@ -22,7 +22,7 @@ from sklearn.neighbors import LocalOutlierFactor
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
-from utils.embedding import load_embedding_model, get_document_embedding
+from utils.embedding import load_embedding_model, build_feature_matrix
 from utils.get_documents import get_documents, remove_stopwords
 
 nltk.download('stopwords')
@@ -89,10 +89,11 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
-                     outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1):
+                     outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1,
+                     use_bow_features: bool = False, use_max_pooling: bool = False):
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
-    X = []
+    texts = []
     y = []
 
     # Precompute word_to_index
@@ -101,7 +102,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
-    # For each document in your training data, extract embeddings and labels
+    # For each document in your training data, collect its text and label
     logger.info("Loading training set")
     for label in ["positive", "negative"]:
         documents = list(get_documents(os.path.join(training_data_dir, label)))
@@ -120,20 +121,20 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
             if text:
                 text = remove_stopwords(text)
                 text = text.lower()
-                text_embedding = get_document_embedding(embedding_model, text,
-                                                        weighted_average_word_embedding=weighted_average_word_embedding,
-                                                        standardize_embeddings=standardize_embeddings,
-                                                        normalize_embeddings=normalize_embeddings,
-                                                        word_to_index=word_to_index)
-                X.append(text_embedding)
+                texts.append(text)
                 y.append(int(label == "positive"))
+
+    logger.info(f"Building features (max_pooling={use_max_pooling}, bow={use_bow_features}).")
+    X = build_feature_matrix(embedding_model, texts, use_max_pooling=use_max_pooling,
+                             use_bow=use_bow_features,
+                             weighted_average_word_embedding=weighted_average_word_embedding,
+                             standardize_embeddings=standardize_embeddings,
+                             normalize_embeddings=normalize_embeddings, word_to_index=word_to_index)
 
     del embedding_model
     logger.info("Finished loading training set.")
-    logger.info(f"Dataset size: {str(len(X))}")
+    logger.info(f"Dataset size: {str(len(y))}")
 
-    # Convert lists to numpy arrays
-    X = np.array(X)
     y = np.array(y)
 
     # Step 1: Split data into train+val (80%) and holdout test set (20%)
@@ -174,6 +175,11 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info("Using penalized scoring: weighted_score = 0.7 * test_f1 + 0.3 * cv_f1 - penalty")
 
     for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
+        # RBF-SVC is slow and weak on the high-dimensional sparse matrix produced
+        # by the BoW block, so skip it when BoW features are enabled.
+        if use_bow_features and classifier_name == 'SVC':
+            logger.info("Skipping SVC: not suitable for the high-dim sparse BoW feature matrix.")
+            continue
         logger.info(f"Evaluating model {classifier_name}.")
 
         # Reduce n_iter for faster training with focus on regularization
@@ -375,6 +381,14 @@ def parse_arguments():
     parser.add_argument("-s", "--standardize_embeddings", action="store_true",
                         help="Whether to standardize the word embedding vectors",
                         required=False)
+    parser.add_argument("--use_bow_features", action="store_true",
+                        help="Concatenate a stateless hashing bag-of-words block with the embedding "
+                             "(must be passed identically at classification time)",
+                        required=False)
+    parser.add_argument("--use_max_pooling", action="store_true",
+                        help="Concatenate an element-wise max-pooled embedding alongside the mean "
+                             "(must be passed identically at classification time)",
+                        required=False)
     parser.add_argument("-S", "--skip_training_set_download", action="store_true",
                         help="Assume that tei files from training set are already present and do not download them "
                              "again",
@@ -517,7 +531,9 @@ def train_and_save_model(args, training_data_dir, training_set):
         sections_to_use=args.sections_to_use,
         remove_outliers=args.remove_outliers,
         outlier_method=args.outlier_method,
-        outlier_contamination=args.outlier_contamination)
+        outlier_contamination=args.outlier_contamination,
+        use_bow_features=args.use_bow_features,
+        use_max_pooling=args.use_max_pooling)
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,

@@ -11,6 +11,7 @@ from argparse import Namespace
 import joblib
 import numpy as np
 import requests.exceptions
+import scipy.sparse as sp
 from gensim.models import KeyedVectors
 
 from utils.abc_utils import download_md_files_for_references, send_classification_tag_to_abc, \
@@ -21,7 +22,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag, \
     get_current_workflow_status
 from utils.get_documents import get_documents, remove_stopwords
-from utils.embedding import load_embedding_model, get_document_embedding
+from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
 
@@ -41,12 +42,13 @@ def configure_logging(log_level):
 
 
 def classify_documents(input_docs_dir: str, embedding_model_path: str = None, classifier_model_path: str = None,
-                       embedding_model=None, classifier_model=None):
+                       embedding_model=None, classifier_model=None,
+                       use_bow_features: bool = False, use_max_pooling: bool = False):
     if embedding_model is None:
         embedding_model = load_embedding_model(model_path=embedding_model_path)
     if classifier_model is None:
         classifier_model = joblib.load(classifier_model_path)
-    X = []
+    rows = []
     files_loaded = []
     valid_embeddings = []
 
@@ -54,25 +56,34 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
 
     if isinstance(embedding_model, KeyedVectors):
         word_to_index = embedding_model.key_to_index
+        embedding_dim = embedding_model.vector_size
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
+        embedding_dim = embedding_model.get_dimension()
+    bow_vectorizer = get_bow_vectorizer() if use_bow_features else None
 
     for _, (file_path, fulltext, _, _) in enumerate(documents):
         text = remove_stopwords(fulltext)
         text = text.lower()
-        doc_embedding = get_document_embedding(embedding_model, text, word_to_index=word_to_index)
-        X.append(doc_embedding)
+        features = build_document_features(embedding_model, text, use_max_pooling=use_max_pooling,
+                                           use_bow=use_bow_features, word_to_index=word_to_index,
+                                           bow_vectorizer=bow_vectorizer)
+        rows.append(features)
         files_loaded.append(file_path)
-        valid_embeddings.append(not np.all(doc_embedding == np.zeros_like(doc_embedding)))
+        # The "valid embedding" gate stays tied to the mean-embedding block (first
+        # embedding_dim dims); the optional max/BoW blocks do not change which
+        # documents are considered classifiable.
+        mean_block = features[0, :embedding_dim].toarray().ravel() if use_bow_features else features[:embedding_dim]
+        valid_embeddings.append(not np.all(mean_block == 0))
 
     del embedding_model
-    X = np.array(X)
-    if X.size == 0:
+    if not files_loaded:
         logger.warning(
             "classify_documents called with zero loaded documents for input_docs_dir=%s; "
             "skipping predict()", input_docs_dir,
         )
         return files_loaded, np.array([]), [], valid_embeddings
+    X = sp.vstack(rows, format="csr") if use_bow_features else np.vstack(rows)
     classifications = classifier_model.predict(X)
     try:
         confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
@@ -94,11 +105,18 @@ def parse_arguments():
     parser.add_argument("--test_mode", action="store_true", help="Run in test mode (directly on provided"
                                                                  " references and mod - do not store results nor send "
                                                                  "emails).", required=False)
+    parser.add_argument("--use_bow_features", action="store_true",
+                        help="Concatenate a stateless hashing bag-of-words block with the embedding. "
+                             "Must match the flag used when the model was trained.", required=False)
+    parser.add_argument("--use_max_pooling", action="store_true",
+                        help="Concatenate an element-wise max-pooled embedding alongside the mean. "
+                             "Must match the flag used when the model was trained.", required=False)
 
     return parser.parse_args()
 
 
-def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False):
+def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False,
+                                use_bow_features=False, use_max_pooling=False):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
                                       source_description="Alliance document classification pipeline using machine "
@@ -141,11 +159,11 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
-                          test_mode)
+                          test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling)
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
-                      test_mode):
+                      test_mode, use_bow_features=False, use_max_pooling=False):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_md_files_for_references(list(reference_curie_job_map.keys()),
@@ -171,7 +189,9 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
     files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
         embedding_model=embedding_model,
         classifier_model=classifier_model,
-        input_docs_dir="/data/agr_document_classifier/to_classify")
+        input_docs_dir="/data/agr_document_classifier/to_classify",
+        use_bow_features=use_bow_features,
+        use_max_pooling=use_max_pooling)
     if test_mode:
         for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                           valid_embeddings):
@@ -268,7 +288,9 @@ def classify_mode(args: Namespace):
     failed_processes = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            process_classification_jobs(mod_id, topic, jobs, embedding_model)
+            process_classification_jobs(mod_id, topic, jobs, embedding_model,
+                                        use_bow_features=args.use_bow_features,
+                                        use_max_pooling=args.use_max_pooling)
         except Exception as e:
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}: {e}")
             failed = {'topic': topic,
@@ -318,7 +340,9 @@ def direct_classify_mode(args: Namespace):
             topic=args.topic,
             jobs=jobs,
             embedding_model=embedding_model,
-            test_mode=True
+            test_mode=True,
+            use_bow_features=args.use_bow_features,
+            use_max_pooling=args.use_max_pooling
         )
     except Exception as e:
         logger.error(f"Error in direct classification: {e}")
