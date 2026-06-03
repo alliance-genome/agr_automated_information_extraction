@@ -151,6 +151,13 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
                     if curie in species_to_exclude_set:
                         continue
             else:
+                # Strain (AGM) and transgene are fetched via the REST API, which
+                # returns full entity objects carrying their own obsolete/internal
+                # flags. (Gene/allele come from minimal DB objects where these are
+                # None and are filtered in SQL instead.) Exclude internal/obsolete
+                # entities here so they never reach extraction.
+                if getattr(entity, 'obsolete', False) or getattr(entity, 'internal', False):
+                    continue
                 if hasattr(entity, 'primaryExternalId'):
                     curie = entity.primaryExternalId
                 if not curie:
