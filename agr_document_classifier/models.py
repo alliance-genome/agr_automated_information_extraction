@@ -1,9 +1,10 @@
+from lightgbm import LGBMClassifier
 from scipy.stats import loguniform, randint, uniform
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.linear_model import LogisticRegression, SGDClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
+from sklearn.svm import SVC, LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
 
@@ -27,6 +28,45 @@ POSSIBLE_CLASSIFIERS = {
                 'warm_start': [False]
             }
         ]
+    },
+    'LinearSVC': {
+        # Scalable linear SVM (liblinear/saga) — handles the high-dimensional
+        # sparse BoW matrix cheaply, unlike the libsvm-based SVC. No predict_proba;
+        # the classify pipeline falls back to decision_function -> sigmoid.
+        'model': LinearSVC(random_state=42, max_iter=5000),
+        'params': [
+            {
+                'C': loguniform(1e-3, 10),
+                'penalty': ['l2'],
+                'loss': ['squared_hinge', 'hinge'],
+                'dual': [True],
+                'class_weight': ['balanced'],
+            },
+            {
+                'C': loguniform(1e-3, 10),
+                'penalty': ['l1'],
+                'loss': ['squared_hinge'],
+                'dual': [False],
+                'class_weight': ['balanced'],
+            },
+        ]
+    },
+    'LGBMClassifier': {
+        # LightGBM gradient boosting — sparse-native and typically >= XGBoost.
+        # subsample_freq=1 makes the sampled `subsample` (bagging) actually apply.
+        'model': LGBMClassifier(random_state=42, verbose=-1, subsample_freq=1),
+        'params': {
+            'n_estimators': randint(50, 200),
+            'num_leaves': randint(15, 63),
+            'max_depth': [-1, 3, 5, 7],
+            'learning_rate': loguniform(0.01, 0.3),
+            'min_child_samples': randint(5, 40),
+            'subsample': uniform(0.6, 0.4),         # bagging fraction (0.6-1.0)
+            'colsample_bytree': uniform(0.5, 0.5),  # feature fraction (0.5-1.0)
+            'reg_alpha': loguniform(1e-3, 10),      # L1
+            'reg_lambda': loguniform(1e-3, 10),     # L2
+            'class_weight': ['balanced', None],
+        }
     },
     'RandomForestClassifier': {
         'model': RandomForestClassifier(random_state=42),
