@@ -179,10 +179,14 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info("Using penalized scoring: weighted_score = 0.7 * test_f1 + 0.3 * cv_f1 - penalty")
 
     for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
-        # RBF-SVC is slow and weak on the high-dimensional sparse matrix produced
-        # by the BoW block, so skip it when BoW features are enabled.
-        if use_bow_features and classifier_name == 'SVC':
-            logger.info("Skipping SVC: not suitable for the high-dim sparse BoW feature matrix.")
+        # On the high-dimensional sparse matrix produced by the BoW block, RBF-SVC
+        # is slow/weak and MLPClassifier is both memory-heavy (its input-layer
+        # weight matrix is n_features x hidden, ~210MB at 2**18 features, multiplied
+        # across RandomizedSearchCV's parallel workers -> OOM) and prone to severe
+        # overfitting. Skip both when BoW features are enabled.
+        if use_bow_features and classifier_name in ('SVC', 'MLPClassifier'):
+            logger.info(f"Skipping {classifier_name}: not suitable for the high-dimensional sparse "
+                        f"BoW feature matrix.")
             continue
         logger.info(f"Evaluating model {classifier_name}.")
 
