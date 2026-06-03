@@ -23,6 +23,7 @@ from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
 from utils.embedding import load_embedding_model, build_feature_matrix
+from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
 
 nltk.download('stopwords')
@@ -441,53 +442,34 @@ def download_training_set(args, training_data_dir):
     if args.filter_date_before:
         try:
             filter_date = datetime.strptime(args.filter_date_before, "%Y-%m-%d")
-            logger.info(f"Filtering out references published before {args.filter_date_before}")
-
-            # Filter positive references
-            filtered_positive = []
-            for ref_id in reference_ids_positive:
-                ref_date_str = get_reference_date(ref_id)
-                if ref_date_str:
-                    try:
-                        ref_date = datetime.strptime(ref_date_str[:10], "%Y-%m-%d")  # Take only date part
-                        if ref_date >= filter_date:
-                            filtered_positive.append(ref_id)
-                        else:
-                            logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
-                    except ValueError:
-                        logger.warning(f"Could not parse date '{ref_date_str}' for reference {ref_id}, including it")
-                        filtered_positive.append(ref_id)
-                else:
-                    logger.debug(f"No date found for reference {ref_id}, including it")
-                    filtered_positive.append(ref_id)
-
-            # Filter negative references
-            filtered_negative = []
-            for ref_id in reference_ids_negative:
-                ref_date_str = get_reference_date(ref_id)
-                if ref_date_str:
-                    try:
-                        ref_date = datetime.strptime(ref_date_str[:10], "%Y-%m-%d")  # Take only date part
-                        if ref_date >= filter_date:
-                            filtered_negative.append(ref_id)
-                        else:
-                            logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
-                    except ValueError:
-                        logger.warning(f"Could not parse date '{ref_date_str}' for reference {ref_id}, including it")
-                        filtered_negative.append(ref_id)
-                else:
-                    logger.debug(f"No date found for reference {ref_id}, including it")
-                    filtered_negative.append(ref_id)
-
-            logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> "
-                        f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
-                        f"{len(filtered_negative)}")
-            reference_ids_positive = filtered_positive
-            reference_ids_negative = filtered_negative
-
         except ValueError:
             logger.error(f"Invalid date format: {args.filter_date_before}. Expected YYYY-MM-DD")
             raise
+        logger.info(f"Filtering out references published before {args.filter_date_before}")
+
+        def _keep_on_or_after(ref_ids):
+            """Keep references published on/after filter_date. References whose
+            (possibly messy PubMed) date cannot be parsed at all are kept."""
+            kept = []
+            for ref_id in ref_ids:
+                ref_date_str = get_reference_date(ref_id)
+                ref_date = parse_reference_date(ref_date_str)
+                if ref_date is None:
+                    logger.debug(f"No parseable date for {ref_id} ('{ref_date_str}'), including it")
+                    kept.append(ref_id)
+                elif ref_date >= filter_date:
+                    kept.append(ref_id)
+                else:
+                    logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
+            return kept
+
+        filtered_positive = _keep_on_or_after(reference_ids_positive)
+        filtered_negative = _keep_on_or_after(reference_ids_negative)
+        logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> "
+                    f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
+                    f"{len(filtered_negative)}")
+        reference_ids_positive = filtered_positive
+        reference_ids_negative = filtered_negative
 
     shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
