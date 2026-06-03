@@ -67,7 +67,7 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
         detector = LocalOutlierFactor(contamination=contamination, novelty=False)
     else:
         logger.warning(f"Unknown outlier detection method: {method}. Skipping outlier removal.")
-        return X, y, np.ones(len(X), dtype=bool)
+        return X, y, np.ones(X.shape[0], dtype=bool)
 
     # Fit the detector and predict outliers
     outlier_predictions = detector.fit_predict(X)
@@ -81,8 +81,10 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     y_clean = y[inlier_mask]
 
     n_outliers = np.sum(outlier_mask)
-    logger.info(f"Removed {n_outliers} outliers ({n_outliers/len(X)*100:.1f}%) from {len(X)} samples")
-    logger.info(f"Remaining samples: {len(X_clean)} (Positive: {np.sum(y_clean)}, Negative: {np.sum(1-y_clean)})")
+    logger.info(f"Removed {n_outliers} outliers ({n_outliers / X.shape[0] * 100:.1f}%) "
+                f"from {X.shape[0]} samples")
+    logger.info(f"Remaining samples: {X_clean.shape[0]} "
+                f"(Positive: {np.sum(y_clean)}, Negative: {np.sum(1 - y_clean)})")
 
     return X_clean, y_clean, outlier_mask
 
@@ -143,7 +145,8 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         X, y, test_size=0.20, stratify=y, random_state=42
     )
 
-    logger.info(f"Dataset split - Total: {len(X)}, Train+Val: {len(X_train_val)}, Test: {len(X_test)}")
+    logger.info(f"Dataset split - Total: {X.shape[0]}, Train+Val: {X_train_val.shape[0]}, "
+                f"Test: {X_test.shape[0]}")
     logger.info(f"Class distribution - Train+Val: {np.bincount(y_train_val)}, Test: {np.bincount(y_test)}")
 
     # Step 2: Apply outlier detection and removal if requested
