@@ -43,7 +43,8 @@ def configure_logging(log_level):
 
 def classify_documents(input_docs_dir: str, embedding_model_path: str = None, classifier_model_path: str = None,
                        embedding_model=None, classifier_model=None,
-                       use_bow_features: bool = False, use_max_pooling: bool = False):
+                       use_bow_features: bool = False, use_max_pooling: bool = False,
+                       include_keywords: bool = False, include_metadata: bool = False):
     if embedding_model is None:
         embedding_model = load_embedding_model(model_path=embedding_model_path)
     if classifier_model is None:
@@ -52,7 +53,8 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     files_loaded = []
     valid_embeddings = []
 
-    documents = get_documents(input_docs_dir=input_docs_dir)
+    documents = get_documents(input_docs_dir=input_docs_dir, include_keywords=include_keywords,
+                              include_metadata=include_metadata)
 
     if isinstance(embedding_model, KeyedVectors):
         word_to_index = embedding_model.key_to_index
@@ -111,12 +113,19 @@ def parse_arguments():
     parser.add_argument("--use_max_pooling", action="store_true",
                         help="Concatenate an element-wise max-pooled embedding alongside the mean. "
                              "Must match the flag used when the model was trained.", required=False)
+    parser.add_argument("--include_keywords", action="store_true",
+                        help="Include author keywords in the document text. "
+                             "Must match the flag used when the model was trained.", required=False)
+    parser.add_argument("--include_metadata", action="store_true",
+                        help="Include article metadata in the document text. "
+                             "Must match the flag used when the model was trained.", required=False)
 
     return parser.parse_args()
 
 
 def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False,
-                                use_bow_features=False, use_max_pooling=False):
+                                use_bow_features=False, use_max_pooling=False,
+                                include_keywords=False, include_metadata=False):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
                                       source_description="Alliance document classification pipeline using machine "
@@ -159,11 +168,13 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
-                          test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling)
+                          test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling,
+                          include_keywords=include_keywords, include_metadata=include_metadata)
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
-                      test_mode, use_bow_features=False, use_max_pooling=False):
+                      test_mode, use_bow_features=False, use_max_pooling=False,
+                      include_keywords=False, include_metadata=False):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_md_files_for_references(list(reference_curie_job_map.keys()),
@@ -191,7 +202,9 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         classifier_model=classifier_model,
         input_docs_dir="/data/agr_document_classifier/to_classify",
         use_bow_features=use_bow_features,
-        use_max_pooling=use_max_pooling)
+        use_max_pooling=use_max_pooling,
+        include_keywords=include_keywords,
+        include_metadata=include_metadata)
     if test_mode:
         for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                           valid_embeddings):
@@ -290,7 +303,9 @@ def classify_mode(args: Namespace):
         try:
             process_classification_jobs(mod_id, topic, jobs, embedding_model,
                                         use_bow_features=args.use_bow_features,
-                                        use_max_pooling=args.use_max_pooling)
+                                        use_max_pooling=args.use_max_pooling,
+                                        include_keywords=args.include_keywords,
+                                        include_metadata=args.include_metadata)
         except Exception as e:
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}: {e}")
             failed = {'topic': topic,
@@ -342,7 +357,9 @@ def direct_classify_mode(args: Namespace):
             embedding_model=embedding_model,
             test_mode=True,
             use_bow_features=args.use_bow_features,
-            use_max_pooling=args.use_max_pooling
+            use_max_pooling=args.use_max_pooling,
+            include_keywords=args.include_keywords,
+            include_metadata=args.include_metadata
         )
     except Exception as e:
         logger.error(f"Error in direct classification: {e}")

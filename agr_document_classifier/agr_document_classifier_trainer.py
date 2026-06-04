@@ -93,7 +93,8 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
                      outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1,
-                     use_bow_features: bool = False, use_max_pooling: bool = False):
+                     use_bow_features: bool = False, use_max_pooling: bool = False,
+                     include_keywords: bool = False, include_metadata: bool = False):
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
     texts = []
@@ -108,7 +109,10 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     # For each document in your training data, collect its text and label
     logger.info("Loading training set")
     for label in ["positive", "negative"]:
-        documents = list(get_documents(os.path.join(training_data_dir, label)))
+        documents = list(get_documents(
+            os.path.join(training_data_dir, label),
+            include_keywords=include_keywords,
+            include_metadata=include_metadata))
 
         for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
             text = ""
@@ -397,6 +401,14 @@ def parse_arguments():
                         help="Concatenate an element-wise max-pooled embedding alongside the mean "
                              "(must be passed identically at classification time)",
                         required=False)
+    parser.add_argument("--include_keywords", action="store_true",
+                        help="Include author keywords in the document text (off by default; must be "
+                             "passed identically at classification time)",
+                        required=False)
+    parser.add_argument("--include_metadata", action="store_true",
+                        help="Include article metadata in the document text (off by default; must be "
+                             "passed identically at classification time)",
+                        required=False)
     parser.add_argument("-S", "--skip_training_set_download", action="store_true",
                         help="Assume that tei files from training set are already present and do not download them "
                              "again",
@@ -522,7 +534,9 @@ def train_and_save_model(args, training_data_dir, training_set):
         outlier_method=args.outlier_method,
         outlier_contamination=args.outlier_contamination,
         use_bow_features=args.use_bow_features,
-        use_max_pooling=args.use_max_pooling)
+        use_max_pooling=args.use_max_pooling,
+        include_keywords=args.include_keywords,
+        include_metadata=args.include_metadata)
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
