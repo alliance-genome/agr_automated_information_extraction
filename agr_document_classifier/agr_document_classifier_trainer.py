@@ -94,6 +94,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
                      outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1,
                      use_bow_features: bool = False, use_max_pooling: bool = False,
+                     use_lsh_features: bool = False,
                      include_keywords: bool = False, include_metadata: bool = False):
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
@@ -131,9 +132,10 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                 texts.append(text)
                 y.append(int(label == "positive"))
 
-    logger.info(f"Building features (max_pooling={use_max_pooling}, bow={use_bow_features}).")
+    logger.info(f"Building features (max_pooling={use_max_pooling}, bow={use_bow_features}, "
+                f"lsh={use_lsh_features}).")
     X = build_feature_matrix(embedding_model, texts, use_max_pooling=use_max_pooling,
-                             use_bow=use_bow_features,
+                             use_bow=use_bow_features, use_lsh=use_lsh_features,
                              weighted_average_word_embedding=weighted_average_word_embedding,
                              standardize_embeddings=standardize_embeddings,
                              normalize_embeddings=normalize_embeddings, word_to_index=word_to_index)
@@ -401,6 +403,11 @@ def parse_arguments():
                         help="Concatenate an element-wise max-pooled embedding alongside the mean "
                              "(must be passed identically at classification time)",
                         required=False)
+    parser.add_argument("--use_lsh_features", action="store_true",
+                        help="Concatenate a stateless LSH bag-of-concepts block (random-hyperplane "
+                             "buckets over the word embeddings, so near-synonyms share a bin) with the "
+                             "embedding (must be passed identically at classification time)",
+                        required=False)
     parser.add_argument("--include_keywords", action="store_true",
                         help="Include author keywords in the document text (off by default; must be "
                              "passed identically at classification time)",
@@ -535,6 +542,7 @@ def train_and_save_model(args, training_data_dir, training_set):
         outlier_contamination=args.outlier_contamination,
         use_bow_features=args.use_bow_features,
         use_max_pooling=args.use_max_pooling,
+        use_lsh_features=args.use_lsh_features,
         include_keywords=args.include_keywords,
         include_metadata=args.include_metadata)
     logger.info(f"Best classifier stats: {str(stats)}")

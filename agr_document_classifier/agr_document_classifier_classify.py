@@ -44,6 +44,7 @@ def configure_logging(log_level):
 def classify_documents(input_docs_dir: str, embedding_model_path: str = None, classifier_model_path: str = None,
                        embedding_model=None, classifier_model=None,
                        use_bow_features: bool = False, use_max_pooling: bool = False,
+                       use_lsh_features: bool = False,
                        include_keywords: bool = False, include_metadata: bool = False):
     if embedding_model is None:
         embedding_model = load_embedding_model(model_path=embedding_model_path)
@@ -63,19 +64,21 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
         embedding_dim = embedding_model.get_dimension()
     bow_vectorizer = get_bow_vectorizer() if use_bow_features else None
+    # The LSH and BoW blocks both make the feature row sparse.
+    sparse_features = use_bow_features or use_lsh_features
 
     for _, (file_path, fulltext, _, _) in enumerate(documents):
         text = remove_stopwords(fulltext)
         text = text.lower()
         features = build_document_features(embedding_model, text, use_max_pooling=use_max_pooling,
-                                           use_bow=use_bow_features, word_to_index=word_to_index,
-                                           bow_vectorizer=bow_vectorizer)
+                                           use_bow=use_bow_features, use_lsh=use_lsh_features,
+                                           word_to_index=word_to_index, bow_vectorizer=bow_vectorizer)
         rows.append(features)
         files_loaded.append(file_path)
         # The "valid embedding" gate stays tied to the mean-embedding block (first
-        # embedding_dim dims); the optional max/BoW blocks do not change which
+        # embedding_dim dims); the optional max/LSH/BoW blocks do not change which
         # documents are considered classifiable.
-        mean_block = features[0, :embedding_dim].toarray().ravel() if use_bow_features else features[:embedding_dim]
+        mean_block = features[0, :embedding_dim].toarray().ravel() if sparse_features else features[:embedding_dim]
         valid_embeddings.append(not np.all(mean_block == 0))
 
     del embedding_model
@@ -85,7 +88,7 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
             "skipping predict()", input_docs_dir,
         )
         return files_loaded, np.array([]), [], valid_embeddings
-    X = sp.vstack(rows, format="csr") if use_bow_features else np.vstack(rows)
+    X = sp.vstack(rows, format="csr") if sparse_features else np.vstack(rows)
     classifications = classifier_model.predict(X)
     try:
         confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
@@ -113,6 +116,10 @@ def parse_arguments():
     parser.add_argument("--use_max_pooling", action="store_true",
                         help="Concatenate an element-wise max-pooled embedding alongside the mean. "
                              "Must match the flag used when the model was trained.", required=False)
+    parser.add_argument("--use_lsh_features", action="store_true",
+                        help="Concatenate a stateless LSH bag-of-concepts block (random-hyperplane "
+                             "buckets over the word embeddings). "
+                             "Must match the flag used when the model was trained.", required=False)
     parser.add_argument("--include_keywords", action="store_true",
                         help="Include author keywords in the document text. "
                              "Must match the flag used when the model was trained.", required=False)
@@ -124,7 +131,7 @@ def parse_arguments():
 
 
 def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False,
-                                use_bow_features=False, use_max_pooling=False,
+                                use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
                                 include_keywords=False, include_metadata=False):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     tet_source_id = get_tet_source_id(mod_abbreviation=mod_abbr, source_method="abc_document_classifier",
@@ -169,11 +176,12 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
                           test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling,
+                          use_lsh_features=use_lsh_features,
                           include_keywords=include_keywords, include_metadata=include_metadata)
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
-                      test_mode, use_bow_features=False, use_max_pooling=False,
+                      test_mode, use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
                       include_keywords=False, include_metadata=False):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
@@ -203,6 +211,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         input_docs_dir="/data/agr_document_classifier/to_classify",
         use_bow_features=use_bow_features,
         use_max_pooling=use_max_pooling,
+        use_lsh_features=use_lsh_features,
         include_keywords=include_keywords,
         include_metadata=include_metadata)
     if test_mode:
@@ -304,6 +313,7 @@ def classify_mode(args: Namespace):
             process_classification_jobs(mod_id, topic, jobs, embedding_model,
                                         use_bow_features=args.use_bow_features,
                                         use_max_pooling=args.use_max_pooling,
+                                        use_lsh_features=args.use_lsh_features,
                                         include_keywords=args.include_keywords,
                                         include_metadata=args.include_metadata)
         except Exception as e:
@@ -358,6 +368,7 @@ def direct_classify_mode(args: Namespace):
             test_mode=True,
             use_bow_features=args.use_bow_features,
             use_max_pooling=args.use_max_pooling,
+            use_lsh_features=args.use_lsh_features,
             include_keywords=args.include_keywords,
             include_metadata=args.include_metadata
         )
