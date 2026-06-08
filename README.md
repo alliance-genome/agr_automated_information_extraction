@@ -69,7 +69,6 @@ The project uses environment variables for configuration. These variables are de
 - TRAINING_DIR: Directory for training data.
 - CLASSIFICATION_DIR: Directory for documents to classify.
 - CLASSIFIERS_PATH: Path to save classifiers.
-- GROBID_API_URL: URL for the GROBID API.
 - ABC_API_SERVER: URL for the ABC API server.
 - OKTA_*: Configuration for Okta authentication.
 - CLASSIFICATION_BATCH_SIZE: Batch size for document classification.

@@ -10,7 +10,6 @@ services:
       - ${AGR_CORPUS_DOWNLOAD_DIR}:${AGR_CORPUS_DOWNLOAD_DIR}
       - ${ENTITY_EXTRACTION_PATH}:/data/agr_entity_extraction
     environment:
-      - GROBID_API_URL=${GROBID_API_URL}
       - TMP_PATH=${TMP_PATH}
       - ABC_API_SERVER=${ABC_API_SERVER}
       - OKTA_CLIENT_ID=${OKTA_CLIENT_ID}
