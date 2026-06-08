@@ -96,7 +96,6 @@ Key environment variables (set in `.env`):
 - `OKTA_*`: OAuth2 authentication credentials
 - `TRAINING_DIR`, `CLASSIFICATION_DIR`: Data directories
 - `CLASSIFIERS_PATH`: Model storage location
-- `GROBID_API_URL`: PDF-to-TEI conversion service
 
 ### Pipeline Workflow
 1. Training: Downloads TEI documents → Extracts text → Generates embeddings → Trains classifier → Uploads model to ABC
