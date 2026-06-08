@@ -12,26 +12,29 @@ blue_api_base_url = os.environ.get('API_SERVER', "literature-rest.alliancegenome
 
 
 def download_md_files_from_abc_or_convert_pdf(reference_ids_positive, reference_ids_negative, output_dir,
-                                              mod_abbreviation):
+                                              mod_abbreviation, request_conversion: bool = False):
     """Populate ``output_dir/{positive,negative}`` with one ``.md`` file per reference.
 
     Source priority (handled inside :func:`download_md_files_for_references`):
 
     1. Main MD file from ABC (``converted_merged_main`` / ``.md``).
     2. TEI file from ABC, converted on the fly to Markdown via the shared library.
-    3. Server-side on-demand conversion via
-       ``GET /reference/referencefile/conversion_request/{curie}`` (PDF or
-       nXML in ABC → MD), enabled by ``request_conversion=True``. This
-       replaces the older local Grobid PDF→TEI→MD path.
+    3. (Only when ``request_conversion=True``) server-side on-demand conversion via
+       ``GET /reference/referencefile/conversion_request/{curie}``.
+
+    ``request_conversion`` defaults to ``False`` for training-set construction:
+    a reference with no MD/TEI means its upload/conversion is incomplete, and we
+    deliberately exclude it from the training set rather than trigger an
+    on-demand conversion.
     """
     logger.info(f"Positive MD files download started. Number of files to download: {len(reference_ids_positive)}")
     output_dir_positive = os.path.join(output_dir, "positive")
     download_md_files_for_references(reference_ids_positive, output_dir_positive,
-                                     mod_abbreviation, request_conversion=True)
+                                     mod_abbreviation, request_conversion=request_conversion)
     logger.info(f"Negative MD files download started. Number of files to download: {len(reference_ids_negative)}")
     output_dir_negative = os.path.join(output_dir, "negative")
     download_md_files_for_references(reference_ids_negative, output_dir_negative,
-                                     mod_abbreviation, request_conversion=True)
+                                     mod_abbreviation, request_conversion=request_conversion)
 
     downloaded_reference_ids_positive = [
         os.path.splitext(name)[0].replace("_", ":") for name in os.listdir(output_dir_positive)

@@ -22,7 +22,8 @@ from sklearn.neighbors import LocalOutlierFactor
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
-from utils.embedding import load_embedding_model, get_document_embedding
+from utils.embedding import load_embedding_model, build_feature_matrix
+from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
 
 nltk.download('stopwords')
@@ -66,7 +67,7 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
         detector = LocalOutlierFactor(contamination=contamination, novelty=False)
     else:
         logger.warning(f"Unknown outlier detection method: {method}. Skipping outlier removal.")
-        return X, y, np.ones(len(X), dtype=bool)
+        return X, y, np.ones(X.shape[0], dtype=bool)
 
     # Fit the detector and predict outliers
     outlier_predictions = detector.fit_predict(X)
@@ -80,8 +81,10 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     y_clean = y[inlier_mask]
 
     n_outliers = np.sum(outlier_mask)
-    logger.info(f"Removed {n_outliers} outliers ({n_outliers/len(X)*100:.1f}%) from {len(X)} samples")
-    logger.info(f"Remaining samples: {len(X_clean)} (Positive: {np.sum(y_clean)}, Negative: {np.sum(1-y_clean)})")
+    logger.info(f"Removed {n_outliers} outliers ({n_outliers / X.shape[0] * 100:.1f}%) "
+                f"from {X.shape[0]} samples")
+    logger.info(f"Remaining samples: {X_clean.shape[0]} "
+                f"(Positive: {np.sum(y_clean)}, Negative: {np.sum(1 - y_clean)})")
 
     return X_clean, y_clean, outlier_mask
 
@@ -89,10 +92,13 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
-                     outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1):
+                     outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1,
+                     use_bow_features: bool = False, use_max_pooling: bool = False,
+                     use_lsh_features: bool = False,
+                     include_keywords: bool = False, include_metadata: bool = False):
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
-    X = []
+    texts = []
     y = []
 
     # Precompute word_to_index
@@ -101,10 +107,13 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     else:
         word_to_index = {word: idx for idx, word in enumerate(embedding_model.get_words())}
 
-    # For each document in your training data, extract embeddings and labels
+    # For each document in your training data, collect its text and label
     logger.info("Loading training set")
     for label in ["positive", "negative"]:
-        documents = list(get_documents(os.path.join(training_data_dir, label)))
+        documents = list(get_documents(
+            os.path.join(training_data_dir, label),
+            include_keywords=include_keywords,
+            include_metadata=include_metadata))
 
         for _, (_, fulltext, title, abstract) in enumerate(documents, start=1):
             text = ""
@@ -120,20 +129,21 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
             if text:
                 text = remove_stopwords(text)
                 text = text.lower()
-                text_embedding = get_document_embedding(embedding_model, text,
-                                                        weighted_average_word_embedding=weighted_average_word_embedding,
-                                                        standardize_embeddings=standardize_embeddings,
-                                                        normalize_embeddings=normalize_embeddings,
-                                                        word_to_index=word_to_index)
-                X.append(text_embedding)
+                texts.append(text)
                 y.append(int(label == "positive"))
+
+    logger.info(f"Building features (max_pooling={use_max_pooling}, bow={use_bow_features}, "
+                f"lsh={use_lsh_features}).")
+    X = build_feature_matrix(embedding_model, texts, use_max_pooling=use_max_pooling,
+                             use_bow=use_bow_features, use_lsh=use_lsh_features,
+                             weighted_average_word_embedding=weighted_average_word_embedding,
+                             standardize_embeddings=standardize_embeddings,
+                             normalize_embeddings=normalize_embeddings, word_to_index=word_to_index)
 
     del embedding_model
     logger.info("Finished loading training set.")
-    logger.info(f"Dataset size: {str(len(X))}")
+    logger.info(f"Dataset size: {str(len(y))}")
 
-    # Convert lists to numpy arrays
-    X = np.array(X)
     y = np.array(y)
 
     # Step 1: Split data into train+val (80%) and holdout test set (20%)
@@ -141,7 +151,8 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         X, y, test_size=0.20, stratify=y, random_state=42
     )
 
-    logger.info(f"Dataset split - Total: {len(X)}, Train+Val: {len(X_train_val)}, Test: {len(X_test)}")
+    logger.info(f"Dataset split - Total: {X.shape[0]}, Train+Val: {X_train_val.shape[0]}, "
+                f"Test: {X_test.shape[0]}")
     logger.info(f"Class distribution - Train+Val: {np.bincount(y_train_val)}, Test: {np.bincount(y_test)}")
 
     # Step 2: Apply outlier detection and removal if requested
@@ -174,6 +185,15 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info("Using penalized scoring: weighted_score = 0.7 * test_f1 + 0.3 * cv_f1 - penalty")
 
     for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
+        # On the high-dimensional sparse matrix produced by the BoW block, RBF-SVC
+        # is slow/weak and MLPClassifier is both memory-heavy (its input-layer
+        # weight matrix is n_features x hidden, ~210MB at 2**18 features, multiplied
+        # across RandomizedSearchCV's parallel workers -> OOM) and prone to severe
+        # overfitting. Skip both when BoW features are enabled.
+        if use_bow_features and classifier_name in ('SVC', 'MLPClassifier'):
+            logger.info(f"Skipping {classifier_name}: not suitable for the high-dimensional sparse "
+                        f"BoW feature matrix.")
+            continue
         logger.info(f"Evaluating model {classifier_name}.")
 
         # Reduce n_iter for faster training with focus on regularization
@@ -375,6 +395,27 @@ def parse_arguments():
     parser.add_argument("-s", "--standardize_embeddings", action="store_true",
                         help="Whether to standardize the word embedding vectors",
                         required=False)
+    parser.add_argument("--use_bow_features", action="store_true",
+                        help="Concatenate a stateless hashing bag-of-words block with the embedding "
+                             "(must be passed identically at classification time)",
+                        required=False)
+    parser.add_argument("--use_max_pooling", action="store_true",
+                        help="Concatenate an element-wise max-pooled embedding alongside the mean "
+                             "(must be passed identically at classification time)",
+                        required=False)
+    parser.add_argument("--use_lsh_features", action="store_true",
+                        help="Concatenate a stateless LSH bag-of-concepts block (random-hyperplane "
+                             "buckets over the word embeddings, so near-synonyms share a bin) with the "
+                             "embedding (must be passed identically at classification time)",
+                        required=False)
+    parser.add_argument("--include_keywords", action="store_true",
+                        help="Include author keywords in the document text (off by default; must be "
+                             "passed identically at classification time)",
+                        required=False)
+    parser.add_argument("--include_metadata", action="store_true",
+                        help="Include article metadata in the document text (off by default; must be "
+                             "passed identically at classification time)",
+                        required=False)
     parser.add_argument("-S", "--skip_training_set_download", action="store_true",
                         help="Assume that tei files from training set are already present and do not download them "
                              "again",
@@ -427,53 +468,34 @@ def download_training_set(args, training_data_dir):
     if args.filter_date_before:
         try:
             filter_date = datetime.strptime(args.filter_date_before, "%Y-%m-%d")
-            logger.info(f"Filtering out references published before {args.filter_date_before}")
-
-            # Filter positive references
-            filtered_positive = []
-            for ref_id in reference_ids_positive:
-                ref_date_str = get_reference_date(ref_id)
-                if ref_date_str:
-                    try:
-                        ref_date = datetime.strptime(ref_date_str[:10], "%Y-%m-%d")  # Take only date part
-                        if ref_date >= filter_date:
-                            filtered_positive.append(ref_id)
-                        else:
-                            logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
-                    except ValueError:
-                        logger.warning(f"Could not parse date '{ref_date_str}' for reference {ref_id}, including it")
-                        filtered_positive.append(ref_id)
-                else:
-                    logger.debug(f"No date found for reference {ref_id}, including it")
-                    filtered_positive.append(ref_id)
-
-            # Filter negative references
-            filtered_negative = []
-            for ref_id in reference_ids_negative:
-                ref_date_str = get_reference_date(ref_id)
-                if ref_date_str:
-                    try:
-                        ref_date = datetime.strptime(ref_date_str[:10], "%Y-%m-%d")  # Take only date part
-                        if ref_date >= filter_date:
-                            filtered_negative.append(ref_id)
-                        else:
-                            logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
-                    except ValueError:
-                        logger.warning(f"Could not parse date '{ref_date_str}' for reference {ref_id}, including it")
-                        filtered_negative.append(ref_id)
-                else:
-                    logger.debug(f"No date found for reference {ref_id}, including it")
-                    filtered_negative.append(ref_id)
-
-            logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> "
-                        f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
-                        f"{len(filtered_negative)}")
-            reference_ids_positive = filtered_positive
-            reference_ids_negative = filtered_negative
-
         except ValueError:
             logger.error(f"Invalid date format: {args.filter_date_before}. Expected YYYY-MM-DD")
             raise
+        logger.info(f"Filtering out references published before {args.filter_date_before}")
+
+        def _keep_on_or_after(ref_ids):
+            """Keep references published on/after filter_date. References whose
+            (possibly messy PubMed) date cannot be parsed at all are kept."""
+            kept = []
+            for ref_id in ref_ids:
+                ref_date_str = get_reference_date(ref_id)
+                ref_date = parse_reference_date(ref_date_str)
+                if ref_date is None:
+                    logger.debug(f"No parseable date for {ref_id} ('{ref_date_str}'), including it")
+                    kept.append(ref_id)
+                elif ref_date >= filter_date:
+                    kept.append(ref_id)
+                else:
+                    logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
+            return kept
+
+        filtered_positive = _keep_on_or_after(reference_ids_positive)
+        filtered_negative = _keep_on_or_after(reference_ids_negative)
+        logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> "
+                    f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
+                    f"{len(filtered_negative)}")
+        reference_ids_positive = filtered_positive
+        reference_ids_negative = filtered_negative
 
     shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
@@ -517,7 +539,12 @@ def train_and_save_model(args, training_data_dir, training_set):
         sections_to_use=args.sections_to_use,
         remove_outliers=args.remove_outliers,
         outlier_method=args.outlier_method,
-        outlier_contamination=args.outlier_contamination)
+        outlier_contamination=args.outlier_contamination,
+        use_bow_features=args.use_bow_features,
+        use_max_pooling=args.use_max_pooling,
+        use_lsh_features=args.use_lsh_features,
+        include_keywords=args.include_keywords,
+        include_metadata=args.include_metadata)
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,

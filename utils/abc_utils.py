@@ -900,13 +900,22 @@ def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviatio
     base_name = reference_curie.replace(":", "_")
     out_path = os.path.join(output_dir, base_name + ".md")
 
+    md_candidates = [
+        rf for rf in resp_obj
+        if rf.get("file_extension") == "md"
+        and rf.get("file_class") == "converted_merged_main"
+    ]
+    # A converted_merged_main MD is the paper's full text and is MOD-agnostic.
+    # Most are stored globally (mod_id NULL), but the weekly conversion cron
+    # scopes some to a specific MOD. Prefer an MD scoped to this MOD or stored
+    # globally, but fall back to any converted MD so a cron-scoped MD for a
+    # different MOD is still used instead of being reported as "no MD/TEI".
     md_ref_file = next(
-        (rf for rf in resp_obj
-         if rf.get("file_extension") == "md"
-         and rf.get("file_class") == "converted_merged_main"
-         and _reffile_matches_mod(rf, mod_abbreviation)),
+        (rf for rf in md_candidates if _reffile_matches_mod(rf, mod_abbreviation)),
         None,
     )
+    if md_ref_file is None:
+        md_ref_file = md_candidates[0] if md_candidates else None
     if md_ref_file is not None:
         content = get_file_from_abc_reffile_obj(md_ref_file)
         if content:
