@@ -886,14 +886,6 @@ def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abb
             out_file.write(supp_bytes)
 
 
-def convert_pdf_with_grobid(file_content):
-    grobid_api_url = os.environ.get("GROBID_API_URL",
-                                    "https://grobid.alliancegenome.org/api/processFulltextDocument")
-    # Send the file content to the GROBID API
-    response = requests.post(grobid_api_url, files={'input': ("file", file_content)})
-    return response
-
-
 def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
     model_data = None
     get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}/{topic}"
