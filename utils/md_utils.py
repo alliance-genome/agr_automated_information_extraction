@@ -138,7 +138,8 @@ class AllianceMarkdown:
             return ""
         return extract_abstract_text(self.doc).strip()
 
-    def get_fulltext(self, include_attributes: bool = False, **kwargs) -> str:
+    def get_fulltext(self, include_attributes: bool = False,
+                     mine_references: bool = False, **kwargs) -> str:
         """Return the document fulltext.
 
         Any keyword argument accepted by
@@ -159,14 +160,17 @@ class AllianceMarkdown:
         caller passes it explicitly.
 
         ``include_attributes=True`` additionally appends entity-like tokens
-        (letter+digit identifiers) mined from the entire Markdown — body plus
-        references — replicating the allele-extraction TEI behaviour. This is
-        only useful for the allele topic where downstream NER benefits from
-        seeing identifiers that may live in citation entries. Note that
-        switching it on forces ``include_references=True`` for the underlying
-        regex sweep, but the formatted reference list is *not* added to the
-        textual output unless the caller also passes ``include_references=True``
-        explicitly.
+        (letter+digit identifiers) mined from the Markdown, replicating the
+        allele-extraction TEI behaviour. This is only useful for the allele topic
+        where downstream NER benefits from seeing identifiers that the tokenizer
+        might otherwise split apart.
+
+        Section restriction: by default the mining sweep covers the SAME sections
+        as the textual output, i.e. the reference list is excluded. This stops
+        electronic page numbers and other bibliographic identifiers (e.g.
+        ``e12345``) in the reference list from being harvested as spurious allele
+        candidates. Pass ``mine_references=True`` to restore the old behaviour of
+        also sweeping the reference list for identifiers.
         """
         if not self.doc:
             return ""
@@ -174,7 +178,8 @@ class AllianceMarkdown:
         text = extract_plain_text(self.doc, **kwargs).strip()
         if include_attributes:
             kwargs_for_mining = dict(kwargs)
-            kwargs_for_mining["include_references"] = True
+            if mine_references:
+                kwargs_for_mining["include_references"] = True
             mined_source = extract_plain_text(self.doc, **kwargs_for_mining)
             tokens = _mine_entity_tokens(mined_source)
             if tokens:

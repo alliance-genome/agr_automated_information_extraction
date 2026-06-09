@@ -55,6 +55,8 @@ from utils.entity_extraction_utils import (
     has_allele_like_context,
     rescue_short_alleles_from_fulltext,
     filter_false_positive_alleles,
+    is_allele_topic,
+    ABC_ALLELE_TOPIC,
     SUSPICIOUS_PREFIX_RE,
     ALLELE_NAME_PATTERN,
     GENERIC_NAME_PATTERN,
@@ -73,6 +75,7 @@ TOPIC2TYPE = {
     "ATP:0000027": "strain",
     "ATP:0000110": "transgenic_allele",
     "ATP:0000006": "allele",
+    "ATP:0000285": "allele",   # classical allele (curated entity_type is still "allele")
     "ATP:0000123": "species",  # not used here but mapped for completeness
     "ATP:0000005": "gene",
 }
@@ -85,7 +88,7 @@ def topic_to_entity_type(topic: str) -> str:
 def get_generic_name_pattern(topic: str) -> re.Pattern:
     if topic == "ATP:0000027":       # strain
         return STRAIN_NAME_PATTERN
-    if topic == "ATP:0000006":       # allele
+    if is_allele_topic(topic):       # allele / classical allele
         return ALLELE_NAME_PATTERN
     return GENERIC_NAME_PATTERN      # gene, transgene, etc.
 
@@ -119,6 +122,8 @@ def prefilter_text(fulltext: str, model) -> str:
 
 
 def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model) -> List[str]:
+    allele_mode = is_allele_topic(getattr(model, "topic", None))
+
     entities = build_entities_from_results_generic(
         results=results,
         title=title,
@@ -131,21 +136,22 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         expand_abbrevs=None,
         use_fulltext_tokenizer=False,
         use_count_gate=False,
+        # Alleles are matched with strict case-sensitivity so look-alikes that
+        # differ only by case (e.g. the balancer chromosome 'qC1' vs. the curated
+        # allele 'qc1') are never conflated. Candidates returned here already
+        # equal a curated allele name exactly.
+        case_sensitive=allele_mode,
     )
 
     # For allele topic, enforce allele-specific post-processing rules.
-    if getattr(model, "topic", None) == "ATP:0000006":
+    if allele_mode:
         original_count = len(entities)
 
-        # 1) Keep canonical lowercase allele-like tokens or weird non-alnum mixes
-        # str.isalnum() checks whether all characters in the string are alphanumeric (A–Z, a–z, 0–9)
-        # and there is at least one character.
-        entities = [
-            e for e in entities
-            if e.islower() or not e.replace('-', '').replace('_', '').isalnum()
-        ]
+        # Candidates already match a curated allele name EXACTLY (case included),
+        # so no lowercase normalization / uppercase remapping is applied here —
+        # doing so would defeat the strict case-sensitivity the curator asked for.
 
-        # 2) Drop suspicious one-letter+digit alleles (e5, e7, b2, ...) unless context looks allele-like
+        # 1) Drop suspicious one-letter+digit alleles (e5, e7, b2, ...) unless context looks allele-like
         before_suspicious_filter = len(entities)
         filtered_entities: list[str] = []
         for e in entities:
@@ -160,9 +166,9 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         entities = filtered_entities
         dropped_suspicious = before_suspicious_filter - len(entities)
 
-        # 3) Rescue allele-like tokens from fulltext that NER missed
+        # 2) Rescue allele-like tokens from fulltext that NER missed (case preserved)
         already_found = set(entities)
-        rescued = rescue_short_alleles_from_fulltext(fulltext, model, already_found)
+        rescued = rescue_short_alleles_from_fulltext(fulltext, model, already_found, case_sensitive=True)
         if rescued:
             logger.info(
                 "ALLELE-RESCUE: adding %d alleles from fulltext that NER missed: %s",
@@ -170,7 +176,7 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
             )
             entities.extend(sorted(rescued))
 
-        # 4) Normalize and dedupe after rescue
+        # 3) Normalize trailing dots and dedupe after rescue
         normalized: list[str] = []
         seen: set[str] = set()
         for e in entities:
@@ -180,29 +186,18 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
                 normalized.append(e_norm)
         entities = normalized
 
-        # 5) Filter to curated allele list only (case-insensitive)
+        # 4) Strict case-sensitive curated filter: a candidate must match a curated
+        #    allele name EXACTLY (case included). This is what keeps balancer 'qC1'
+        #    from passing as the curated allele 'qc1' once rescue has added it.
         curated = getattr(model, "entities_to_extract", None)
         dropped_non_curated = 0
         if curated:
-            curated_lower = {c.lower() for c in curated if isinstance(c, str)}
+            curated_set = {c for c in curated if isinstance(c, str)}
             before_curated_filter = len(entities)
-            entities = [e for e in entities if e.lower() in curated_lower]
+            entities = [e for e in entities if e in curated_set]
             dropped_non_curated = before_curated_filter - len(entities)
 
-        # 6) Map back to canonical display names using the curated mapping
-        #    so mgdf50 -> mgDf50, ttti5605 -> ttTi5605, etc.
-        u2o = getattr(model, "upper_to_original_mapping", {}) or {}
-        canonical: list[str] = []
-        seen_disp: set[str] = set()
-        for e in entities:
-            key = e.upper()
-            display = u2o.get(key, e)  # fall back to e if not in mapping
-            if display not in seen_disp:
-                seen_disp.add(display)
-                canonical.append(display)
-        entities = canonical
-
-        # 7) Context-based false positive filtering
+        # 5) Context-based false positive filtering
         #    Filter out alleles that are markers, balancers, reagents, etc.
         before_fp_filter = len(entities)
         entities, _ = filter_false_positive_alleles(entities, fulltext)
@@ -210,11 +205,9 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
 
         if dropped_suspicious > 0 or dropped_non_curated > 0 or dropped_false_positives > 0:
             logger.info(
-                "ALLELE-FILTER: start=%d, after_lowercase=%d, "
-                "dropped_suspicious=%d, dropped_non_curated=%d, "
-                "dropped_false_positives=%d, final=%d",
+                "ALLELE-FILTER: start=%d, dropped_suspicious=%d, "
+                "dropped_non_curated=%d, dropped_false_positives=%d, final=%d",
                 original_count,
-                before_suspicious_filter,
                 dropped_suspicious,
                 dropped_non_curated,
                 dropped_false_positives,
@@ -279,7 +272,7 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
                 try:
                     fulltext = (
                         md.get_fulltext(include_attributes=True)
-                        if entity_model.topic == "ATP:0000006"
+                        if is_allele_topic(entity_model.topic)
                         else md.get_fulltext()
                     )
                 except Exception as e:
@@ -316,6 +309,13 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
 # --------------------------------------------------------------------- #
 def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10, combined_md_dir: bool = False):  # noqa: C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
+
+    # The extraction job may be keyed on either the generic "allele" topic
+    # (ATP:0000006) or the "classical allele" topic (ATP:0000285), but the tag we
+    # report to ABC always uses "classical allele" (ATP:0000285) for both topic
+    # and entity_type, to match the WB allele data import. Non-allele topics are
+    # reported unchanged.
+    abc_topic = ABC_ALLELE_TOPIC if is_allele_topic(topic) else topic
 
     tet_source_id = None
     if not test_mode:
@@ -368,7 +368,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 abstract = md.get_abstract() or ""
                 fulltext = (
                     md.get_fulltext(include_attributes=True)
-                    if model.topic == "ATP:0000006"
+                    if is_allele_topic(model.topic)
                     else md.get_fulltext()
                 ) or ""
             except Exception as e:
@@ -387,7 +387,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     send_entity_tag_to_abc(
                         reference_curie=curie,
                         species=species,
-                        topic=topic,
+                        topic=abc_topic,
                         negated=True,
                         tet_source_id=tet_source_id,
                         data_novelty=data_novelty,
@@ -397,7 +397,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     seen = set()
                     for ent in all_entities:
                         # Allele-specific mapping debug / behavior
-                        if topic == "ATP:0000006":
+                        if is_allele_topic(topic):
                             try:
                                 ent_curie = resolve_entity_curie(model, ent, strict=True)
                             except KeyError:
@@ -429,8 +429,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         send_entity_tag_to_abc(
                             reference_curie=curie,
                             species=entity_species,
-                            topic=topic,
-                            entity_type=topic,
+                            topic=abc_topic,
+                            entity_type=abc_topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             data_novelty=data_novelty,
@@ -478,7 +478,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             try:
                 fulltext = (
                     md.get_fulltext(include_attributes=True)
-                    if model.topic == "ATP:0000006"
+                    if is_allele_topic(model.topic)
                     else md.get_fulltext()
                 ) or ""
             except Exception as e:
@@ -524,7 +524,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     send_entity_tag_to_abc(
                         reference_curie=curie,
                         species=species,
-                        topic=topic,
+                        topic=abc_topic,
                         negated=True,
                         tet_source_id=tet_source_id,
                         data_novelty=data_novelty,
@@ -534,7 +534,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                     seen = set()
                     for ent in all_entities:
                         # Allele-specific mapping debug / behavior
-                        if topic == "ATP:0000006":
+                        if is_allele_topic(topic):
                             try:
                                 ent_curie = resolve_entity_curie(model, ent, strict=True)
                             except KeyError:
@@ -566,8 +566,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         send_entity_tag_to_abc(
                             reference_curie=curie,
                             species=entity_species,
-                            topic=topic,
-                            entity_type=topic,
+                            topic=abc_topic,
+                            entity_type=abc_topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             data_novelty=data_novelty,
@@ -663,7 +663,7 @@ def main():
         for (mod_id, topic), jobs in mod_topic_jobs.items():
             if topic == 'ATP:0000027':
                 TARGET = STRAIN_TARGET_ENTITIES
-            elif topic == 'ATP:0000006':
+            elif is_allele_topic(topic):
                 TARGET = ALLELE_TARGET_ENTITIES
             else:
                 TARGET = GENE_TARGET_ENTITIES

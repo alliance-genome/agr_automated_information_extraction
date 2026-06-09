@@ -43,6 +43,20 @@ _ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str], Dict[str, 
 # --------------------------------------------------------------------- #
 # PATTERNS & TOPIC MAPPING                                              #
 # --------------------------------------------------------------------- #
+# Allele extraction topics. Callers may run the allele pipeline under either the
+# generic "allele" topic (ATP:0000006) or the "classical allele" topic
+# (ATP:0000285). Regardless of which one is used to drive extraction, the tag we
+# report to ABC always uses "classical allele" (ATP:0000285) for both the topic
+# and the entity_type, to match the WB allele data import convention.
+ALLELE_EXTRACTION_TOPICS = frozenset({"ATP:0000006", "ATP:0000285"})
+ABC_ALLELE_TOPIC = "ATP:0000285"
+
+
+def is_allele_topic(topic: Optional[str]) -> bool:
+    """True if ``topic`` drives allele extraction (generic or classical allele)."""
+    return topic in ALLELE_EXTRACTION_TOPICS
+
+
 STRAIN_NAME_PATTERN = re.compile(
     r'''
     (?<![A-Za-z0-9])              # left-boundary: not preceded by a letter or digit
@@ -751,6 +765,8 @@ def extract_entities_from_title_abstract(
     title: str,
     abstract: str,
     pattern: re.Pattern,
+    *,
+    case_sensitive: bool = False,
 ) -> Tuple[List[str], List[str]]:
     """
     looks for known entity names (from a curated list) inside a paper’s
@@ -759,8 +775,29 @@ def extract_entities_from_title_abstract(
       curated entity list.
     - Regex-based matching — catches patterns (like gene names or allele
       symbols) missed by tokenization.
+
+    When ``case_sensitive`` is True, a token/regex match must equal a curated
+    name EXACTLY (case included) and the curated casing is returned as-is. This
+    is required for alleles, where e.g. the balancer chromosome ``qC1`` must not
+    be conflated with the curated allele ``qc1``.
     """
     gold = set(getattr(model, "entities_to_extract", []) or [])
+
+    if case_sensitive:
+        tok_title = model.tokenizer.tokenize(title or "")
+        ents_title = {t for t in tok_title if t in gold}
+        for m in pattern.findall(title or ""):
+            if m in gold:
+                ents_title.add(m)
+
+        tok_abs = model.tokenizer.tokenize(abstract or "")
+        ents_abs = {t for t in tok_abs if t in gold}
+        for m in pattern.findall(abstract or ""):
+            if m in gold:
+                ents_abs.add(m)
+
+        return list(ents_title), list(ents_abs)
+
     gold_up = {g.upper() for g in gold}
 
     tok_title = model.tokenizer.tokenize(title or "")
@@ -913,6 +950,7 @@ def build_entities_from_results(
     use_fulltext_tokenizer: bool = True,
     use_count_gate: bool = True,
     use_gold_substring: bool = False,
+    case_sensitive: bool = False,
 ) -> List[str]:
     """
     Merge candidates from multiple detectors (NER, regex, tokenizer, substring)
@@ -921,6 +959,12 @@ def build_entities_from_results(
     it believes are present:
     Apply min_hits using model.min_matches (default 1) when use_count_gate=True.
     Return DISPLAY NAMES (original casing from curated list).
+
+    When ``case_sensitive`` is True every detector matches candidates against the
+    curated list EXACTLY (case included) instead of upper-casing first, and the
+    surviving candidates — which already equal a curated name — are returned
+    verbatim. This keeps look-alikes that differ only by case (e.g. the balancer
+    chromosome ``qC1`` vs. the curated allele ``qc1``) from being merged.
     """
     # 1) Normalize (species only)
     if is_species and normalize_aliases and expand_abbrevs:
@@ -932,33 +976,43 @@ def build_entities_from_results(
 
     # 2) Prep curated lookups
     gold = getattr(model, "entities_to_extract", []) or []
+    gold_set = set(gold)
     gold_up = {e.upper() for e in gold}
+
+    def _norm(word: str) -> str:
+        """Project a candidate into the matching space (exact or upper-cased)."""
+        return word if case_sensitive else word.upper()
+
+    def _in_gold(word: str) -> bool:
+        return word in gold_set if case_sensitive else word.upper() in gold_up
 
     # 3) HF NER (accepts either 'entity_group' or 'entity')
     ents_full_hf = {
-        (r.get("word") or "").upper()
+        _norm(r.get("word") or "")
         for r in (results or [])
         if (r.get("entity_group") == "ENTITY" or r.get("entity") == "ENTITY")
         and r.get("word")
-        and r["word"].upper() in gold_up
+        and _in_gold(r["word"])
     }
 
     # 4) Title/Abstract (tokenizer ∩ curated + regex ∩ curated)
-    t_ents, a_ents = extract_entities_from_title_abstract(model, title_norm, abstract_norm, pattern)
-    ents_title = {e.upper() for e in t_ents}
-    ents_abs = {e.upper() for e in a_ents}
+    t_ents, a_ents = extract_entities_from_title_abstract(
+        model, title_norm, abstract_norm, pattern, case_sensitive=case_sensitive
+    )
+    ents_title = {_norm(e) for e in t_ents}
+    ents_abs = {_norm(e) for e in a_ents}
 
     # 5) Regex over normalized fulltext
     regex_hits = {
-        m.upper()
+        _norm(m)
         for m in pattern.findall(fulltext_norm or "")
-        if m and m.upper() in gold_up
+        if m and _in_gold(m)
     }
 
     # 6) Optional tokenizer over normalized fulltext
     if use_fulltext_tokenizer:
         tok_full = model.tokenizer.tokenize(fulltext_norm or "")
-        ents_full_tok = {t.upper() for t in tok_full if t and t.upper() in gold_up}
+        ents_full_tok = {_norm(t) for t in tok_full if t and _in_gold(t)}
     else:
         ents_full_tok = set()
 
@@ -966,39 +1020,45 @@ def build_entities_from_results(
     #    This helps catch odd punctuation/hyphenation that slip past the regex/tokenizer.
     substring_hits = set()
     if use_gold_substring:
-        small_text = (f"{title_norm} {abstract_norm}").upper()
+        gold_match = gold_set if case_sensitive else gold_up
+        small_text = f"{title_norm} {abstract_norm}" if case_sensitive else f"{title_norm} {abstract_norm}".upper()
         # only attempt if texts are short-ish and curated set isn't massive
-        if small_text and len(small_text) <= 4000 and len(gold_up) <= 5000:
+        if small_text and len(small_text) <= 4000 and len(gold_match) <= 5000:
             # Filter out very short candidates to reduce noise/cost
-            for g in gold_up:
+            for g in gold_match:
                 if len(g) >= 3 and g in small_text:
                     substring_hits.add(g)
 
-    # 8) Union of all uppercase candidates
-    all_up = ents_full_hf | ents_title | ents_abs | regex_hits | ents_full_tok | substring_hits
-    if not all_up:
+    # 8) Union of all candidates (exact-cased or upper-cased per case_sensitive)
+    all_cands = ents_full_hf | ents_title | ents_abs | regex_hits | ents_full_tok | substring_hits
+    if not all_cands:
         return []
 
     # 9) Optional count gate (only compute counts when it can change the outcome)
-    passed_up: set[str]
+    passed: set[str]
     if use_count_gate:
         min_hits = int(getattr(model, "min_matches", 1))
         if min_hits > 1:
             counts = count_curated_mentions(title_norm, model)
             counts += count_curated_mentions(abstract_norm, model)
             counts += count_curated_mentions(fulltext_norm, model)
-            passed_up = {u for u in all_up if counts.get(u, 0) >= min_hits}
+            # count_curated_mentions keys on upper-cased tokens, so look up the
+            # upper-cased form of each candidate regardless of case_sensitive.
+            passed = {u for u in all_cands if counts.get(u.upper(), 0) >= min_hits}
         else:
-            passed_up = all_up
+            passed = all_cands
     else:
-        passed_up = all_up
+        passed = all_cands
 
-    if not passed_up:
+    if not passed:
         return []
 
-    # 10) Map back to original casing using the precomputed mapping
+    # 10) In case-sensitive mode candidates already equal a curated name; in the
+    #     default mode map the upper-cased candidates back to their curated casing.
+    if case_sensitive:
+        return sorted(passed)
     u2o = getattr(model, "upper_to_original_mapping", {}) or {}
-    out = [u2o.get(u, u) for u in sorted(passed_up)]
+    out = [u2o.get(u, u) for u in sorted(passed)]
     return out
 
 
@@ -1090,31 +1150,42 @@ def rescue_short_alleles_from_fulltext(
     fulltext: str,
     model,
     already_found: set[str],
+    *,
+    case_sensitive: bool = False,
 ) -> set[str]:
     """
     Rescue allele names that appear in the full text but were missed by NER.
 
     Behavior:
     - Scan the ORIGINAL-CASE fulltext with ALLELE_NAME_PATTERN
-      (which itself only matches lowercase alleles like e1370, ok1255, tm1949, etc.).
+      (which itself only matches lowercase-initial alleles like e1370, ok1255,
+      tm1949, mgDf50, etc.).
     - Ignore anything that:
-        * is already in `already_found` (case-insensitive), or
+        * is already in `already_found`, or
         * starts with a digit (e.g. "1a", "5b-5d", "100x", "1-octanol").
     - For one-letter+digits patterns (e5, e7, b2, ...), require allele-like context
       via has_allele_like_context().
-    - Returns canonical lowercase allele names.
+
+    When ``case_sensitive`` is True the original casing of each matched token is
+    preserved (so ``qC1`` is rescued as ``qC1``, not ``qc1``) and the
+    ``already_found`` comparison is exact. Downstream filtering then drops any
+    token whose exact casing is not in the curated list. When False the legacy
+    behaviour applies: tokens are lower-cased and compared case-insensitively.
     """
     rescued: set[str] = set()
     if not fulltext:
         return rescued
 
-    # Track what we've already found (case-insensitive)
-    already_found_lower = {e.lower() for e in (already_found or set())}
+    # Track what we've already found.
+    if case_sensitive:
+        already_seen = set(already_found or set())
+    else:
+        already_seen = {e.lower() for e in (already_found or set())}
 
-    # IMPORTANT: we now search the original-case text, not fulltext.lower().
-    # ALLELE_NAME_PATTERN is lowercase-only, so it will only match true
-    # lowercase allele-like tokens (e1370, ok1255, tm1949, n324, etc.),
-    # and will NOT match uppercase tokens like Mos1, CD31, B2.
+    # IMPORTANT: we search the original-case text, not fulltext.lower().
+    # ALLELE_NAME_PATTERN is lowercase-initial, so it will only match true
+    # allele-like tokens (e1370, ok1255, tm1949, n324, mgDf50, etc.),
+    # and will NOT match all-uppercase tokens like Mos1, CD31, B2.
     for m in ALLELE_NAME_PATTERN.finditer(fulltext):
         raw = m.group(0) or ""
         if not raw:
@@ -1126,9 +1197,12 @@ def rescue_short_alleles_from_fulltext(
             continue
 
         name_lc = name.lower()
+        # In case-sensitive mode keep the original casing; otherwise canonicalize
+        # to lowercase as before.
+        candidate = name if case_sensitive else name_lc
 
-        # Skip if we've already got this allele (case-insensitive)
-        if name_lc in already_found_lower:
+        # Skip if we've already got this allele.
+        if candidate in already_seen:
             continue
 
         # Drop anything that starts with a digit: panel labels, 100x, 1a, 2b-2c, etc.
@@ -1146,6 +1220,6 @@ def rescue_short_alleles_from_fulltext(
             if not has_allele_like_context(fulltext, name_lc):
                 continue
 
-        rescued.add(name_lc)
+        rescued.add(candidate)
 
     return rescued
