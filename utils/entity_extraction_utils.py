@@ -149,6 +149,15 @@ COINJECTION_MARKER_ALLELES = {"su1006"}
 COINJECTION_MARKER_GENES = {"rol-6"}
 COINJECTION_MARKER_PLASMIDS = {"prf4"}
 
+# Male-production ("high incidence of males", Him) background markers. These him alleles are
+# crossed in to generate males / males-and-hermaphrodites as a genetic background, not studied
+# themselves (curators flag them as negative, e.g. "him-8(e1489) was used to generate ...
+# males"). e1489 is the canonical him-8 reference allele; e1490 is the canonical him-5
+# reference allele. Mirrors the GENETIC_MARKER_ALLELES design: gate on the him-N(allele)
+# genotype context so a paper that genuinely studied the him allele itself is still kept.
+HIM_MARKER_GENES = {"him-5", "him-8"}
+HIM_MARKER_ALLELES = {"e1489", "e1490"}
+
 # Control allele context patterns
 CONTROL_CONTEXT_PATTERN = re.compile(
     r'(positive\s+control|negative\s+control|control\s+(strain|animal|worm)|'
@@ -346,6 +355,14 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         )
         if re.search(coinj_pattern, fulltext, re.IGNORECASE):
             return True, f"co-injection marker ({candidate})"
+
+    # 4b-iii. Check for him (male-production) background markers (him-8(e1489), him-5(e1490))
+    # These alleles are crossed in to generate males as a genetic background, not studied.
+    if cand_lower in HIM_MARKER_ALLELES:
+        for him_gene in sorted(HIM_MARKER_GENES):
+            him_pattern = re.escape(him_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+            if re.search(him_pattern, fulltext, re.IGNORECASE):
+                return True, f"male-production marker ({candidate} in {him_gene} context)"
 
     # 4c. Check for control alleles (explicitly mentioned as control)
     # Look for the allele mentioned near "control" keywords
