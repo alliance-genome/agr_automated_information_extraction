@@ -138,6 +138,17 @@ GENETIC_MARKER_ALLELES = {
     "e128", "e120",  # dpy-10(e128), unc-4(e120) from paper 8
 }
 
+# Dominant co-injection / transformation markers (reagents, never the studied allele).
+# su1006 is the rol-6(su1006) roller marker carried on the pRF4 plasmid — by far the most
+# common C. elegans transformation marker. Curators flag it as a recurring false positive
+# ("su1006 is a common marker"); in every observed paper it appears only as rol-6(su1006)
+# or pRF4[rol-6(su1006)].
+COINJECTION_MARKER_ALLELES = {"su1006"}
+
+# Genes/plasmids that carry a dominant co-injection marker.
+COINJECTION_MARKER_GENES = {"rol-6"}
+COINJECTION_MARKER_PLASMIDS = {"prf4"}
+
 # Control allele context patterns
 CONTROL_CONTEXT_PATTERN = re.compile(
     r'(positive\s+control|negative\s+control|control\s+(strain|animal|worm)|'
@@ -289,10 +300,18 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
-        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele
-        # Must match the exact candidate, not just any ttTi pattern in the text
-        site_pattern = re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)'
-        if re.search(site_pattern, fulltext, re.IGNORECASE):
+        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele.
+        # Must match the exact candidate, not just any ttTi pattern in the text. The context
+        # words may sit either after the site (forward) or before it (backward), e.g.
+        # "ttTi5605 Mos1 allele" vs. "insertions (into the ttTi5605 ...)".
+        cand_re = re.escape(candidate)
+        site_patterns = (
+            # forward: "ttTi5605 transposon / insertion site / locus / Mos1 / MosSCI site"
+            cand_re + r'\s*(?:transposon|insertion\s*site|locus|site\s+on\s+chromosome|Mos1|MosSCI)',
+            # backward: "insertion(s)/inserted/integrated/MosSCI/single-copy ... ttTi5605"
+            r'(?:insert\w*|integrat\w*|MosSCI|single[- ]copy)[^.\n]{0,40}\b' + cand_re,
+        )
+        if any(re.search(p, fulltext, re.IGNORECASE) for p in site_patterns):
             return True, f"MosSCI transposon insertion site ({candidate})"
 
     # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
@@ -311,6 +330,22 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             marker_pattern = re.escape(marker_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
             if re.search(marker_pattern, fulltext, re.IGNORECASE):
                 return True, f"genetic marker ({candidate} in {marker_gene} context)"
+
+    # 4b-ii. Check for dominant co-injection / transformation markers (rol-6(su1006), etc.)
+    # These ride on a co-injection plasmid (pRF4) and mark transformants; they are reagents,
+    # not the studied allele. Gate on the rol-6 genotype context or the pRF4 plasmid that
+    # carries it so a paper that genuinely studied the marker allele itself is still kept.
+    if cand_lower in COINJECTION_MARKER_ALLELES:
+        marker_gene_re = r'(?:' + '|'.join(re.escape(g) for g in sorted(COINJECTION_MARKER_GENES)) + r')'
+        plasmid_re = r'(?:' + '|'.join(re.escape(p) for p in sorted(COINJECTION_MARKER_PLASMIDS)) + r')'
+        coinj_pattern = (
+            # rol-6(su1006) genotype, with or without surrounding markdown emphasis
+            marker_gene_re + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+            # pRF4[...su1006...] plasmid context (allow the gene name between brackets)
+            r'|' + plasmid_re + r'\s*\[?[^\]\n]{0,40}' + re.escape(cand_lower)
+        )
+        if re.search(coinj_pattern, fulltext, re.IGNORECASE):
+            return True, f"co-injection marker ({candidate})"
 
     # 4c. Check for control alleles (explicitly mentioned as control)
     # Look for the allele mentioned near "control" keywords
