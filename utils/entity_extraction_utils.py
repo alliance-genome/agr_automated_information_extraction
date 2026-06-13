@@ -139,43 +139,38 @@ GENETIC_MARKER_ALLELES = {
 }
 
 # Dominant co-injection / transformation markers.
-# su1006 is the rol-6(su1006) Roller allele, by far the most common C. elegans transformation
-# marker. IMPORTANT: rol-6(su1006) is NOT always a false positive — it is only a reagent when
-# used as a co-injection / transformation marker (e.g. inside a transgene array such as
-# "[promoter::GFP + rol-6(su1006)]" or carried on the pRF4 plasmid). A paper that genuinely
-# studies rol-6 itself (Roller phenotype, cuticle/collagen/body morphology) is legitimately
-# about rol-6(su1006), so we must NOT discard it on the bare genotype alone. The filter
-# therefore requires a positive marker-use signal (see is_false_positive_allele step 4b-ii).
+# su1006 is the rol-6(su1006) Roller allele — overwhelmingly (~97% of the WB corpus) used as a
+# co-injection / transformation MARKER, not as the studied allele. We therefore DROP it by
+# default and KEEP it only when a su1006 mention carries a clear rol-6 *study* signal (Roller
+# handedness, cuticle/collagen structure, body morphology, the allele characterised as a
+# mutant) with no marker signal in the same window. See is_false_positive_allele step 4b-ii.
+# (su1006 is essentially unique to this rol-6 allele, so we anchor on the allele token itself
+# rather than the brittle "rol-6(...)" form, which appears in many OCR/markdown variants.)
 COINJECTION_MARKER_ALLELES = {"su1006"}
 
-# rol-6(su1006) genotype as written in the wild: rol-6 / rol6, ( ) or [ ] brackets, optional
-# space and markdown emphasis, optional trailing "gf" (gain-of-function). su1006 with a stray
-# trailing digit ("su10060") is an OCR artefact we still want to anchor on.
-SU1006_GENOTYPE_RE = re.compile(r'rol-?6\s*[\(\[]\s*\*?su1006', re.IGNORECASE)
-
-# The pRF4 co-injection plasmid that classically carries rol-6(su1006) (incl. common
-# OCR/typo variants pFR4, and with/without a leading "p").
-SU1006_PLASMID_RE = re.compile(r'\bp?(?:rf4|fr4)\b', re.IGNORECASE)
-
-# Fluorescent reporters / tags that, when sitting next to rol-6(su1006), mark it as part of a
-# co-injection transgene array rather than the studied allele.
-REPORTER_NAMES_RE = re.compile(
-    r'\b(?:GFP|YFP|CFP|RFP|BFP|mCherry|mKate|mNeonGreen|tdTomato|dsRed|mScarlet|'
-    r'Venus|Cerulean|Rosella|mRuby|wrmScarlet|Dendra|EGFP|mEGFP|luciferase)\b',
+# Study signal: the paper discusses the rol-6 allele itself as a biological subject. Kept
+# deliberately specific (handedness / cuticle / collagen / body morphology / ultrastructure)
+# so generic mentions don't rescue a marker. Verified to catch the two genuine rol-6 studies
+# in the corpus ("right-handed rol-6(su1006) mutant", "abnormal cuticle collagen").
+SU1006_STUDY_RE = re.compile(
+    r'(left[- ]?handed|right[- ]?handed|handedness|helical|super[- ]?coil|'
+    r'cuticle|collagen|body\s+(?:shape|morpholog)|annul[ei]|seam\s+cell|'
+    r'ultrastructur|abnormal\s+\w+\s+(?:cuticle|collagen))',
     re.IGNORECASE,
 )
 
-# Injection-mix concentration wording (e.g. "40 ng/µl", "100 ng/ml") — a hallmark of a
-# co-injection marker rather than a studied allele.
-INJECTION_CONC_RE = re.compile(r'\d+\s*ng\s*/\s*[µuμm]l', re.IGNORECASE)
-
-# Wording that signals an allele is used as a marker / co-injection / transformation reagent
-# (as opposed to being the studied allele).
-MARKER_USE_KEYWORDS_RE = re.compile(
-    r'(co[- ]?inject\w*|micro\s*inject\w*|inject\w*\s+marker|transformation\s+marker|'
-    r'transgenesis\s+marker|transgenic\s+marker|selection\s+marker|dominant\s+marker|'
-    r'roller\s+marker|co[- ]?marker|co[- ]?injection|'
-    r'as\s+(?:a\s+)?(?:co[- ]?injection\s+|co[- ]?)?marker|marker[s]?\b)',
+# Marker signal: anything indicating rol-6(su1006) is a co-injection / transformation reagent
+# (a transgene array, the pRF4 plasmid, an injection mix, etc.). Broad on purpose — it only
+# *vetoes* a study-based keep, so over-matching here just keeps the default DROP behaviour.
+# NOTE: bare "dominant" and bare "roller" are intentionally NOT markers (the genuine studies
+# say "dominant, right-handed roller"); only marker-specific phrasings are.
+SU1006_MARKER_RE = re.compile(
+    r'(p?rf4|p?fr4|co[- ]?inject\w*|micro\s*inject\w*|injected|'
+    r'(?:co[- ]?)?transform(?:ation|ed|ants?|ing)|'        # transformation/-ed/-ant(s)/-ing (NOT "transformer", the tra gene)
+    r'transgen\w*|co[- ]?marker|\bmarker\b|selection\s+marker|'
+    r'dominant\s+(?:marker|mutation|rol|collagen\s+gene|amino)|marked\s+by|'
+    r'plasmid|cosmid|\barray\b|::|\bp[A-Za-z]{2,}\d|'          # plasmid/construct names e.g. pAD76
+    r'\d+\s*(?:ng|µg|ug|mg)\s*/?\s*m?[µuμ]?l)',                # injection concentrations
     re.IGNORECASE,
 )
 
@@ -374,36 +369,22 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             if re.search(marker_pattern, fulltext, re.IGNORECASE):
                 return True, f"genetic marker ({candidate} in {marker_gene} context)"
 
-    # 4b-ii. Check for dominant co-injection / transformation markers (rol-6(su1006)).
-    # rol-6(su1006) is only a reagent when used as a co-injection / transformation MARKER; a
-    # paper that genuinely studies rol-6 (Roller phenotype, cuticle/collagen/body morphology)
-    # is legitimately about rol-6(su1006). So we filter ONLY when a positive marker-use signal
-    # sits near a rol-6(su1006) genotype, and otherwise KEEP the candidate. Marker-use signals
-    # (any one, within a ~110-char window of the genotype):
-    #   - a fluorescent reporter / tag (GFP, mCherry, luciferase, ...)  -> transgene array
-    #   - a '::' promoter/gene fusion                                   -> transgene array
-    #   - a transgene-array join char ('+', ';', or the 'þ' mojibake)   -> co-injected element
-    #   - an injection-mix concentration ("40 ng/µl")                   -> injection marker
-    #   - explicit marker / co-injection / transformation wording
-    #   - the pRF4 (a.k.a. pFR4) co-injection plasmid anywhere nearby
+    # 4b-ii. Dominant co-injection / transformation marker (rol-6(su1006)).
+    # rol-6(su1006) is overwhelmingly a co-injection / transformation MARKER, so DROP it by
+    # default. KEEP it only when at least one su1006 mention shows a clear rol-6 *study* signal
+    # (handedness, cuticle/collagen structure, body morphology, ultrastructure) AND no marker
+    # signal in that same ~150-char window — i.e. the rare paper that genuinely studies the
+    # rol-6 allele itself rather than using it as a reporter/selection reagent.
     if cand_lower in COINJECTION_MARKER_ALLELES:
-        is_marker = False
-        for m in SU1006_GENOTYPE_RE.finditer(fulltext):
-            start = max(0, m.start() - 110)
-            end = min(len(fulltext), m.end() + 110)
+        keep_as_studied = False
+        for m in re.finditer(re.escape(cand_lower), fulltext, re.IGNORECASE):
+            start = max(0, m.start() - 150)
+            end = min(len(fulltext), m.end() + 150)
             ctx = fulltext[start:end]
-            if (
-                REPORTER_NAMES_RE.search(ctx)
-                or "::" in ctx
-                or any(c in ctx for c in SU1006_ARRAY_JOIN_CHARS)
-                or INJECTION_CONC_RE.search(ctx)
-                or MARKER_USE_KEYWORDS_RE.search(ctx)
-                or SU1006_PLASMID_RE.search(ctx)
-            ):
-                is_marker = True
+            if SU1006_STUDY_RE.search(ctx) and not SU1006_MARKER_RE.search(ctx):
+                keep_as_studied = True
                 break
-
-        if is_marker:
+        if not keep_as_studied:
             return True, f"co-injection marker ({candidate})"
 
     # 4b-iii. Check for him (male-production) background markers (him-8(e1489), him-5(e1490))
