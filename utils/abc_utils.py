@@ -1181,13 +1181,26 @@ def set_indexing_priority(ref_curie, mod_abbr, priority_name, confidence_score):
 
 def get_training_set_from_abc(mod_abbreviation: str, topic: str, metadata_only: bool = False, version: int = None):
     endpoint = "metadata" if metadata_only else "download"
-    if version:
-        url = f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/{version}/"
-    else:
-        url = f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/"
+
+    def _dataset_url(ver):
+        if ver:
+            return f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/{ver}/"
+        return f"{blue_api_base_url}/datasets/{endpoint}/{mod_abbreviation}/{topic}/document/"
+
     token = get_authentication_token()
     headers = generate_headers(token)
-    response = requests.get(url, headers=headers)
+    response = requests.get(_dataset_url(version), headers=headers)
+
+    # A specific dataset version may not exist for every MOD/topic (e.g. FB
+    # topics only have version 1, while WB has version 2). Rather than hard-fail
+    # on a 404, fall back to the latest available version so a mixed-MOD sweep
+    # that pins a single --dataset_version can still proceed.
+    if response.status_code == 404 and version:
+        logger.warning(f"Dataset {endpoint} version {version} not found for "
+                       f"{mod_abbreviation}/{topic}; falling back to the latest available version.")
+        version = None
+        response = requests.get(_dataset_url(version), headers=headers)
+
     if response.status_code == 200:
         dataset = response.json()
         if version:

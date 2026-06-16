@@ -95,7 +95,12 @@ POSSIBLE_CLASSIFIERS = {
         }
     },
     'XGBClassifier': {
-        'model': XGBClassifier(random_state=42, eval_metric='logloss'),
+        # n_jobs=1: XGBoost otherwise grabs every core, and under the parallel
+        # RandomizedSearchCV (n_jobs=-1) that becomes workers x cores threads,
+        # each allocating per-thread buffers sized by the wide BoW feature matrix
+        # (2**18 cols) -> OOM. RF/GBM/LGBM default to single-threaded, so only XGB
+        # oversubscribed. Let the outer search own the parallelism.
+        'model': XGBClassifier(random_state=42, eval_metric='logloss', n_jobs=1),
         'params': {
             'n_estimators': randint(50, 150),  # Reduced iterations
             'learning_rate': loguniform(0.01, 0.3),  # Lower learning rates

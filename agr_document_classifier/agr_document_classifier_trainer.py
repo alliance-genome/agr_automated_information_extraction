@@ -199,6 +199,19 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         # Reduce n_iter for faster training with focus on regularization
         n_iter = 50 if classifier_name in ['LogisticRegression', 'SGDClassifier'] else 30
 
+        # RandomizedSearchCV fans every candidate fit out to its own worker
+        # process. On the wide sparse BoW/LSH matrix (2**18 columns) an XGBoost
+        # worker allocates gradient-histogram buffers sized by n_features
+        # (~3 GB per fit), so the default n_jobs=-1 (one worker per core) peaked
+        # at ~51 GB on the largest dataset and systemd-oomd killed the whole user
+        # slice. Cap XGBoost's *search* concurrency on wide matrices; the lighter
+        # models materialise far less and ran fine at full width. n_jobs does not
+        # change the result (the search is deterministic given random_state), so
+        # model-selection stats are unaffected. Override with SEARCH_MAX_JOBS.
+        search_n_jobs = -1
+        if (use_bow_features or use_lsh_features) and classifier_name == 'XGBClassifier':
+            search_n_jobs = int(os.environ.get('SEARCH_MAX_JOBS', '4'))
+
         random_search = RandomizedSearchCV(
             estimator=classifier_info['model'],
             n_iter=n_iter,
@@ -207,7 +220,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
             scoring=scoring,
             refit='f1',
             verbose=1,
-            n_jobs=-1,
+            n_jobs=search_n_jobs,
             random_state=42
         )
         random_search.fit(X_train_val, y_train_val)
