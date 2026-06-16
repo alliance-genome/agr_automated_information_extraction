@@ -499,12 +499,19 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
                 # matches for this pattern but continue checking other patterns
                 break
 
-    # 9. Check for histone/protein name patterns (h1, h2, H2A, H3, etc.)
-    if HISTONE_PROTEIN_RE.match(candidate):
+    # 9. Check for histone/protein name patterns (h1, h2, H2A, H3, etc.).
+    # h1/h2/h3 are also real curated WB alleles (Baillie-lab 'h' prefix), so only
+    # treat the candidate as a false positive when the paper shows no allele-like
+    # context. Otherwise a paper genuinely studying allele h1/h2/h3 would be
+    # silently dropped.
+    if HISTONE_PROTEIN_RE.match(candidate) and not has_allele_like_context(fulltext, candidate):
         return True, f"histone/protein name ({candidate})"
 
-    # 10. Check for timepoint/measurement patterns (t1, d2, 25c, etc.)
-    if MEASUREMENT_RE.match(candidate):
+    # 10. Check for timepoint/measurement patterns (t1, d2, 25c, etc.).
+    # No curated WB allele currently matches MEASUREMENT_RE, but gate behind the
+    # same context check so a future short 't'/'d' allele under study is never
+    # dropped unconditionally.
+    if MEASUREMENT_RE.match(candidate) and not has_allele_like_context(fulltext, candidate):
         return True, f"measurement pattern ({candidate})"
 
     # 11. Check for fluorescent protein/reagent names (gfp, rfp, mcherry, etc.)
