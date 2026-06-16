@@ -118,7 +118,7 @@ def load_allele_set(allele_json_path: str) -> set:
     return {n.lower() for n in names if isinstance(n, str)}
 
 
-def main():
+def main():  # noqa: C901
     parser = argparse.ArgumentParser(
         description='Validate allele extraction against sample papers'
     )
@@ -222,10 +222,10 @@ def main():
 
     # Show rejection reasons breakdown
     rejection_reasons = {}
-    for curie, result in results.items():
+    for _curie, result in results.items():
         if 'error' in result:
             continue
-        for allele, reason in result.get('rejected_with_reasons', []):
+        for _allele, reason in result.get('rejected_with_reasons', []):
             # Extract reason category
             category = reason.split('(')[0].strip()
             rejection_reasons[category] = rejection_reasons.get(category, 0) + 1

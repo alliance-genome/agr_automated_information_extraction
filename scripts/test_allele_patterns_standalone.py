@@ -64,7 +64,7 @@ def test_allele_pattern():
         'mgDf50', 'gkDf31',      # deficiencies
         'ieSi64', 'juSi123',     # single-copy insertions
         'wk30', 'wk7', 'wk70',   # short alleles
-        'ad465', 'km21', 'p675', # more classics
+        'ad465', 'km21', 'p675',  # more classics
     ]
 
     # Should NOT match
@@ -272,11 +272,11 @@ def test_with_sample_md_files():
         if curated:
             print(f"    Curated matches: {sorted(curated)[:15]}{'...' if len(curated) > 15 else ''}")
         else:
-            print(f"    Curated matches: (none)")
+            print("    Curated matches: (none)")
         if rejected:
             print(f"    Would reject as FP: {rejected}")
 
-    print(f"\n  Summary:")
+    print("\n  Summary:")
     print(f"    Total pattern matches: {total_matches}")
     print(f"    Total curated matches: {total_curated}")
     print(f"    Would reject as FP (new patterns): {total_rejected_fp}")

@@ -9,19 +9,17 @@ Usage:
 import os
 import sys
 import json
-import re
 
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import only the patterns and functions that don't have heavy dependencies
-from utils.entity_extraction_utils import (
+from utils.entity_extraction_utils import (  # noqa: E402
     ALLELE_NAME_PATTERN,
     FIGURE_PANEL_CONTEXT_RE,
     HISTONE_PROTEIN_RE,
     MEASUREMENT_RE,
     REAGENT_NAMES_LOWER,
-    SUSPICIOUS_PREFIX_RE,
 )
 
 
@@ -37,7 +35,7 @@ def test_allele_pattern():
         'mgDf50', 'gkDf31',      # deficiencies
         'ieSi64', 'juSi123',     # single-copy insertions
         'wk30', 'wk7', 'wk70',   # short alleles
-        'ad465', 'km21', 'p675', # more classics
+        'ad465', 'km21', 'p675',  # more classics
     ]
 
     # Should NOT match
@@ -239,7 +237,7 @@ def test_with_sample_md_files():
             if rejected:
                 print(f"    Would reject: {rejected}")
 
-    print(f"\n  Summary:")
+    print("\n  Summary:")
     print(f"    Total pattern matches: {total_matches}")
     print(f"    Total curated matches: {total_curated}")
     print(f"    Would reject as FP: {total_rejected_fp}")
