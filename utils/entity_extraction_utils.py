@@ -43,6 +43,20 @@ _ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str], Dict[str, 
 # --------------------------------------------------------------------- #
 # PATTERNS & TOPIC MAPPING                                              #
 # --------------------------------------------------------------------- #
+# Allele extraction topics. Callers may run the allele pipeline under either the
+# generic "allele" topic (ATP:0000006) or the "classical allele" topic
+# (ATP:0000285). Regardless of which one is used to drive extraction, the tag we
+# report to ABC always uses "classical allele" (ATP:0000285) for both the topic
+# and the entity_type, to match the WB allele data import convention.
+ALLELE_EXTRACTION_TOPICS = frozenset({"ATP:0000006", "ATP:0000285"})
+ABC_ALLELE_TOPIC = "ATP:0000285"
+
+
+def is_allele_topic(topic: Optional[str]) -> bool:
+    """True if ``topic`` drives allele extraction (generic or classical allele)."""
+    return topic in ALLELE_EXTRACTION_TOPICS
+
+
 STRAIN_NAME_PATTERN = re.compile(
     r'''
     (?<![A-Za-z0-9])              # left-boundary: not preceded by a letter or digit
@@ -124,6 +138,55 @@ GENETIC_MARKER_ALLELES = {
     "e128", "e120",  # dpy-10(e128), unc-4(e120) from paper 8
 }
 
+# Dominant co-injection / transformation markers.
+# su1006 is the rol-6(su1006) Roller allele — overwhelmingly (~97% of the WB corpus) used as a
+# co-injection / transformation MARKER, not as the studied allele. We therefore DROP it by
+# default and KEEP it only when a su1006 mention carries a clear rol-6 *study* signal (Roller
+# handedness, cuticle/collagen structure, body morphology, the allele characterised as a
+# mutant) with no marker signal in the same window. See is_false_positive_allele step 4b-ii.
+# (su1006 is essentially unique to this rol-6 allele, so we anchor on the allele token itself
+# rather than the brittle "rol-6(...)" form, which appears in many OCR/markdown variants.)
+COINJECTION_MARKER_ALLELES = {"su1006"}
+
+# Study signal: the paper discusses the rol-6 allele itself as a biological subject. Kept
+# deliberately specific (handedness / cuticle / collagen / body morphology / ultrastructure)
+# so generic mentions don't rescue a marker. Verified to catch the two genuine rol-6 studies
+# in the corpus ("right-handed rol-6(su1006) mutant", "abnormal cuticle collagen").
+SU1006_STUDY_RE = re.compile(
+    r'(left[- ]?handed|right[- ]?handed|handedness|helical|super[- ]?coil|'
+    r'cuticle|collagen|body\s+(?:shape|morpholog)|annul[ei]|seam\s+cell|'
+    r'ultrastructur|abnormal\s+\w+\s+(?:cuticle|collagen))',
+    re.IGNORECASE,
+)
+
+# Marker signal: anything indicating rol-6(su1006) is a co-injection / transformation reagent
+# (a transgene array, the pRF4 plasmid, an injection mix, etc.). Broad on purpose — it only
+# *vetoes* a study-based keep, so over-matching here just keeps the default DROP behaviour.
+# NOTE: bare "dominant" and bare "roller" are intentionally NOT markers (the genuine studies
+# say "dominant, right-handed roller"); only marker-specific phrasings are.
+SU1006_MARKER_RE = re.compile(
+    r'(p?rf4|p?fr4|co[- ]?inject\w*|micro\s*inject\w*|injected|'
+    r'(?:co[- ]?)?transform(?:ation|ed|ants?|ing)|'        # transformation/-ed/-ant(s)/-ing (NOT "transformer", the tra gene)
+    r'transgen\w*|co[- ]?marker|\bmarker\b|selection\s+marker|'
+    r'dominant\s+(?:marker|mutation|rol|collagen\s+gene|amino)|marked\s+by|'
+    r'plasmid|cosmid|\barray\b|::|\bp[A-Za-z]{2,}\d|'          # plasmid/construct names e.g. pAD76
+    r'\d+\s*(?:ng|µg|ug|mg)\s*/?\s*m?[µuμ]?l)',                # injection concentrations
+    re.IGNORECASE,
+)
+
+# Transgene-array join characters seen between co-injected elements: '+', ';', and 'þ'
+# (a recurring mojibake for '+' in these markdown extractions).
+SU1006_ARRAY_JOIN_CHARS = "+;þ"
+
+# Male-production ("high incidence of males", Him) background markers. These him alleles are
+# crossed in to generate males / males-and-hermaphrodites as a genetic background, not studied
+# themselves (curators flag them as negative, e.g. "him-8(e1489) was used to generate ...
+# males"). e1489 is the canonical him-8 reference allele; e1490 is the canonical him-5
+# reference allele. Mirrors the GENETIC_MARKER_ALLELES design: gate on the him-N(allele)
+# genotype context so a paper that genuinely studied the him allele itself is still kept.
+HIM_MARKER_GENES = {"him-5", "him-8"}
+HIM_MARKER_ALLELES = {"e1489", "e1490"}
+
 # Control allele context patterns
 CONTROL_CONTEXT_PATTERN = re.compile(
     r'(positive\s+control|negative\s+control|control\s+(strain|animal|worm)|'
@@ -201,6 +264,44 @@ MARKER_CONTEXT_KEYWORDS = (
     r'expressing|expression\s+pattern|visualize|labeled|tag(ged)?)'
 )
 
+# ---------------------------------------------------------------------------
+# Additional false positive patterns (Phase 1 of allele extraction plan)
+# ---------------------------------------------------------------------------
+
+# Figure/panel label detection (for context checking)
+# Matches patterns like "Figure 1A", "Fig. 2B", "Panel C2"
+FIGURE_PANEL_CONTEXT_RE = re.compile(
+    r'(?:Fig(?:ure)?\.?\s*\d+\s*|[Pp]anel\s+)([A-Za-z]\d?)',
+    re.IGNORECASE
+)
+
+# Histone/protein names that could match allele patterns
+# h1, h2, h3, h4, H2A, H2B, H3X, etc.
+HISTONE_PROTEIN_RE = re.compile(r'^[Hh][1234][ABXabx]?$')
+
+# Timepoint/measurement patterns
+# t1, t2, d1, d2 (timepoints), 10mM, 5uM, 25C (measurements)
+MEASUREMENT_RE = re.compile(
+    r'^[td]\d{1,2}$|'           # t1, t2, d1, d2 (timepoints)
+    r'^\d+[munp]?[MmCc]$',      # 10mM, 5uM, 25C
+    re.IGNORECASE
+)
+
+# Common fluorescent protein/reagent names that should not be extracted as alleles
+REAGENT_NAMES_LOWER = {
+    'gfp', 'mcherry', 'rfp', 'yfp', 'cfp', 'bfp',
+    'dsred', 'tdtomato', 'venus', 'cerulean',
+}
+
+# Supplementary material reference patterns (Fig. S7, Table S10, etc.)
+# These match patterns like "fig. S7", "Fig. [S7]", "table S10", "Movie S3"
+SUPPLEMENTARY_REF_CONTEXT_RE = re.compile(
+    r'(?:fig(?:ure)?\.?\s*\[?|table\s+|movie\s+|video\s+|'
+    r'supplementary\s+(?:fig(?:ure)?|table|movie|video|material)\s*)'
+    r'([sS]\d{1,2})',
+    re.IGNORECASE
+)
+
 
 def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:  # noqa: C901
     """
@@ -237,10 +338,18 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
 
     # 3. Check for MosSCI transposon insertion sites (ttTi4348, ttTi5605, etc.)
     if MOSCI_INSERTION_SITE_PATTERN.match(candidate):
-        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele
-        # Must match the exact candidate, not just any ttTi pattern in the text
-        site_pattern = re.escape(candidate) + r'\s*(transposon|insertion\s*site|locus|site\s+on\s+chromosome)'
-        if re.search(site_pattern, fulltext, re.IGNORECASE):
+        # Verify THIS SPECIFIC candidate is used as an insertion site, not studied as an allele.
+        # Must match the exact candidate, not just any ttTi pattern in the text. The context
+        # words may sit either after the site (forward) or before it (backward), e.g.
+        # "ttTi5605 Mos1 allele" vs. "insertions (into the ttTi5605 ...)".
+        cand_re = re.escape(candidate)
+        site_patterns = (
+            # forward: "ttTi5605 transposon / insertion site / locus / Mos1 / MosSCI site"
+            cand_re + r'\s*(?:transposon|insertion\s*site|locus|site\s+on\s+chromosome|Mos1|MosSCI)',
+            # backward: "insertion(s)/inserted/integrated/MosSCI/single-copy ... ttTi5605"
+            r'(?:insert\w*|integrat\w*|MosSCI|single[- ]copy)[^.\n]{0,40}\b' + cand_re,
+        )
+        if any(re.search(p, fulltext, re.IGNORECASE) for p in site_patterns):
             return True, f"MosSCI transposon insertion site ({candidate})"
 
     # 4a. Check for background marker alleles (ed3, ed4 in unc-119 context)
@@ -259,6 +368,32 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
             marker_pattern = re.escape(marker_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
             if re.search(marker_pattern, fulltext, re.IGNORECASE):
                 return True, f"genetic marker ({candidate} in {marker_gene} context)"
+
+    # 4b-ii. Dominant co-injection / transformation marker (rol-6(su1006)).
+    # rol-6(su1006) is overwhelmingly a co-injection / transformation MARKER, so DROP it by
+    # default. KEEP it only when at least one su1006 mention shows a clear rol-6 *study* signal
+    # (handedness, cuticle/collagen structure, body morphology, ultrastructure) AND no marker
+    # signal in that same ~150-char window — i.e. the rare paper that genuinely studies the
+    # rol-6 allele itself rather than using it as a reporter/selection reagent.
+    if cand_lower in COINJECTION_MARKER_ALLELES:
+        keep_as_studied = False
+        for m in re.finditer(re.escape(cand_lower), fulltext, re.IGNORECASE):
+            start = max(0, m.start() - 150)
+            end = min(len(fulltext), m.end() + 150)
+            ctx = fulltext[start:end]
+            if SU1006_STUDY_RE.search(ctx) and not SU1006_MARKER_RE.search(ctx):
+                keep_as_studied = True
+                break
+        if not keep_as_studied:
+            return True, f"co-injection marker ({candidate})"
+
+    # 4b-iii. Check for him (male-production) background markers (him-8(e1489), him-5(e1490))
+    # These alleles are crossed in to generate males as a genetic background, not studied.
+    if cand_lower in HIM_MARKER_ALLELES:
+        for him_gene in sorted(HIM_MARKER_GENES):
+            him_pattern = re.escape(him_gene) + r'\s*\(\s*' + re.escape(cand_lower) + r'\s*\)'
+            if re.search(him_pattern, fulltext, re.IGNORECASE):
+                return True, f"male-production marker ({candidate} in {him_gene} context)"
 
     # 4c. Check for control alleles (explicitly mentioned as control)
     # Look for the allele mentioned near "control" keywords
@@ -363,6 +498,51 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
                 # Found candidate in this pattern but count is high; skip remaining
                 # matches for this pattern but continue checking other patterns
                 break
+
+    # 9. Check for histone/protein name patterns (h1, h2, H2A, H3, etc.).
+    # h1/h2/h3 are also real curated WB alleles (Baillie-lab 'h' prefix), so only
+    # treat the candidate as a false positive when the paper shows no allele-like
+    # context. Otherwise a paper genuinely studying allele h1/h2/h3 would be
+    # silently dropped.
+    if HISTONE_PROTEIN_RE.match(candidate) and not has_allele_like_context(fulltext, candidate):
+        return True, f"histone/protein name ({candidate})"
+
+    # 10. Check for timepoint/measurement patterns (t1, d2, 25c, etc.).
+    # No curated WB allele currently matches MEASUREMENT_RE, but gate behind the
+    # same context check so a future short 't'/'d' allele under study is never
+    # dropped unconditionally.
+    if MEASUREMENT_RE.match(candidate) and not has_allele_like_context(fulltext, candidate):
+        return True, f"measurement pattern ({candidate})"
+
+    # 11. Check for fluorescent protein/reagent names (gfp, rfp, mcherry, etc.)
+    if cand_lower in REAGENT_NAMES_LOWER:
+        return True, f"reagent name ({candidate})"
+
+    # 12. Check for figure/panel label context (for short alleles like e1, b2, f1)
+    if len(candidate) <= 3:
+        # Count occurrences in figure context vs allele context
+        fig_matches = FIGURE_PANEL_CONTEXT_RE.findall(fulltext)
+        fig_count = sum(1 for m in fig_matches if m.lower() == cand_lower)
+        allele_count = len(re.findall(
+            r'\w+-?\d*\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
+            fulltext, re.IGNORECASE
+        ))
+        if fig_count > 0 and fig_count >= allele_count:
+            return True, f"figure/panel label ({candidate})"
+
+    # 13. Check for supplementary material references (Fig. S7, Table S10, etc.)
+    # These are common false positives for alleles like s7, s8, s10, etc.
+    if cand_lower.startswith('s') and cand_lower[1:].isdigit():
+        supp_matches = SUPPLEMENTARY_REF_CONTEXT_RE.findall(fulltext)
+        supp_count = sum(1 for m in supp_matches if m.lower() == cand_lower)
+        # Count gene(allele) context mentions
+        allele_context_count = len(re.findall(
+            r'[a-z]+-\d+\s*\(\s*' + re.escape(cand_lower) + r'\s*\)',
+            fulltext, re.IGNORECASE
+        ))
+        # If supplementary refs dominate, it's likely not an allele being studied
+        if supp_count > 0 and supp_count > allele_context_count:
+            return True, f"supplementary reference ({candidate})"
 
     return False, ""
 
@@ -675,6 +855,8 @@ def extract_entities_from_title_abstract(
     title: str,
     abstract: str,
     pattern: re.Pattern,
+    *,
+    case_sensitive: bool = False,
 ) -> Tuple[List[str], List[str]]:
     """
     looks for known entity names (from a curated list) inside a paper’s
@@ -683,8 +865,29 @@ def extract_entities_from_title_abstract(
       curated entity list.
     - Regex-based matching — catches patterns (like gene names or allele
       symbols) missed by tokenization.
+
+    When ``case_sensitive`` is True, a token/regex match must equal a curated
+    name EXACTLY (case included) and the curated casing is returned as-is. This
+    is required for alleles, where e.g. the balancer chromosome ``qC1`` must not
+    be conflated with the curated allele ``qc1``.
     """
     gold = set(getattr(model, "entities_to_extract", []) or [])
+
+    if case_sensitive:
+        tok_title = model.tokenizer.tokenize(title or "")
+        ents_title = {t for t in tok_title if t in gold}
+        for m in pattern.findall(title or ""):
+            if m in gold:
+                ents_title.add(m)
+
+        tok_abs = model.tokenizer.tokenize(abstract or "")
+        ents_abs = {t for t in tok_abs if t in gold}
+        for m in pattern.findall(abstract or ""):
+            if m in gold:
+                ents_abs.add(m)
+
+        return list(ents_title), list(ents_abs)
+
     gold_up = {g.upper() for g in gold}
 
     tok_title = model.tokenizer.tokenize(title or "")
@@ -837,6 +1040,7 @@ def build_entities_from_results(
     use_fulltext_tokenizer: bool = True,
     use_count_gate: bool = True,
     use_gold_substring: bool = False,
+    case_sensitive: bool = False,
 ) -> List[str]:
     """
     Merge candidates from multiple detectors (NER, regex, tokenizer, substring)
@@ -845,6 +1049,12 @@ def build_entities_from_results(
     it believes are present:
     Apply min_hits using model.min_matches (default 1) when use_count_gate=True.
     Return DISPLAY NAMES (original casing from curated list).
+
+    When ``case_sensitive`` is True every detector matches candidates against the
+    curated list EXACTLY (case included) instead of upper-casing first, and the
+    surviving candidates — which already equal a curated name — are returned
+    verbatim. This keeps look-alikes that differ only by case (e.g. the balancer
+    chromosome ``qC1`` vs. the curated allele ``qc1``) from being merged.
     """
     # 1) Normalize (species only)
     if is_species and normalize_aliases and expand_abbrevs:
@@ -856,33 +1066,43 @@ def build_entities_from_results(
 
     # 2) Prep curated lookups
     gold = getattr(model, "entities_to_extract", []) or []
+    gold_set = set(gold)
     gold_up = {e.upper() for e in gold}
+
+    def _norm(word: str) -> str:
+        """Project a candidate into the matching space (exact or upper-cased)."""
+        return word if case_sensitive else word.upper()
+
+    def _in_gold(word: str) -> bool:
+        return word in gold_set if case_sensitive else word.upper() in gold_up
 
     # 3) HF NER (accepts either 'entity_group' or 'entity')
     ents_full_hf = {
-        (r.get("word") or "").upper()
+        _norm(r.get("word") or "")
         for r in (results or [])
         if (r.get("entity_group") == "ENTITY" or r.get("entity") == "ENTITY")
         and r.get("word")
-        and r["word"].upper() in gold_up
+        and _in_gold(r["word"])
     }
 
     # 4) Title/Abstract (tokenizer ∩ curated + regex ∩ curated)
-    t_ents, a_ents = extract_entities_from_title_abstract(model, title_norm, abstract_norm, pattern)
-    ents_title = {e.upper() for e in t_ents}
-    ents_abs = {e.upper() for e in a_ents}
+    t_ents, a_ents = extract_entities_from_title_abstract(
+        model, title_norm, abstract_norm, pattern, case_sensitive=case_sensitive
+    )
+    ents_title = {_norm(e) for e in t_ents}
+    ents_abs = {_norm(e) for e in a_ents}
 
     # 5) Regex over normalized fulltext
     regex_hits = {
-        m.upper()
+        _norm(m)
         for m in pattern.findall(fulltext_norm or "")
-        if m and m.upper() in gold_up
+        if m and _in_gold(m)
     }
 
     # 6) Optional tokenizer over normalized fulltext
     if use_fulltext_tokenizer:
         tok_full = model.tokenizer.tokenize(fulltext_norm or "")
-        ents_full_tok = {t.upper() for t in tok_full if t and t.upper() in gold_up}
+        ents_full_tok = {_norm(t) for t in tok_full if t and _in_gold(t)}
     else:
         ents_full_tok = set()
 
@@ -890,39 +1110,45 @@ def build_entities_from_results(
     #    This helps catch odd punctuation/hyphenation that slip past the regex/tokenizer.
     substring_hits = set()
     if use_gold_substring:
-        small_text = (f"{title_norm} {abstract_norm}").upper()
+        gold_match = gold_set if case_sensitive else gold_up
+        small_text = f"{title_norm} {abstract_norm}" if case_sensitive else f"{title_norm} {abstract_norm}".upper()
         # only attempt if texts are short-ish and curated set isn't massive
-        if small_text and len(small_text) <= 4000 and len(gold_up) <= 5000:
+        if small_text and len(small_text) <= 4000 and len(gold_match) <= 5000:
             # Filter out very short candidates to reduce noise/cost
-            for g in gold_up:
+            for g in gold_match:
                 if len(g) >= 3 and g in small_text:
                     substring_hits.add(g)
 
-    # 8) Union of all uppercase candidates
-    all_up = ents_full_hf | ents_title | ents_abs | regex_hits | ents_full_tok | substring_hits
-    if not all_up:
+    # 8) Union of all candidates (exact-cased or upper-cased per case_sensitive)
+    all_cands = ents_full_hf | ents_title | ents_abs | regex_hits | ents_full_tok | substring_hits
+    if not all_cands:
         return []
 
     # 9) Optional count gate (only compute counts when it can change the outcome)
-    passed_up: set[str]
+    passed: set[str]
     if use_count_gate:
         min_hits = int(getattr(model, "min_matches", 1))
         if min_hits > 1:
             counts = count_curated_mentions(title_norm, model)
             counts += count_curated_mentions(abstract_norm, model)
             counts += count_curated_mentions(fulltext_norm, model)
-            passed_up = {u for u in all_up if counts.get(u, 0) >= min_hits}
+            # count_curated_mentions keys on upper-cased tokens, so look up the
+            # upper-cased form of each candidate regardless of case_sensitive.
+            passed = {u for u in all_cands if counts.get(u.upper(), 0) >= min_hits}
         else:
-            passed_up = all_up
+            passed = all_cands
     else:
-        passed_up = all_up
+        passed = all_cands
 
-    if not passed_up:
+    if not passed:
         return []
 
-    # 10) Map back to original casing using the precomputed mapping
+    # 10) In case-sensitive mode candidates already equal a curated name; in the
+    #     default mode map the upper-cased candidates back to their curated casing.
+    if case_sensitive:
+        return sorted(passed)
     u2o = getattr(model, "upper_to_original_mapping", {}) or {}
-    out = [u2o.get(u, u) for u in sorted(passed_up)]
+    out = [u2o.get(u, u) for u in sorted(passed)]
     return out
 
 
@@ -956,6 +1182,24 @@ def has_allele_like_context(fulltext: str, candidate: str) -> bool:
 
     text = fulltext.lower()
     cand = candidate.lower()
+
+    # NEW: Negative context - if candidate appears primarily in figure/panel context, reject
+    # This catches cases like "Figure 1A", "Panel B2", etc.
+    fig_context_pattern = re.compile(
+        r'(?:fig(?:ure)?\.?\s*\d+\s*|panel\s+)' + re.escape(cand),
+        re.IGNORECASE
+    )
+    if fig_context_pattern.search(fulltext):
+        # Count figure context vs allele context mentions
+        fig_mentions = len(fig_context_pattern.findall(fulltext))
+        allele_context_pattern = re.compile(
+            r'\w+-?\d*\s*\(\s*' + re.escape(cand) + r'\s*\)',
+            re.IGNORECASE
+        )
+        allele_mentions = len(allele_context_pattern.findall(fulltext))
+        # If figure mentions dominate, reject
+        if fig_mentions > 0 and fig_mentions >= allele_mentions:
+            return False
 
     # Is this a "suspicious" ultra-short allele like e5, b2, s7, etc.?
     is_suspicious_short = bool(SUSPICIOUS_PREFIX_RE.match(cand))
@@ -996,31 +1240,42 @@ def rescue_short_alleles_from_fulltext(
     fulltext: str,
     model,
     already_found: set[str],
+    *,
+    case_sensitive: bool = False,
 ) -> set[str]:
     """
     Rescue allele names that appear in the full text but were missed by NER.
 
     Behavior:
     - Scan the ORIGINAL-CASE fulltext with ALLELE_NAME_PATTERN
-      (which itself only matches lowercase alleles like e1370, ok1255, tm1949, etc.).
+      (which itself only matches lowercase-initial alleles like e1370, ok1255,
+      tm1949, mgDf50, etc.).
     - Ignore anything that:
-        * is already in `already_found` (case-insensitive), or
+        * is already in `already_found`, or
         * starts with a digit (e.g. "1a", "5b-5d", "100x", "1-octanol").
     - For one-letter+digits patterns (e5, e7, b2, ...), require allele-like context
       via has_allele_like_context().
-    - Returns canonical lowercase allele names.
+
+    When ``case_sensitive`` is True the original casing of each matched token is
+    preserved (so ``qC1`` is rescued as ``qC1``, not ``qc1``) and the
+    ``already_found`` comparison is exact. Downstream filtering then drops any
+    token whose exact casing is not in the curated list. When False the legacy
+    behaviour applies: tokens are lower-cased and compared case-insensitively.
     """
     rescued: set[str] = set()
     if not fulltext:
         return rescued
 
-    # Track what we've already found (case-insensitive)
-    already_found_lower = {e.lower() for e in (already_found or set())}
+    # Track what we've already found.
+    if case_sensitive:
+        already_seen = set(already_found or set())
+    else:
+        already_seen = {e.lower() for e in (already_found or set())}
 
-    # IMPORTANT: we now search the original-case text, not fulltext.lower().
-    # ALLELE_NAME_PATTERN is lowercase-only, so it will only match true
-    # lowercase allele-like tokens (e1370, ok1255, tm1949, n324, etc.),
-    # and will NOT match uppercase tokens like Mos1, CD31, B2.
+    # IMPORTANT: we search the original-case text, not fulltext.lower().
+    # ALLELE_NAME_PATTERN is lowercase-initial, so it will only match true
+    # allele-like tokens (e1370, ok1255, tm1949, n324, mgDf50, etc.),
+    # and will NOT match all-uppercase tokens like Mos1, CD31, B2.
     for m in ALLELE_NAME_PATTERN.finditer(fulltext):
         raw = m.group(0) or ""
         if not raw:
@@ -1032,9 +1287,12 @@ def rescue_short_alleles_from_fulltext(
             continue
 
         name_lc = name.lower()
+        # In case-sensitive mode keep the original casing; otherwise canonicalize
+        # to lowercase as before.
+        candidate = name if case_sensitive else name_lc
 
-        # Skip if we've already got this allele (case-insensitive)
-        if name_lc in already_found_lower:
+        # Skip if we've already got this allele.
+        if candidate in already_seen:
             continue
 
         # Drop anything that starts with a digit: panel labels, 100x, 1a, 2b-2c, etc.
@@ -1052,6 +1310,6 @@ def rescue_short_alleles_from_fulltext(
             if not has_allele_like_context(fulltext, name_lc):
                 continue
 
-        rescued.add(name_lc)
+        rescued.add(candidate)
 
     return rescued

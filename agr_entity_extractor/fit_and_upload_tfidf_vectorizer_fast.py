@@ -79,7 +79,7 @@ def fit_vectorizer_on_agr_corpus(
     logger.info("Fetching curated entities...")
     entity_type = (
         "gene" if topic == "ATP:0000005"
-        else "allele" if topic == "ATP:0000006"
+        else "allele" if topic in ("ATP:0000006", "ATP:0000285")
         else "strain" if topic == "ATP:0000027"
         else "transgenic_allele" if topic == "ATP:0000110"
         else "species" if topic == "ATP:0000123"
