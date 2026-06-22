@@ -521,7 +521,8 @@ def get_file_from_abc_reffile_obj(referencefile_json_obj):
     token = get_authentication_token()
     headers = generate_headers(token)
     try:
-        response = requests.request("GET", file_download_api, headers=headers)
+        response = requests.get(file_download_api, headers=headers, timeout=60)
+        response.raise_for_status()
         return response.content
     except requests.exceptions.RequestException as e:
         logger.error(f"Error occurred for accessing/retrieving data from {file_download_api}: error={e}")
@@ -615,8 +616,11 @@ def download_main_pdf(agr_curie, mod_abbreviation, file_name, output_dir):
                         break
             if main_pdf_ref_file:
                 file_content = get_file_from_abc_reffile_obj(main_pdf_ref_file)
-                with open(os.path.join(output_dir, file_name + ".pdf"), "wb") as out_file:
-                    out_file.write(file_content)
+                if file_content:
+                    with open(os.path.join(output_dir, file_name + ".pdf"), "wb") as out_file:
+                        out_file.write(file_content)
+                else:
+                    logger.error(f"Main PDF download returned no bytes for {agr_curie}")
     except HTTPError as e:
         logger.error(e)
 
