@@ -89,12 +89,38 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
         )
         return files_loaded, np.array([]), [], valid_embeddings
     X = sp.vstack(rows, format="csr") if sparse_features else np.vstack(rows)
-    classifications = classifier_model.predict(X)
+    classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X)
+    return files_loaded, classifications, confidence_scores, valid_embeddings
+
+
+def predict_labels_and_confidence(classifier_model, X):
+    """Predict labels together with a confidence score for the positive class.
+
+    ``confidence_score`` is the probability of the positive class
+    (``classifier_model.classes_[1]``). The label is derived from that score
+    (``score >= 0.5`` -> positive) instead of from ``classifier_model.predict()``
+    so the two can never disagree.
+
+    This matters for ``SVC(probability=True)``: its ``predict()`` uses the sign of
+    the raw SVM margin while ``predict_proba()`` uses a separately fitted
+    Platt-scaling model, and near the decision boundary the two disagree, yielding
+    a positive classification with ``confidence_score < 0.5`` (documented
+    scikit-learn behavior). For every other classifier ``predict()`` already
+    equals ``argmax(predict_proba())``, so deriving the label from the score is a
+    no-op.
+    """
     try:
         confidence_scores = [classes_proba[1] for classes_proba in classifier_model.predict_proba(X)]
     except AttributeError:
-        confidence_scores = [1 / (1 + np.exp(-decision_value)) for decision_value in classifier_model.decision_function(X)]
-    return files_loaded, classifications, confidence_scores, valid_embeddings
+        # Models without predict_proba (e.g. LinearSVC): map the signed margin
+        # through a sigmoid. predict() is sign(decision_function) there, so label
+        # and score are already consistent; we derive both the same way anyway.
+        confidence_scores = [1 / (1 + np.exp(-decision_value))
+                             for decision_value in classifier_model.decision_function(X)]
+    negative_label, positive_label = classifier_model.classes_[0], classifier_model.classes_[1]
+    classifications = np.array([positive_label if score >= 0.5 else negative_label
+                                for score in confidence_scores])
+    return classifications, confidence_scores
 
 
 def parse_arguments():
