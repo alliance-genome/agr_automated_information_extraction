@@ -13,6 +13,7 @@ from utils.slack_utils import (
     send_slack_notification,
     format_traceback_html,
     format_skipped_jobs_html,
+    build_entity_run_summary_html,
     DEFAULT_SLACK_CHANNEL_EMAIL,
 )
 
@@ -88,3 +89,21 @@ def test_format_skipped_jobs_html_summarizes_counts_and_reasons():
     assert "mod: WB, topic: ATP:0000005 — 12 job(s) skipped (extraction model not found)" in out
     # missing 'reason' falls back to the default
     assert "mod: ZFIN, topic: ATP:0000006 — 3 job(s) skipped (model not found)" in out
+
+
+def test_build_entity_run_summary_reports_all_three_categories():
+    skipped = [{"mod_abbreviation": "WB", "topic": "ATP:0000005", "jobs": 4,
+                "reason": "extraction model not found"}]
+    out = build_entity_run_summary_html(total_failed=2, total_jobs=10,
+                                        total_md_skipped=3, skipped_jobs=skipped)
+    assert "2 of 10 per-item job(s) failed (fulltext fetch error)" in out
+    assert "3 reference(s) skipped (MD file load error)" in out
+    assert "Skipped 4 job(s)" in out
+
+
+def test_build_entity_run_summary_omits_zero_categories():
+    # A run with only MD-load skips must not claim any failures.
+    out = build_entity_run_summary_html(total_failed=0, total_jobs=10,
+                                        total_md_skipped=5, skipped_jobs=[])
+    assert "failed" not in out
+    assert "5 reference(s) skipped (MD file load error)" in out

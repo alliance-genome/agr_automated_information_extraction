@@ -35,6 +35,22 @@ def format_traceback_html(tb: str) -> str:
     return f"<pre>{html.escape(tb)}</pre>"
 
 
+def build_entity_run_summary_html(total_failed, total_jobs, total_md_skipped, skipped_jobs) -> str:
+    """Build the end-of-run summary body for the entity extraction pipelines.
+
+    Reports fulltext-fetch failures, MD-load skips, and missing-model skips as
+    distinct categories so the alert does not imply total coverage.
+    """
+    message = ""
+    if total_failed:
+        message += (f"<p>{total_failed} of {total_jobs} per-item job(s) failed "
+                    f"(fulltext fetch error).</p>\n")
+    if total_md_skipped:
+        message += f"<p>{total_md_skipped} reference(s) skipped (MD file load error).</p>\n"
+    message += format_skipped_jobs_html(skipped_jobs)
+    return message
+
+
 def format_skipped_jobs_html(skipped) -> str:
     """Build an HTML section listing mod/topic combinations skipped for a missing model.
 
