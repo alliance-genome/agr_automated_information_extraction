@@ -33,6 +33,7 @@ from utils.ateam_utils import get_all_curated_entities
 from utils.md_utils import AllianceMarkdown
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
+from utils.slack_utils import send_slack_notification
 
 
 logger = logging.getLogger(__name__)
@@ -216,6 +217,7 @@ def classify_mode(args: Namespace) -> None:
                     f"Exception: {fp['exception']}<br>"
                     f"Stacktrace: {fp['trace']}<br><br>\n")
         send_report("Antibody string-matching classification failures", msg)
+        send_slack_notification("Antibody string-matching classification failures", msg)
         sys.exit(-1)
 
 
