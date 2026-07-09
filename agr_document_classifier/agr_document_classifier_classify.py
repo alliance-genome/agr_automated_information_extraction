@@ -25,6 +25,7 @@ from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
+from utils.slack_utils import send_slack_notification
 
 
 logger = logging.getLogger(__name__)
@@ -365,6 +366,7 @@ def classify_mode(args: Namespace):
             message += f"Exception: {fp['exception']}<br>\n"
             message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
         send_report(subject, message)
+        send_slack_notification(subject, message)
         exit(-1)
 
 
@@ -404,6 +406,7 @@ def direct_classify_mode(args: Namespace):
         message = f"Direct classification failed for references {reference_curies}<br>"
         message += f"Exception: {str(e)}<br>\nStacktrace:<br>{''.join(formatted_traceback)}"
         send_report("Direct classification failed", message)
+        send_slack_notification("Direct classification failed", message)
         exit(-1)
 
 

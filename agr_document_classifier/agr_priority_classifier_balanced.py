@@ -41,6 +41,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.md_utils import AllianceMarkdown
 from agr_literature_service.lit_processing.utils.report_utils import send_report
+from utils.slack_utils import send_slack_notification
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -409,6 +410,7 @@ def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_mod
                 f"Exception: {fp['exception']}<br>\n"
                 f"Stacktrace: {fp['trace']}<br><br>\n\n")
         send_report(subject, message)
+        send_slack_notification(subject, message)
         sys.exit(-1)
 
 
@@ -808,6 +810,7 @@ def classify_mode(args):
             message += f"Exception: {fp['exception']}<br>\n"
             message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
         send_report(subject, message)
+        send_slack_notification(subject, message)
         exit(-1)
 
 

@@ -2,7 +2,9 @@ import argparse
 import copy
 import logging
 import os
+import socket
 import sys
+import traceback
 from collections import Counter
 
 import dill
@@ -13,6 +15,7 @@ from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, 
     download_md_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
     set_job_failure, set_blue_api_base_url
 from utils.md_utils import AllianceMarkdown
+from utils.slack_utils import send_slack_notification, format_traceback_html
 
 logger = logging.getLogger(__name__)
 
@@ -149,10 +152,11 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"Extraction model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
+            return 0
         else:
             raise
 
+    failed_count = 0
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     entity_extraction_model = dill.load(open(entity_extraction_model_file_path, "rb"))
@@ -188,6 +192,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
                 logger.error(f"Error getting fulltext for {curie}: {str(e)}. Skipping.")
                 set_job_started(job)
                 set_job_failure(job)
+                failed_count += 1
+                continue
             try:
                 abstract = md_obj.get_abstract()
             except Exception as e:
@@ -229,6 +235,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
             logger.info("Stopping Extraction due to time limit (stop file exists)")
             os.remove('/data/agr_entity_extraction/stop_extraction')
             break
+    return failed_count
 
 
 def extract_all_entities(nlp_pipeline, fulltext, entity_extraction_model, title, abstract):
@@ -278,10 +285,26 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
-    mod_topic_jobs = load_all_jobs("_extraction_job", args=args)
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
-        process_entity_extraction_jobs(mod_id, topic, jobs)
+    env_label = "STAGE" if args.stage else "PRODUCTION"
+    host = socket.gethostname()
+    try:
+        mod_topic_jobs = load_all_jobs("_extraction_job", args=args)
+        total_jobs = sum(len(jobs) for jobs in mod_topic_jobs.values())
+        total_failed = 0
+        for (mod_id, topic), jobs in mod_topic_jobs.items():
+            total_failed += process_entity_extraction_jobs(mod_id, topic, jobs)
+    except Exception:
+        send_slack_notification(
+            f":x: Entity extraction job CRASHED on {host} ({env_label})",
+            format_traceback_html(traceback.format_exc())
+        )
+        raise
     logger.info("Finished processing all entity extraction jobs.")
+    if total_failed:
+        send_slack_notification(
+            f":warning: Entity extraction finished with failures on {host} ({env_label})",
+            f"{total_failed} of {total_jobs} per-item job(s) failed."
+        )
 
 
 if __name__ == '__main__':
