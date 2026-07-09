@@ -41,7 +41,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.md_utils import AllianceMarkdown
 from agr_literature_service.lit_processing.utils.report_utils import send_report
-from utils.slack_utils import send_slack_notification
+from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
 
 nltk.download('stopwords')
 nltk.download('punkt')
@@ -385,10 +385,13 @@ def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_mod
 
     embedding_model = load_embedding_model(model_path=embedding_model_path)
     failed_processes = []
+    skipped_jobs = []
     for (mod_id, topic_id), jobs in mod_topic_jobs.items():
         try:
-            process_priority_classification_jobs(
+            skip = process_priority_classification_jobs(
                 mod_id, topic_id, jobs, embedding_model)
+            if skip:
+                skipped_jobs.append(skip)
         except Exception as e:
             logger.error("Error processing priority jobs for '%s', mod %s.",
                          topic_id, mod_id)
@@ -401,17 +404,26 @@ def classify_need_prioritization_papers(mod_abbr: str, topic: str, embedding_mod
                     f"{line}<br>" for line in formatted_traceback)
             })
 
-    if failed_processes:
-        subject = "Failed processing of priority classification jobs"
-        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
-        for fp in failed_processes:
-            message += (
-                f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
-                f"Exception: {fp['exception']}<br>\n"
-                f"Stacktrace: {fp['trace']}<br><br>\n\n")
+    if failed_processes or skipped_jobs:
+        if failed_processes and skipped_jobs:
+            subject = "Failed and skipped priority classification jobs"
+        elif skipped_jobs:
+            subject = "Skipped priority classification jobs (missing model)"
+        else:
+            subject = "Failed processing of priority classification jobs"
+        message = ""
+        if failed_processes:
+            message += "<h>The following jobs failed to process:</h><br><br>\n\n"
+            for fp in failed_processes:
+                message += (
+                    f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
+                    f"Exception: {fp['exception']}<br>\n"
+                    f"Stacktrace: {fp['trace']}<br><br>\n\n")
+        message += format_skipped_jobs_html(skipped_jobs)
         send_report(subject, message)
         send_slack_notification(subject, message)
-        sys.exit(-1)
+        if failed_processes:
+            sys.exit(-1)
 
 
 def process_priority_classification_jobs(mod_id, topic, jobs, embedding_model):
@@ -433,7 +445,8 @@ def process_priority_classification_jobs(mod_id, topic, jobs, embedding_model):
             logger.warning(
                 "Priority classifier model not found for mod: %s, "
                 "topic: %s. Skipping.", mod_abbr, topic)
-            return
+            return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
+                    "reason": "priority classifier model not found"}
         raise
 
     classifier_model = joblib.load(classifier_model_path)
@@ -618,7 +631,8 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"Priority classifier model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
+            return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
+                    "reason": "priority classifier model not found"}
         raise
     try:
         # Get model meta data too
@@ -628,7 +642,8 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
+            return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
+                    "reason": "ml_model data not found"}
         raise
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
@@ -788,9 +803,12 @@ def classify_mode(args):
     mod_topic_jobs = load_all_jobs("classification_job")
     embedding_model = load_embedding_model(args.embedding_model_path)
     failed_processes = []
+    skipped_jobs = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            process_classification_jobs(mod_id, topic, jobs, embedding_model)
+            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model)
+            if skip:
+                skipped_jobs.append(skip)
         except Exception as e:
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
             failed = {'topic': topic,
@@ -802,16 +820,25 @@ def classify_mode(args):
                 failed['trace'] += f"{line}<br>"
             failed_processes.append(failed)
 
-    if failed_processes:
-        subject = "Failed processing of classification jobs"
-        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
-        for fp in failed_processes:
-            message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
-            message += f"Exception: {fp['exception']}<br>\n"
-            message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
+    if failed_processes or skipped_jobs:
+        if failed_processes and skipped_jobs:
+            subject = "Failed and skipped classification jobs"
+        elif skipped_jobs:
+            subject = "Skipped classification jobs (missing model)"
+        else:
+            subject = "Failed processing of classification jobs"
+        message = ""
+        if failed_processes:
+            message += "<h>The following jobs failed to process:</h><br><br>\n\n"
+            for fp in failed_processes:
+                message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
+                message += f"Exception: {fp['exception']}<br>\n"
+                message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
+        message += format_skipped_jobs_html(skipped_jobs)
         send_report(subject, message)
         send_slack_notification(subject, message)
-        exit(-1)
+        if failed_processes:
+            exit(-1)
 
 
 def main():

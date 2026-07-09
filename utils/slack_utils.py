@@ -33,3 +33,21 @@ def send_slack_notification(subject: str, message: str) -> bool:
 def format_traceback_html(tb: str) -> str:
     """Wrap a traceback string as HTML-safe <pre> for the email body."""
     return f"<pre>{html.escape(tb)}</pre>"
+
+
+def format_skipped_jobs_html(skipped) -> str:
+    """Build an HTML section listing mod/topic combinations skipped for a missing model.
+
+    ``skipped`` is a list of dicts with keys 'mod_abbreviation', 'topic', 'jobs'
+    (number of jobs affected) and an optional 'reason'. Returns "" when empty.
+    """
+    if not skipped:
+        return ""
+    total = sum(entry.get("jobs", 0) for entry in skipped)
+    parts = [f"<p>Skipped {total} job(s) across {len(skipped)} mod/topic "
+             f"combination(s) with a missing model:</p>\n"]
+    for entry in skipped:
+        reason = entry.get("reason", "model not found")
+        parts.append(f"mod: {entry['mod_abbreviation']}, topic: {entry['topic']} — "
+                     f"{entry['jobs']} job(s) skipped ({reason})<br>\n")
+    return "".join(parts)

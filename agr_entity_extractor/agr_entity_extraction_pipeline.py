@@ -15,7 +15,7 @@ from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, 
     download_md_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
     set_job_failure, set_blue_api_base_url
 from utils.md_utils import AllianceMarkdown
-from utils.slack_utils import send_slack_notification, format_traceback_html
+from utils.slack_utils import send_slack_notification, format_traceback_html, format_skipped_jobs_html
 
 logger = logging.getLogger(__name__)
 
@@ -152,7 +152,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"Extraction model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return 0
+            return {"failed": 0, "skipped": [{"mod_abbreviation": mod_abbr, "topic": topic,
+                                              "jobs": len(jobs), "reason": "extraction model not found"}]}
         else:
             raise
 
@@ -235,7 +236,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs):  # noqa C901
             logger.info("Stopping Extraction due to time limit (stop file exists)")
             os.remove('/data/agr_entity_extraction/stop_extraction')
             break
-    return failed_count
+    return {"failed": failed_count, "skipped": []}
 
 
 def extract_all_entities(nlp_pipeline, fulltext, entity_extraction_model, title, abstract):
@@ -291,8 +292,11 @@ def main():
         mod_topic_jobs = load_all_jobs("_extraction_job", args=args)
         total_jobs = sum(len(jobs) for jobs in mod_topic_jobs.values())
         total_failed = 0
+        skipped_jobs = []
         for (mod_id, topic), jobs in mod_topic_jobs.items():
-            total_failed += process_entity_extraction_jobs(mod_id, topic, jobs)
+            result = process_entity_extraction_jobs(mod_id, topic, jobs)
+            total_failed += result["failed"]
+            skipped_jobs.extend(result["skipped"])
     except Exception:
         send_slack_notification(
             f":x: Entity extraction job CRASHED on {host} ({env_label})",
@@ -300,10 +304,14 @@ def main():
         )
         raise
     logger.info("Finished processing all entity extraction jobs.")
-    if total_failed:
+    if total_failed or skipped_jobs:
+        message = ""
+        if total_failed:
+            message += f"<p>{total_failed} of {total_jobs} per-item job(s) failed.</p>\n"
+        message += format_skipped_jobs_html(skipped_jobs)
         send_slack_notification(
-            f":warning: Entity extraction finished with failures on {host} ({env_label})",
-            f"{total_failed} of {total_jobs} per-item job(s) failed."
+            f":warning: Entity extraction finished with issues on {host} ({env_label})",
+            message
         )
 
 

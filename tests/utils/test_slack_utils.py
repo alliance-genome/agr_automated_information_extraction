@@ -12,6 +12,7 @@ from utils import slack_utils
 from utils.slack_utils import (
     send_slack_notification,
     format_traceback_html,
+    format_skipped_jobs_html,
     DEFAULT_SLACK_CHANNEL_EMAIL,
 )
 
@@ -70,3 +71,20 @@ def test_format_traceback_html_escapes_and_wraps():
 def test_slack_utils_module_has_no_requests_dependency():
     # Delivery is via email (send_report), not an HTTP webhook.
     assert not hasattr(slack_utils, "requests")
+
+
+def test_format_skipped_jobs_html_empty_returns_blank():
+    assert format_skipped_jobs_html([]) == ""
+
+
+def test_format_skipped_jobs_html_summarizes_counts_and_reasons():
+    skipped = [
+        {"mod_abbreviation": "WB", "topic": "ATP:0000005", "jobs": 12,
+         "reason": "extraction model not found"},
+        {"mod_abbreviation": "ZFIN", "topic": "ATP:0000006", "jobs": 3},
+    ]
+    out = format_skipped_jobs_html(skipped)
+    assert "Skipped 15 job(s) across 2 mod/topic" in out
+    assert "mod: WB, topic: ATP:0000005 — 12 job(s) skipped (extraction model not found)" in out
+    # missing 'reason' falls back to the default
+    assert "mod: ZFIN, topic: ATP:0000006 — 3 job(s) skipped (model not found)" in out

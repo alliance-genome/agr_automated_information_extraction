@@ -45,7 +45,7 @@ from utils.abc_utils import (
 )
 from utils.ateam_utils import get_all_curated_entities
 from utils.md_utils import AllianceMarkdown
-from utils.slack_utils import send_slack_notification, format_traceback_html
+from utils.slack_utils import send_slack_notification, format_traceback_html, format_skipped_jobs_html
 
 from utils.entity_extraction_utils import (
     prime_model_entities as prime_model_entities_shared,
@@ -346,7 +346,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning("Model not found for mod=%s, topic=%s. Skipping.", mod_abbr, topic)
-            return 0
+            return {"failed": 0, "skipped": [{"mod_abbreviation": mod_abbr, "topic": topic,
+                                              "jobs": len(jobs), "reason": "extraction model not found"}]}
         raise
 
     model = get_model(mod_abbr, topic, model_fp)
@@ -442,7 +443,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
 
             logger.info("%s => %s", curie, all_entities)
         logger.info("Finished processing combined MD directory.")
-        return 0
+        return {"failed": 0, "skipped": []}
 
     # ---------------- job-based processing ---------------- #
     failed_count = 0
@@ -587,7 +588,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             logger.info("%s = %s", curie, all_entities)
 
         logger.info("Finished processing batch of %d jobs.", len(job_batch))
-    return failed_count
+    return {"failed": failed_count, "skipped": []}
 
 
 # --------------------------------------------------------------------- #
@@ -681,9 +682,10 @@ def main():
     host = socket.gethostname()
     total_jobs = sum(len(jobs) for jobs in mod_topic_jobs.values())
     total_failed = 0
+    skipped_jobs = []
     try:
         for (mod_id, topic), jobs in mod_topic_jobs.items():
-            total_failed += process_entity_extraction_jobs(
+            result = process_entity_extraction_jobs(
                 mod_id,
                 topic,
                 jobs,
@@ -694,6 +696,8 @@ def main():
                 log_every=args.log_every,
                 combined_md_dir=args.combined_md_dir,
             )
+            total_failed += result["failed"]
+            skipped_jobs.extend(result["skipped"])
     except Exception:
         send_slack_notification(
             f":x: Entity extraction job CRASHED on {host} (PRODUCTION)",
@@ -705,10 +709,14 @@ def main():
             test_fh.close()
 
     logger.info("Finished processing all entity extraction jobs.")
-    if total_failed and not test_mode:
+    if (total_failed or skipped_jobs) and not test_mode:
+        message = ""
+        if total_failed:
+            message += f"<p>{total_failed} of {total_jobs} per-item job(s) failed.</p>\n"
+        message += format_skipped_jobs_html(skipped_jobs)
         send_slack_notification(
-            f":warning: Entity extraction finished with failures on {host} (PRODUCTION)",
-            f"{total_failed} of {total_jobs} per-item job(s) failed."
+            f":warning: Entity extraction finished with issues on {host} (PRODUCTION)",
+            message
         )
 
 

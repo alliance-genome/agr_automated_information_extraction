@@ -25,7 +25,7 @@ from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
-from utils.slack_utils import send_slack_notification
+from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
 
 
 logger = logging.getLogger(__name__)
@@ -177,7 +177,8 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 logger.warning(f"Classification model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-                return
+                return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
+                        "reason": "classification model not found"}
             else:
                 raise
     try:
@@ -186,7 +187,8 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
     except requests.exceptions.HTTPError as e:
         if e.response.status_code == 404:
             logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return
+            return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
+                    "reason": "ml_model data not found"}
         else:
             raise
 
@@ -335,14 +337,17 @@ def classify_mode(args: Namespace):
     mod_topic_jobs = load_all_jobs("classification_job", args)
     embedding_model = load_embedding_model(args.embedding_model_path)
     failed_processes = []
+    skipped_jobs = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            process_classification_jobs(mod_id, topic, jobs, embedding_model,
-                                        use_bow_features=args.use_bow_features,
-                                        use_max_pooling=args.use_max_pooling,
-                                        use_lsh_features=args.use_lsh_features,
-                                        include_keywords=args.include_keywords,
-                                        include_metadata=args.include_metadata)
+            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model,
+                                               use_bow_features=args.use_bow_features,
+                                               use_max_pooling=args.use_max_pooling,
+                                               use_lsh_features=args.use_lsh_features,
+                                               include_keywords=args.include_keywords,
+                                               include_metadata=args.include_metadata)
+            if skip:
+                skipped_jobs.append(skip)
         except Exception as e:
             logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}: {e}")
             failed = {'topic': topic,
@@ -358,16 +363,25 @@ def classify_mode(args: Namespace):
             os.remove('/data/agr_document_classifier/stop_classifier')
             break
 
-    if failed_processes:
-        subject = "Failed processing of classification jobs"
-        message = "<h>The following jobs failed to process:</h><br><br>\n\n"
-        for fp in failed_processes:
-            message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
-            message += f"Exception: {fp['exception']}<br>\n"
-            message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
+    if failed_processes or skipped_jobs:
+        if failed_processes and skipped_jobs:
+            subject = "Failed and skipped classification jobs"
+        elif skipped_jobs:
+            subject = "Skipped classification jobs (missing model)"
+        else:
+            subject = "Failed processing of classification jobs"
+        message = ""
+        if failed_processes:
+            message += "<h>The following jobs failed to process:</h><br><br>\n\n"
+            for fp in failed_processes:
+                message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
+                message += f"Exception: {fp['exception']}<br>\n"
+                message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
+        message += format_skipped_jobs_html(skipped_jobs)
         send_report(subject, message)
         send_slack_notification(subject, message)
-        exit(-1)
+        if failed_processes:
+            exit(-1)
 
 
 def direct_classify_mode(args: Namespace):
