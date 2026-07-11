@@ -673,6 +673,156 @@ GENE_TARGET_ENTITIES = {
 }
 
 
+# --------------------------------------------------------------------- #
+# ZFIN threshold-tuning gold sets                                       #
+# --------------------------------------------------------------------- #
+# Curated gene/allele names per ZFIN test paper (keyed by AGRKB curie),
+# taken from ../abc/ZFIN/ZFIN_test_papers.tsv. Used by the TF-IDF
+# threshold-tuning sweep (find_best_tfidf_threshold) to pick the cutoff
+# that best reproduces the curated lists. Gene names come from the
+# "ZFIN Gene list" columns; allele names come from the "Alleles" column
+# (constructs and sequence-targeting reagents are excluded). Papers with
+# an empty gene list are retained so the sweep also scores true-negative
+# recall (extracting nothing when nothing is curated).
+#
+# The gene lists were realigned by content-matching: two blocks were shifted
+# by one row in the source TSV (the pericyte paper's row carried the Teleost
+# Hox paper's genes, and one row carried the preceding paper's axin/vgll
+# genes). Each gene block was reassigned to the paper whose fulltext actually
+# contains it. The realignment was independently confirmed by the reagent
+# columns (e.g. the Hox paper's STR column lists CRISPRs targeting exactly those
+# hox genes). One source paper (240430-3, brain pericytes) had no curated genes
+# left after removing the misplaced block, so its list was reconstructed from the
+# genes it studies in text (see note at that entry); the other source paper
+# (241027-7) is legitimately empty. Allele lists were correctly aligned in both
+# the TSV and xlsx and were left unchanged.
+
+ZFIN_GENE_TARGET_ENTITIES = {
+    "AGRKB:101000001059512": ['gnas'],
+    "AGRKB:101000000985857": ['elavl3', 'wdr44'],
+    "AGRKB:101000000994272": [
+        'apoc1', 'cd74a', 'fn1a', 'fn1b', 'gfap', 'grin1a', 'grin1b', 'kcne4', 'kdrl', 'mbpa', 'mpz', 'myh11a',
+        'nrgna', 'pdgfrb', 's100b', 'sv2a', 'tagln2'
+    ],
+    "AGRKB:101000000990586": ['snf8', 'tp53'],
+    "AGRKB:101000001042831": ['arhgef11', 'ctnnd1', 'esrp1', 'esrp2', 'krt4', 'sox10'],
+    "AGRKB:101000000995620": ['vangl2'],
+    "AGRKB:101000000994890": ['dcc', 'ids'],
+    "AGRKB:101000001042833": ['chd2'],
+    "AGRKB:101000001036678": ['sdhb'],
+    "AGRKB:101000001030094": [],
+    "AGRKB:101000001031999": ['bcl2a', 'cdk9', 'lyz', 'mcl1a', 'mpeg1.1', 'mpx', 'myb', 'spi1b', 'tp53'],
+    "AGRKB:101000001033541": ['atp1b3b', 'colec10'],
+    "AGRKB:101000001030142": [
+        'atp1a1a.1', 'atp1a1a.2', 'atp1a1a.4', 'atp1a1a.5', 'b2m', 'ca2', 'gnav1', 'rpl37', 'rpl8',
+        'slc12a10.2', 'slc12a3', 'slc26a4', 'slc8a1b', 'slc9a3.2', 'trpv6'
+    ],
+    "AGRKB:101000001032484": [
+        'hoxa10b', 'hoxa9b', 'hoxc10a', 'hoxc11a', 'hoxc11b', 'hoxc12a', 'hoxc12b', 'hoxc13a', 'hoxc13b',
+        'hoxc1a', 'hoxc3a', 'hoxc4a', 'hoxc5a', 'hoxc6a', 'hoxc6b', 'hoxc8a', 'hoxc9a', 'hoxd10a', 'hoxd9a'
+    ],
+    # 240430-3 (brain pericytes): the curator's gene column was overwritten by the
+    # misaligned hox block, so this list is reconstructed from the genes the paper
+    # demonstrably studies in its own text (nkx3.1 is the title gene). Text-derived,
+    # pending curator confirmation.
+    "AGRKB:101000000995938": ['cxcl12b', 'nkx3.1', 'pdgfrb', 'sox10'],
+    "AGRKB:101000001036677": ['vps16'],
+    "AGRKB:101000001038324": ['gphna', 'gphnb', 'mitfa', 'olig1'],
+    "AGRKB:101000000991134": [
+        'arhgap18', 'axin1', 'axin2', 'ccn1', 'cdh1', 'lef1', 'tbxta', 'vgll4a', 'vgll4b', 'vgll4l'
+    ],
+    "AGRKB:101000001052403": [],
+    "AGRKB:101000000987208": [
+        'dlx2a', 'emx3', 'fgf8a', 'foxg1a', 'nkx2.1', 'nr2f1a', 'nr2f1b', 'nr2f2', 'pax2a', 'pax6a', 'shha',
+        'six3b', 'sp8b', 'vax1', 'vax2'
+    ],
+    "AGRKB:101000001030713": ['alcama', 'egr3', 'has2', 'hey2', 'klf4', 'nr4a2b', 'spp1', 'tnnt2a'],
+    "AGRKB:101000001044081": ['cdon', 'fabp10a', 'lft1', 'lft2', 'myl7', 'sox17', 'sox32', 'spaw'],
+    "AGRKB:101000001056803": [],
+    "AGRKB:101000000995482": [],
+    "AGRKB:101000000991365": ['pkhd1l1.1'],
+    "AGRKB:101000001056531": [],
+    "AGRKB:101000000989786": [],
+    "AGRKB:101000001057345": [],
+    "AGRKB:101000001036672": [],
+    "AGRKB:101000000995089": [],
+    "AGRKB:101000000985307": [],
+    "AGRKB:101000001043514": [],
+    "AGRKB:101000001048262": [],
+    "AGRKB:101000001031253": [],
+    "AGRKB:101000001045366": [],
+    "AGRKB:101000000995816": [],
+    "AGRKB:101000001030976": [
+        'syt10', 'syt11a', 'syt11b', 'syt12', 'syt13', 'syt14a', 'syt14b', 'syt15', 'syt16', 'syt17', 'syt18a',
+        'syt18b', 'syt19', 'syt1a', 'syt1b', 'syt2a', 'syt2b', 'syt3', 'syt4', 'syt5a', 'syt5b', 'syt6a',
+        'syt6b', 'syt7a', 'syt7b', 'syt8', 'syt9a', 'syt9b'
+    ],
+    "AGRKB:101000001031512": ['insl3', 'rxfp2a', 'rxfp2b'],
+    "AGRKB:101000001041554": ['bnip3', 'tmem11'],
+    "AGRKB:101000001045555": ['ankha', 'ankhb', 'lsm12b'],
+    "AGRKB:101000001048267": [
+        'abcb6a', 'cbx7a', 'ctss2.1', 'dao.1', 'fads2', 'gck', 'gsr', 'hbae5', 'hspb9', 'mt2', 'prdx1', 'rrad',
+        'serpine1', 'slc2a11l', 'socs3a', 'socs3b', 'sqor', 'sult1st5', 'timp2b', 'tmprss13a', 'trpv6', 'txnb',
+        'zgc:174917', 'zgc:92590'
+    ],
+    "AGRKB:101000001053411": ['aanat1', 'aanat2', 'asmt', 'tph1a'],
+}
+
+ZFIN_ALLELE_TARGET_ENTITIES = {
+    "AGRKB:101000000985857": ['li1Tg'],
+    "AGRKB:101000000994272": ['ya14Tg'],
+    "AGRKB:101000001042831": ['fb401', 'fb402'],
+    "AGRKB:101000000994890": ['ia200', 'mpn101Tg', 's1992tTg'],
+    "AGRKB:101000001036678": ['rmc200'],
+    "AGRKB:101000001031999": ['uwm4Tg', 'uwm12Tg', 'zf149Tg'],
+    "AGRKB:101000001033541": ['md3Tg', 's883Tg', 'sqet31Et', 'sqet33mi59BEt', 'twu34Tg'],
+    "AGRKB:101000001030142": ['uk10'],
+    "AGRKB:101000001032484": [
+        'sud115', 'sud124a', 'sud124b', 'sud124c', 'sud124d', 'sud128', 'sud133a', 'sud133b', 'sud134a',
+        'sud134b', 'sud135', 'sud140', 'sud141', 'sud145', 'sud146', 'sud159', 'sud160', 'sud161', 'sud162a',
+        'sud162b', 'sud165a', 'sud165b', 'sud166a', 'sud166b'
+    ],
+    "AGRKB:101000000995938": [
+        'c264Tg', 'ca41Tg', 'ca42Tg', 'ca90Tg', 'ca91Tg', 'ca92Tg', 'ca93Tg', 'ca94Tg', 'ca101Tg', 'ca116',
+        'ca504Tg', 'ci5Tg', 'la116Tg'
+    ],
+}
+
+
+# WB is the historical default, so the bare *_TARGET_ENTITIES names remain the
+# WB gold sets. Per-MOD gold sets are selected via get_target_entities().
+_TARGET_ENTITIES_BY_MOD = {
+    "WB": {
+        "gene": GENE_TARGET_ENTITIES,
+        "allele": ALLELE_TARGET_ENTITIES,
+        "strain": STRAIN_TARGET_ENTITIES,
+    },
+    "ZFIN": {
+        "gene": ZFIN_GENE_TARGET_ENTITIES,
+        "allele": ZFIN_ALLELE_TARGET_ENTITIES,
+    },
+}
+
+
+def get_target_entities(mod_abbreviation: str, topic: str) -> Dict[str, List[str]]:
+    """Return the threshold-tuning gold set for a (MOD, topic).
+
+    Falls back to the WB gold sets when a MOD has no curated set for the
+    requested entity type, preserving the pre-existing behaviour for callers
+    that only ever tuned WB.
+    """
+    if topic == "ATP:0000027":
+        entity_type = "strain"
+    elif is_allele_topic(topic):
+        entity_type = "allele"
+    else:
+        entity_type = "gene"
+    mod_sets = _TARGET_ENTITIES_BY_MOD.get((mod_abbreviation or "").upper(), {})
+    default = {"gene": GENE_TARGET_ENTITIES, "allele": ALLELE_TARGET_ENTITIES,
+               "strain": STRAIN_TARGET_ENTITIES}[entity_type]
+    return mod_sets.get(entity_type, default)
+
+
 def _entity_cache_path(mod_abbr: str, entity_type: str) -> Path:
     return ENTITY_CACHE_DIR / f"{mod_abbr}_{entity_type}.json"
 

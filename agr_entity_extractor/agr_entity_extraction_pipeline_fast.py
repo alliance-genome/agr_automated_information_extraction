@@ -64,9 +64,7 @@ from utils.entity_extraction_utils import (
     ALLELE_NAME_PATTERN,
     GENERIC_NAME_PATTERN,
     STRAIN_NAME_PATTERN,
-    ALLELE_TARGET_ENTITIES,
-    GENE_TARGET_ENTITIES,
-    STRAIN_TARGET_ENTITIES
+    get_target_entities
 )
 
 # Silence HF info/warnings entirely
@@ -669,12 +667,8 @@ def main():
 
     if args.tune_threshold:
         for (mod_id, topic), jobs in mod_topic_jobs.items():
-            if topic == 'ATP:0000027':
-                TARGET = STRAIN_TARGET_ENTITIES
-            elif is_allele_topic(topic):
-                TARGET = ALLELE_TARGET_ENTITIES
-            else:
-                TARGET = GENE_TARGET_ENTITIES
+            mod_abbr = mod_id_to_abbr(mod_id)
+            TARGET = get_target_entities(mod_abbr, topic)
             best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET)
             logger.info("Best TF-IDF threshold for %s/%s: %s", mod_id, topic, best)
         logger.info("Threshold tuning complete.")
