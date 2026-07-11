@@ -1,4 +1,3 @@
-import re
 from collections import defaultdict
 from typing import Dict
 
@@ -26,9 +25,14 @@ def convert_tokens_to_list_of_words(tokens):
 
 
 class CustomTokenizer(PreTrainedTokenizer):
+    # ASCII alphanumerics only, matching the old regex boundaries [A-Za-z0-9].
+    _ALNUM = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
     def __init__(self, tokens, match_uppercase_entities: bool = False, **kwargs):
-        # Build your regex pattern (similar to before)
+        # Curated codes are matched via a prefix trie (see add_tokens); pattern is
+        # retained as None for backward compatibility with callers that probed it.
         self.pattern = None
+        self._trie: Dict = {}
         self.tokens = tokens
         self.match_uppercase_entities = match_uppercase_entities
         self.unk_token = "[UNK]"
@@ -52,27 +56,64 @@ class CustomTokenizer(PreTrainedTokenizer):
         # Some parts of the pipeline might look for `unknown_token_id`
         self.unknown_token_id = self.unk_token_id
 
+    @classmethod
+    def _build_trie(cls, tokens, match_uppercase):
+        # Prefix trie of the curated codes. Terminal nodes are marked with the
+        # None key (text characters are never None, so there is no collision).
+        root: Dict = {}
+        for tok in tokens:
+            key = tok.lower() if match_uppercase else tok
+            node = root
+            for ch in key:
+                node = node.setdefault(ch, {})
+            node[None] = True
+        return root
+
     def add_tokens(self, new_tokens):
         # keep your master list up to date
         self.tokens = list({*self.tokens, *new_tokens})
 
-        # 1) sort longest first so 'PD1074' wins over 'PD4482'
-        to_match = sorted(self.tokens, key=len, reverse=True)
-        if self.match_uppercase_entities:
-            to_match += [t.upper() for t in to_match]
+        # Build a prefix trie for linear-time matching. This replaces a single
+        # giant regex alternation over every curated code, which is O(text x
+        # #tokens) per document and does not scale to tens of thousands of
+        # entities (e.g. ZFIN gene lists). The trie walk below reproduces the
+        # exact same matches: each curated code, bounded by non-alphanumerics on
+        # both sides, longest-match-first and non-overlapping.
+        self._trie = self._build_trie(self.tokens, self.match_uppercase_entities)
 
-        # 2) build one regex that ONLY matches those exact codes, bounded by non-alphanumerics
-        esc = [re.escape(tok) for tok in to_match]
-        pat = r'(?<![A-Za-z0-9])(' + '|'.join(esc) + r')(?![A-Za-z0-9])'
-        flags = re.IGNORECASE if self.match_uppercase_entities else 0
-        self.pattern = re.compile(pat, flags)
-
-        # 3) rebuild vocab for convert_ids↔tokens
+        # rebuild vocab for convert_ids<->tokens
         self.update_vocab(self.tokens)
 
     def _tokenize(self, text, *args, **kwargs):
-        # only ever emit the exact curated codes
-        return [m.group(1) for m in self.pattern.finditer(text)]
+        # Emit the exact curated codes found in text, matching the previous
+        # regex semantics: bounded by non-alphanumerics, longest-match,
+        # non-overlapping, left-to-right (case-insensitive when match_uppercase).
+        root = self._trie
+        alnum = self._ALNUM
+        cmp = text.lower() if self.match_uppercase_entities else text
+        n = len(text)
+        out = []
+        i = 0
+        while i < n:
+            # a match may only start where the preceding char is not alphanumeric
+            if i > 0 and text[i - 1] in alnum:
+                i += 1
+                continue
+            node = root
+            j = i
+            best_end = -1
+            while j < n and cmp[j] in node:
+                node = node[cmp[j]]
+                j += 1
+                # terminal here and end-boundary satisfied -> candidate (keep longest)
+                if None in node and (j >= n or text[j] not in alnum):
+                    best_end = j
+            if best_end != -1:
+                out.append(text[i:best_end])
+                i = best_end
+            else:
+                i += 1
+        return out
 
     def tokenize(self, text, *args, **kwargs):
         # Wrapper for backward compatibility

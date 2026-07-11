@@ -1112,14 +1112,14 @@ def prefilter_text(
 
 def count_curated_mentions(text: str, model: object, *, gold_up=None, allowed=None) -> "Counter[str]":
     """
-    Count occurrences of curated entities in text using model.tokenizer.pattern.
+    Count occurrences of curated entities in text using model.tokenizer.
     If 'allowed' is provided, only count tokens in that (usually small) set.
     Otherwise count any token in 'gold_up' (full curated set).
     """
     if not text:
         return Counter()
-    pat = getattr(model.tokenizer, "pattern", None)
-    if pat is None:
+    tokenizer = getattr(model, "tokenizer", None)
+    if tokenizer is None:
         return Counter()
 
     if gold_up is None:
@@ -1131,8 +1131,9 @@ def count_curated_mentions(text: str, model: object, *, gold_up=None, allowed=No
         # Make membership checks fast
         allowed = set(allowed)
 
-    for m in pat.finditer(text):
-        tok = m.group(1) if m.lastindex else m.group(0)
+    # tokenizer.tokenize yields the same matched codes the old .pattern.finditer
+    # did (word-boundary bounded curated codes), now via the prefix trie.
+    for tok in tokenizer.tokenize(text):
         key = tok.upper()
         if use_allowed:
             if key in allowed:
