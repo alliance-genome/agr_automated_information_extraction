@@ -1177,6 +1177,11 @@ GENE_ALLELE_FALSE_POSITIVE_WORDS = {
     # is a real ZFIN transcription-factor symbol but in prose is almost always
     # the promoter used in methods, and no curated paper listed it as a gene.
     "sp6",
+    # ZFIN gene-symbol / English-word collisions that surface as false
+    # positives in prose. Only symbols NOT curated as a real target anywhere
+    # in the ZFIN test set are listed (removing them costs no recall); ca2 and
+    # mt2 are deliberately excluded because they ARE curated targets elsewhere.
+    "impact", "sv2", "cs", "spina", "pk", "boc", "gapdh", "sacs",
     # author-name collisions explicitly flagged in the ticket
     "zon", "jun", "kim",
 }
