@@ -83,6 +83,16 @@ TOPIC2TYPE = {
     "ATP:0000005": "gene",
 }
 
+# Pandoc preserves gene italics as ``*symbol*`` in the article markdown.  This
+# gives all-letter ZFIN symbols a much stronger signal than an unrestricted
+# body-text dictionary match, which also matches thousands of ordinary words.
+MARKDOWN_ITALIC_SPAN_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
+MARKDOWN_GENE_LIST_ITEM_RE = re.compile(r"[A-Za-z0-9_.\-]+")
+MARKDOWN_REFERENCES_RE = re.compile(
+    r"^#{1,3}\s+(?:references|bibliography|literature cited)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 def topic_to_entity_type(topic: str) -> str:
     return TOPIC2TYPE.get(topic, "gene")
@@ -107,6 +117,59 @@ def prime_model_entities(model, mod_abbr: str, topic: str):
         entity_type=entity_type,
         loader_fn=get_all_curated_entities,
     )
+    # Keep the MOD on the model so MOD-specific precision rules can be applied
+    # after the shared curated-list priming step.
+    model.mod_abbr = mod_abbr
+
+
+def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str]:
+    """Return curated all-letter ZFIN symbols presented as italic gene names.
+
+    A plain full-body dictionary scan has poor precision because many curated
+    symbols are also English/lab words.  Gene typography is a scalable signal:
+    accept a single italic token, or tokens in an italic comma/semicolon list,
+    and always intersect them with the current cached curated list.
+    """
+    if (
+        not fulltext
+        or getattr(model, "mod_abbr", None) != "ZFIN"
+        or getattr(model, "topic", None) != "ATP:0000005"
+    ):
+        return []
+
+    upper_to_original = getattr(model, "upper_to_original_mapping", {}) or {}
+    rescued: set[str] = set()
+    references = MARKDOWN_REFERENCES_RE.search(fulltext)
+    article_body = fulltext[:references.start()] if references else fulltext
+    for span_match in MARKDOWN_ITALIC_SPAN_RE.finditer(article_body):
+        span = span_match.group(1)
+        # Long spans usually come from unmatched markdown asterisks. Colons,
+        # parentheses, and HTML tags identify constructs/genotypes rather than
+        # standalone gene-symbol typography.
+        if len(span) > 200 or re.search(r"[:()<>]", span):
+            continue
+        # A parenthesized italic word such as ``(*top*)`` is normally a figure
+        # orientation/label, not a gene mention.
+        if (
+            span_match.start() > 0
+            and span_match.end() < len(article_body)
+            and article_body[span_match.start() - 1] == "("
+            and article_body[span_match.end()] == ")"
+        ):
+            continue
+        # Accept complete italic symbols and complete comma/semicolon list
+        # items. Do not mine substrings from constructs such as ``*5’del*`` or
+        # partially emphasized symbols such as ``*spi1b*``.
+        for item in re.split(r"[,;]", span):
+            token = item.strip().rstrip(".")
+            if not MARKDOWN_GENE_LIST_ITEM_RE.fullmatch(token):
+                continue
+            curated = upper_to_original.get(token.upper())
+            # ZFIN gene symbols are lower-case. Exact case avoids treating
+            # upper-case human proteins/antibodies as zebrafish genes.
+            if curated == token and curated.isalpha():
+                rescued.add(curated)
+    return sorted(rescued)
 
 
 # --------------------------------------------------------------------- #
@@ -124,7 +187,7 @@ def prefilter_text(fulltext: str, model) -> str:
     )
 
 
-def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model) -> List[str]:
+def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model, raw_markdown: str = "") -> List[str]:
     allele_mode = is_allele_topic(getattr(model, "topic", None))
 
     entities = build_entities_from_results_generic(
@@ -145,6 +208,16 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         # equal a curated allele name exactly.
         case_sensitive=allele_mode,
     )
+
+    # The generic body regex requires a digit for precision.  Recover no-digit
+    # ZFIN genes only when article typography marks them as gene symbols.
+    italic_gene_rescues = rescue_zfin_all_letter_genes_from_markdown(raw_markdown or fulltext, model)
+    if italic_gene_rescues:
+        logger.info(
+            "ZFIN-GENE-RESCUE: adding %d curated italic all-letter genes: %s",
+            len(italic_gene_rescues), ", ".join(italic_gene_rescues),
+        )
+        entities = sorted(set(entities) | set(italic_gene_rescues))
 
     # For allele topic, enforce allele-specific post-processing rules.
     if allele_mode:
@@ -225,6 +298,11 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     count_text = "\n".join(t for t in (title, abstract, fulltext) if t)
     before_gate = len(entities)
     entities = apply_tfidf_count_gate(entities, count_text, model)
+    # Italic-typography rescues are high-confidence: re-add any the tf-idf/count
+    # gate dropped (e.g. single-mention curated genes) so a strong typographic
+    # signal is not overridden by a frequency threshold.
+    if italic_gene_rescues:
+        entities = sorted(set(entities) | set(italic_gene_rescues))
     entities = [e for e in entities if e.lower() not in GENE_ALLELE_FALSE_POSITIVE_WORDS]
     if len(entities) != before_gate:
         logger.info("GATE/STOPWORD: %d -> %d (tfidf_threshold=%s, min_matches=%s)",
@@ -286,14 +364,14 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities, combined_md_
             except Exception as e:
                 logger.warning("Error loading MD for %s: %s. Skipping.", curie, e)
                 continue
-            docs.append((curie, title, abstract, fulltext))
+            docs.append((curie, title, abstract, fulltext, md.raw_md))
 
         for th in thresholds:
             entity_model.tfidf_threshold = th
             total_sim = 0.0
             count = 0
-            for curie, title, abstract, fulltext in docs:
-                entities = build_entities_from_results([], title, abstract, fulltext, entity_model)
+            for curie, title, abstract, fulltext, raw_markdown in docs:
+                entities = build_entities_from_results([], title, abstract, fulltext, entity_model, raw_markdown=raw_markdown)
                 all_low = {e.lower() for e in entities}
                 gold_low = {e.lower() for e in target_entities.get(curie, [])}
                 if all_low or gold_low:
@@ -408,7 +486,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
 
             text_for_ner = prefilter_text(fulltext, model) if prefilter else fulltext
             results = run_ner_batched(ner_pipe, [text_for_ner], ner_batch_size)[0]
-            all_entities = build_entities_from_results(results, title, abstract, fulltext, model)
+            all_entities = build_entities_from_results(results, title, abstract, fulltext, model, raw_markdown=md.raw_md)
 
             if test_mode:
                 test_fh.write(f"{curie}\t{' | '.join(all_entities)}\n")
@@ -535,7 +613,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
 
             text_for_ner = prefilter_text(fulltext, model) if prefilter else fulltext
             texts_for_ner.append(text_for_ner)
-            metas.append((curie, job, title, abstract, fulltext))
+            metas.append((curie, job, title, abstract, fulltext, md.raw_md))
 
         if not texts_for_ner:
             logger.info("No valid MDs in this batch.")
@@ -548,8 +626,8 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         logger.info("NER on %d docs took %.1fs (%.2fs/doc)", len(texts_for_ner), total_time, total_time / len(texts_for_ner))
 
         # ---- Post-process ----
-        for idx, ((curie, job, title, abstract, fulltext), results) in enumerate(zip(metas, results_list), 1):
-            all_entities = build_entities_from_results(results, title, abstract, fulltext, model)
+        for idx, ((curie, job, title, abstract, fulltext, raw_markdown), results) in enumerate(zip(metas, results_list), 1):
+            all_entities = build_entities_from_results(results, title, abstract, fulltext, model, raw_markdown=raw_markdown)
 
             if test_mode:
                 test_fh.write(f"{curie}\t{' | '.join(all_entities)}\n")
