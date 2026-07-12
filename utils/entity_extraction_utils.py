@@ -1173,6 +1173,10 @@ GENE_ALLELE_FALSE_POSITIVE_WORDS = {
     # ("loss-of-function", NAD cofactor, ROC curve). These are real ZFIN symbols
     # but in prose they are almost always the abbreviation, not the gene.
     "lof", "nad", "roc",
+    # SP6 RNA-polymerase promoter (matched via --match-uppercase on "SP6"): sp6
+    # is a real ZFIN transcription-factor symbol but in prose is almost always
+    # the promoter used in methods, and no curated paper listed it as a gene.
+    "sp6",
     # author-name collisions explicitly flagged in the ticket
     "zon", "jun", "kim",
 }
