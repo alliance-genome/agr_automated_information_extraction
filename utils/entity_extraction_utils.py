@@ -1169,6 +1169,10 @@ def names_to_curies(model: object, names: List[str]) -> List[str]:
 GENE_ALLELE_FALSE_POSITIVE_WORDS = {
     "not", "way", "min", "led", "lead", "end", "late", "lot", "rest", "sat",
     "tag", "web", "dry", "prep", "vol", "tank",
+    # methods / stats abbreviations seen colliding with ZFIN gene symbols
+    # ("loss-of-function", NAD cofactor, ROC curve). These are real ZFIN symbols
+    # but in prose they are almost always the abbreviation, not the gene.
+    "lof", "nad", "roc",
     # author-name collisions explicitly flagged in the ticket
     "zon", "jun", "kim",
 }
