@@ -34,6 +34,7 @@ from transformers.utils.logging import set_verbosity_error
 from utils.abc_utils import (
     load_all_jobs,
     get_cached_mod_abbreviation_from_id,
+    get_cached_mod_id_from_abbreviation,
     get_tet_source_id,
     download_abc_model,
     download_md_files_for_references,
@@ -221,7 +222,7 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
 # --------------------------------------------------------------------- #
 # Threshold tuning                                                      #
 # --------------------------------------------------------------------- #
-def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
+def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities, combined_md_dir=None):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
     model_fp = f"/data/agr_document_classifier/biocuration_entity_extraction_{mod_abbr}_{topic.replace(':', '_')}.dpkl"
     try:
@@ -234,8 +235,6 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
             return None
         raise
 
-    batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
-    jobs_to_process = copy.deepcopy(jobs)
     entity_model = dill.load(open(model_fp, "rb"))
     entity_model.alliance_entities_loaded = True
 
@@ -243,28 +242,20 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
     best_similarity = -1.0
     thresholds = [i / 10.0 for i in range(1, 51)]
 
-    while jobs_to_process:
-        batch = jobs_to_process[:batch_size]
-        ref_map = {job["reference_curie"]: job for job in batch}
-        jobs_to_process = jobs_to_process[batch_size:]
-        logger.info("Processing a batch of %d jobs. Remaining: %d", len(batch), len(jobs_to_process))
-
-        out_dir = "/data/agr_entity_extraction/to_extract"
-        os.makedirs(out_dir, exist_ok=True)
-        for f in os.listdir(out_dir):
-            os.remove(os.path.join(out_dir, f))
-        download_md_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
-
+    def score_dir(md_dir):
+        """Sweep thresholds over the MD files already present in md_dir, scoring
+        Jaccard vs the gold set; updates best_threshold/best_similarity."""
+        nonlocal best_threshold, best_similarity
+        md_files = [f for f in os.listdir(md_dir) if f.endswith(".md") and ".supp_" not in f]
         for th in thresholds:
             entity_model.tfidf_threshold = th
             total_sim = 0.0
             count = 0
-
-            for f in os.listdir(out_dir):
+            for f in md_files:
                 curie = f.split(".")[0].replace("_", ":")
                 try:
                     md = AllianceMarkdown()
-                    md.load_from_file(os.path.join(out_dir, f))
+                    md.load_from_file(os.path.join(md_dir, f))
                 except Exception as e:
                     logger.warning("Error loading MD for %s: %s. Skipping.", curie, e)
                     continue
@@ -295,11 +286,32 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
                     count += 1
 
             avg_sim = (total_sim / count) if count else 0.0
-            logger.info("Threshold %.1f: Average Jaccard %.4f", th, avg_sim)
-
+            logger.info("Threshold %.1f: Average Jaccard %.4f (%d papers)", th, avg_sim, count)
             if avg_sim > best_similarity:
                 best_similarity = avg_sim
                 best_threshold = th
+
+    if combined_md_dir:
+        # No jobs needed: tune over the MDs already in the directory (e.g. a curated
+        # test set for a MOD that has no queued extraction jobs, like ZFIN).
+        n = len([f for f in os.listdir(combined_md_dir) if f.endswith(".md")])
+        logger.info("Tuning over combined MD dir %s (%d MD files) - no jobs required.", combined_md_dir, n)
+        score_dir(combined_md_dir)
+    else:
+        batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
+        jobs_to_process = copy.deepcopy(jobs)
+        while jobs_to_process:
+            batch = jobs_to_process[:batch_size]
+            ref_map = {job["reference_curie"]: job for job in batch}
+            jobs_to_process = jobs_to_process[batch_size:]
+            logger.info("Processing a batch of %d jobs. Remaining: %d", len(batch), len(jobs_to_process))
+
+            out_dir = "/data/agr_entity_extraction/to_extract"
+            os.makedirs(out_dir, exist_ok=True)
+            for f in os.listdir(out_dir):
+                os.remove(os.path.join(out_dir, f))
+            download_md_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
+            score_dir(out_dir)
 
     logger.info("Best TFIDF threshold: %.1f (Jaccard %.4f)", best_threshold, best_similarity)
     return best_threshold
@@ -641,10 +653,6 @@ def main():
         stream=sys.stdout
     )
 
-    mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
-
-    wanted_topics = set(args.topic) if args.topic else None
-    wanted_mods = {m.upper() for m in (args.mod or [])} if args.mod else None
     _mod_cache = {}
 
     def mod_id_to_abbr(mod_id):
@@ -652,24 +660,44 @@ def main():
             _mod_cache[mod_id] = get_cached_mod_abbreviation_from_id(mod_id).upper()
         return _mod_cache[mod_id]
 
-    filtered = {}
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
-        if wanted_topics and topic not in wanted_topics:
-            continue
-        if wanted_mods and mod_id_to_abbr(mod_id) not in wanted_mods:
-            continue
-        filtered[(mod_id, topic)] = jobs
-    mod_topic_jobs = filtered
+    if args.combined_md_dir:
+        # Direct mode: process/tune over the MD directory for the requested
+        # MOD(s)/topic(s) without requiring queued extraction jobs. This makes
+        # --combined-md-dir (and --tune-threshold with it) usable for a MOD that
+        # has no extraction jobs yet (e.g. ZFIN). MDs are read from disk, so the
+        # job lists are irrelevant and left empty.
+        mod_topic_jobs = {
+            (get_cached_mod_id_from_abbreviation(m.upper()), topic): []
+            for m in args.mod
+            for topic in args.topic
+        }
+        logger.info("combined-md-dir mode: %s for MOD(s)=%s topic(s)=%s",
+                    args.combined_md_dir, ", ".join(args.mod), ", ".join(args.topic))
+    else:
+        mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
 
-    if not mod_topic_jobs:
-        logger.warning("No jobs matched the provided filters (topic/mod). Exiting.")
-        return
+        wanted_topics = set(args.topic) if args.topic else None
+        wanted_mods = {m.upper() for m in (args.mod or [])} if args.mod else None
+
+        filtered = {}
+        for (mod_id, topic), jobs in mod_topic_jobs.items():
+            if wanted_topics and topic not in wanted_topics:
+                continue
+            if wanted_mods and mod_id_to_abbr(mod_id) not in wanted_mods:
+                continue
+            filtered[(mod_id, topic)] = jobs
+        mod_topic_jobs = filtered
+
+        if not mod_topic_jobs:
+            logger.warning("No jobs matched the provided filters (topic/mod). Exiting.")
+            return
 
     if args.tune_threshold:
         for (mod_id, topic), jobs in mod_topic_jobs.items():
             mod_abbr = mod_id_to_abbr(mod_id)
             TARGET = get_target_entities(mod_abbr, topic)
-            best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET)
+            best = find_best_tfidf_threshold(mod_id, topic, jobs, TARGET,
+                                             combined_md_dir=args.combined_md_dir)
             logger.info("Best TF-IDF threshold for %s/%s: %s", mod_id, topic, best)
         logger.info("Threshold tuning complete.")
         return
