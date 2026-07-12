@@ -1159,6 +1159,78 @@ def names_to_curies(model: object, names: List[str]) -> List[str]:
     return out
 
 
+# Curated gene/allele symbols that are also common English words / generic
+# tokens. When they surface as extractions they are almost always false
+# positives from prose (methods words, author names), not the entity. The
+# tf-idf gate filters most of these by their low corpus idf, but this is an
+# explicit guard for the clearest cases and the collisions called out in the
+# ZFIN ticket (applied regardless of threshold). Kept intentionally small and
+# limited to unambiguous English words so real gene symbols are not dropped.
+GENE_ALLELE_FALSE_POSITIVE_WORDS = {
+    "not", "way", "min", "led", "lead", "end", "late", "lot", "rest", "sat",
+    "tag", "web", "dry", "prep", "vol", "tank",
+    # author-name collisions explicitly flagged in the ticket
+    "zon", "jun", "kim",
+}
+
+
+def apply_tfidf_count_gate(candidates: Iterable[str], count_text: str, model: object) -> List[str]:
+    """Filter candidate entity names by the model's min_matches + tf-idf gate,
+    mirroring AllianceStringMatchingEntityExtractor.custom_entity_extraction.
+
+    - A candidate is kept iff its document count >= model.min_matches AND
+      (model.tfidf_threshold <= 0 OR tf*idf >= model.tfidf_threshold), where
+      tf = count / (number of distinct curated tokens in the document) and idf
+      comes from the model's fitted vectorizer.
+    - No-op (returns candidates unchanged) when tfidf_threshold <= 0 and
+      min_matches <= 1, so ungated models (e.g. WB at 0/1) are unaffected.
+    """
+    cands = list(candidates)
+    min_matches = int(getattr(model, "min_matches", 1) or 1)
+    try:
+        thr = float(getattr(model, "tfidf_threshold", 0) or 0)
+    except (TypeError, ValueError):
+        thr = 0.0
+    if thr <= 0 and min_matches <= 1:
+        return cands
+
+    match_uppercase = bool(getattr(model, "match_uppercase", False))
+    vect = getattr(model, "vectorizer", None)
+    vocab = getattr(vect, "vocabulary_", None) or {}
+    idf = getattr(vect, "idf_", None)
+    ents = getattr(model, "entities_to_extract", None) or set()
+    ent_norm = {e.upper() for e in ents} if match_uppercase else set(ents)
+
+    # Count curated tokens over the document text (mirrors forward()'s
+    # global_token_counts); total = number of distinct curated tokens.
+    counts: "Counter[str]" = Counter()
+    for tok in model.tokenizer.tokenize(count_text or ""):
+        key = tok.upper() if match_uppercase else tok
+        if key in ent_norm:
+            counts[key] += 1
+    total = len(counts)
+
+    kept: List[str] = []
+    for cand in cands:
+        key = cand.upper() if match_uppercase else cand
+        cnt = counts.get(key, 0)
+        idx = None
+        if vocab:
+            if key in vocab:
+                idx = vocab[key]
+            elif match_uppercase and cand.lower() in vocab:
+                idx = vocab[cand.lower()]
+        if idx is not None and idf is not None and total > 0:
+            tfidf_value = (cnt / total) * idf[idx]
+        else:
+            tfidf_value = thr
+        if tfidf_value == 0:
+            tfidf_value = thr
+        if cnt >= min_matches and (thr <= 0 or tfidf_value >= thr):
+            kept.append(cand)
+    return kept
+
+
 def resolve_entity_curie(model: object, ent: str, *, strict: bool = True) -> Optional[str]:
     """
     Map one DISPLAY NAME (possibly wrong-cased) -> CURIE.

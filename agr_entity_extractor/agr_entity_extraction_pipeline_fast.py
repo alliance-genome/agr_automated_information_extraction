@@ -28,7 +28,6 @@ import copy
 from typing import List
 import dill
 import requests
-from transformers import pipeline
 from transformers.utils.logging import set_verbosity_error
 
 from utils.abc_utils import (
@@ -65,7 +64,9 @@ from utils.entity_extraction_utils import (
     ALLELE_NAME_PATTERN,
     GENERIC_NAME_PATTERN,
     STRAIN_NAME_PATTERN,
-    get_target_entities
+    get_target_entities,
+    apply_tfidf_count_gate,
+    GENE_ALLELE_FALSE_POSITIVE_WORDS,
 )
 
 # Silence HF info/warnings entirely
@@ -216,6 +217,20 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
                 len(entities),
             )
 
+    # Apply the model's min_matches + tf-idf gate. This is a no-op when the
+    # model's tfidf_threshold<=0 and min_matches<=1 (e.g. an initial extractor),
+    # and the precision filter once a tuned threshold is set. Then drop curated
+    # symbols that are common English words (author/methods collisions), which
+    # the tf-idf gate misses at threshold 0.
+    count_text = "\n".join(t for t in (title, abstract, fulltext) if t)
+    before_gate = len(entities)
+    entities = apply_tfidf_count_gate(entities, count_text, model)
+    entities = [e for e in entities if e.lower() not in GENE_ALLELE_FALSE_POSITIVE_WORDS]
+    if len(entities) != before_gate:
+        logger.info("GATE/STOPWORD: %d -> %d (tfidf_threshold=%s, min_matches=%s)",
+                    before_gate, len(entities),
+                    getattr(model, "tfidf_threshold", None), getattr(model, "min_matches", None))
+
     return entities
 
 
@@ -237,6 +252,9 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities, combined_md_
 
     entity_model = dill.load(open(model_fp, "rb"))
     entity_model.alliance_entities_loaded = True
+    # get_model() sets this on the normal path; find_best loads the model
+    # directly, so set it here. build_entities_from_results needs model.topic.
+    entity_model.topic = topic
 
     best_threshold = 0.1
     best_similarity = -1.0
@@ -244,41 +262,39 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities, combined_md_
 
     def score_dir(md_dir):
         """Sweep thresholds over the MD files already present in md_dir, scoring
-        Jaccard vs the gold set; updates best_threshold/best_similarity."""
+        Jaccard vs the gold set; updates best_threshold/best_similarity.
+
+        Uses the SAME extraction path as the pipeline (build_entities_from_results,
+        which applies the model's tf-idf/min_matches gate + stopword filter), so
+        the tuned threshold reflects what extraction actually produces."""
         nonlocal best_threshold, best_similarity
         md_files = [f for f in os.listdir(md_dir) if f.endswith(".md") and ".supp_" not in f]
+        # Preload each paper's text once; only the threshold changes per sweep step.
+        docs = []
+        for f in md_files:
+            curie = f.split(".")[0].replace("_", ":")
+            try:
+                md = AllianceMarkdown()
+                md.load_from_file(os.path.join(md_dir, f))
+                title = md.get_title() or ""
+                abstract = md.get_abstract() or ""
+                fulltext = (
+                    md.get_fulltext(include_attributes=True)
+                    if is_allele_topic(topic)
+                    else md.get_fulltext()
+                ) or ""
+            except Exception as e:
+                logger.warning("Error loading MD for %s: %s. Skipping.", curie, e)
+                continue
+            docs.append((curie, title, abstract, fulltext))
+
         for th in thresholds:
             entity_model.tfidf_threshold = th
             total_sim = 0.0
             count = 0
-            for f in md_files:
-                curie = f.split(".")[0].replace("_", ":")
-                try:
-                    md = AllianceMarkdown()
-                    md.load_from_file(os.path.join(md_dir, f))
-                except Exception as e:
-                    logger.warning("Error loading MD for %s: %s. Skipping.", curie, e)
-                    continue
-
-                nlp = pipeline("ner", model=entity_model, tokenizer=entity_model.tokenizer)
-                try:
-                    fulltext = (
-                        md.get_fulltext(include_attributes=True)
-                        if is_allele_topic(entity_model.topic)
-                        else md.get_fulltext()
-                    )
-                except Exception as e:
-                    logger.error("Error getting fulltext for %s: %s. Skipping.", curie, e)
-                    continue
-
-                results = nlp(fulltext)
-                ents_ft = [r['word'] for r in results if r.get('entity') == "ENTITY"]
-                ents_to_extract = set(entity_model.entities_to_extract)
-                ents_title = set(entity_model.tokenizer.tokenize(md.get_title() or "")) & ents_to_extract
-                ents_abs = set(entity_model.tokenizer.tokenize(md.get_abstract() or "")) & ents_to_extract
-                all_ents = set(ents_ft) | ents_title | ents_abs
-
-                all_low = {e.lower() for e in all_ents}
+            for curie, title, abstract, fulltext in docs:
+                entities = build_entities_from_results([], title, abstract, fulltext, entity_model)
+                all_low = {e.lower() for e in entities}
                 gold_low = {e.lower() for e in target_entities.get(curie, [])}
                 if all_low or gold_low:
                     sim = len(all_low & gold_low) / len(all_low | gold_low)
