@@ -172,6 +172,49 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
     return sorted(rescued)
 
 
+# Genotype nomenclature renders the allele as a superscript on its gene, e.g.
+# ``nkx3.1<sup>ca116</sup>`` or ``sdhb<sup>rmc200</sup>``. Once the markup is
+# flattened for NER the tags vanish and the allele fuses onto the gene token
+# (``nkx3.1ca116``, ``sdhbrmc200``), so ALLELE_NAME_PATTERN — which requires a
+# non-alphanumeric left delimiter — can no longer isolate it. Recover the allele
+# straight from the superscript span in the raw markdown instead.
+MARKDOWN_SUPERSCRIPT_SPAN_RE = re.compile(r"<sup>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
+MARKDOWN_EMPHASIS_CHARS_RE = re.compile(r"[*_`\s]+")
+
+
+def rescue_superscript_alleles_from_markdown(raw_markdown: str, model) -> List[str]:
+    """Return curated alleles written as a gene superscript (``gene<sup>allele</sup>``).
+
+    Such alleles fuse onto the preceding gene once the markup is stripped, so the
+    standalone-token scan misses them. Intersecting each superscript's cleaned
+    content with the curated allele list keeps this safe: only an exact curated
+    allele name (case included) can ever be rescued, so citation/zygosity
+    superscripts (``<sup>1,2</sup>``, ``<sup>+/-</sup>``) are ignored.
+    """
+    if not raw_markdown:
+        return []
+    curated = getattr(model, "entities_to_extract", None)
+    if not curated:
+        return []
+    curated_set = {c for c in curated if isinstance(c, str)}
+    if not curated_set:
+        return []
+    rescued: set[str] = set()
+    for span_match in MARKDOWN_SUPERSCRIPT_SPAN_RE.finditer(raw_markdown):
+        # Strip markdown emphasis markers and whitespace the pandoc output leaves
+        # inside the span (e.g. ``*ca116*``) before matching.
+        inner = MARKDOWN_EMPHASIS_CHARS_RE.sub("", span_match.group(1) or "")
+        if not inner:
+            continue
+        # A superscript may hold a bare allele (``ca116``) or one decorated with a
+        # zygosity/reference marker (``ca116/+``); test the whole cleaned token and
+        # each slash-delimited part.
+        for token in [inner, *inner.split("/")]:
+            if token and token in curated_set:
+                rescued.add(token)
+    return sorted(rescued)
+
+
 # --------------------------------------------------------------------- #
 # Prefilter + Build helpers (via shared utils)                          #
 # --------------------------------------------------------------------- #
@@ -218,6 +261,15 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
             len(italic_gene_rescues), ", ".join(italic_gene_rescues),
         )
         entities = sorted(set(entities) | set(italic_gene_rescues))
+
+    # Alleles written as a gene superscript (gene<sup>allele</sup>) fuse onto the
+    # gene when the markup is flattened, so recover them from the raw markdown.
+    # High-confidence like the italic gene rescues: re-added after all filtering.
+    superscript_allele_rescues = (
+        rescue_superscript_alleles_from_markdown(raw_markdown or fulltext, model)
+        if allele_mode
+        else []
+    )
 
     # For allele topic, enforce allele-specific post-processing rules.
     if allele_mode:
@@ -303,6 +355,12 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     # signal is not overridden by a frequency threshold.
     if italic_gene_rescues:
         entities = sorted(set(entities) | set(italic_gene_rescues))
+    if superscript_allele_rescues:
+        logger.info(
+            "ALLELE-SUPERSCRIPT-RESCUE: adding %d curated superscript alleles: %s",
+            len(superscript_allele_rescues), ", ".join(superscript_allele_rescues),
+        )
+        entities = sorted(set(entities) | set(superscript_allele_rescues))
     entities = [e for e in entities if e.lower() not in GENE_ALLELE_FALSE_POSITIVE_WORDS]
     if len(entities) != before_gate:
         logger.info("GATE/STOPWORD: %d -> %d (tfidf_threshold=%s, min_matches=%s)",
