@@ -1,8 +1,14 @@
 import logging
+import re
 
 from agr_curation_api import AGRCurationAPIClient, APIConfig
 
 PAGE_LIMIT = 1000
+
+# ZFIN transgenic/insertion alleles carry a reagent-type suffix (Tg/Et/Gt/Sp) in
+# their curated symbol (e.g. ca41Tg), but authors write the base designation
+# (ca41). Stripping the suffix yields an alias we can string-match in text.
+ZFIN_ALLELE_SUFFIX_RE = re.compile(r'(Tg|Et|Gt|Sp)$')
 
 # will add XB one later
 MOD_TAXON_MAPPING = {
@@ -183,6 +189,18 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
                 all_curated_entity_names.append(entity_name)
             entity_name_curie_mappings[entity_name] = curie
         current_page += 1
+
+    # ZFIN alleles: add the suffix-stripped base form (ca41Tg -> ca41) as an
+    # alias mapping to the same allele curie. Authors write the base designation
+    # while ZFIN appends the reagent-type suffix, so exact-matching the curated
+    # symbol misses these. Only add a base form that is not already a curated
+    # symbol (never overwrite a real allele).
+    if mod_abbreviation == 'ZFIN' and entity_type_str == 'allele':
+        for name in list(all_curated_entity_names):
+            base = ZFIN_ALLELE_SUFFIX_RE.sub('', name)
+            if base and base != name and base not in entity_name_curie_mappings:
+                all_curated_entity_names.append(base)
+                entity_name_curie_mappings[base] = entity_name_curie_mappings[name]
 
     # Deduplicate + stable sort output names
     all_curated_entity_names = sorted(set(all_curated_entity_names), key=str.lower)

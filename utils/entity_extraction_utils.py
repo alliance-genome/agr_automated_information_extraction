@@ -1184,6 +1184,11 @@ GENE_ALLELE_FALSE_POSITIVE_WORDS = {
     "impact", "sv2", "cs", "spina", "pk", "boc", "gapdh", "sacs",
     # author-name collisions explicitly flagged in the ticket
     "zon", "jun", "kim",
+    # genome-build / non-allele collisions surfaced by ZFIN allele base-form
+    # matching: hg19/hg38 are human genome-assembly versions (base forms of ZFIN
+    # hg..Tg alleles) that appear in prose but are never the allele; cm2/cm3
+    # likewise. None are curated genes or alleles in the ZFIN test set.
+    "hg19", "hg38", "cm2", "cm3",
 }
 
 
