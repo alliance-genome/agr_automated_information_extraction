@@ -1558,3 +1558,107 @@ def rescue_short_alleles_from_fulltext(
         rescued.add(candidate)
 
     return rescued
+
+
+# Pandoc preserves gene italics as ``*symbol*`` in the article markdown.  This
+# gives all-letter ZFIN symbols a much stronger signal than an unrestricted
+# body-text dictionary match, which also matches thousands of ordinary words.
+MARKDOWN_ITALIC_SPAN_RE = re.compile(r"(?<!\*)\*([^*\n]+)\*(?!\*)")
+MARKDOWN_GENE_LIST_ITEM_RE = re.compile(r"[A-Za-z0-9_.\-]+")
+MARKDOWN_REFERENCES_RE = re.compile(
+    r"^#{1,3}\s+(?:references|bibliography|literature cited)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str]:
+    """Return curated all-letter ZFIN symbols presented as italic gene names.
+
+    A plain full-body dictionary scan has poor precision because many curated
+    symbols are also English/lab words.  Gene typography is a scalable signal:
+    accept a single italic token, or tokens in an italic comma/semicolon list,
+    and always intersect them with the current cached curated list.
+    """
+    if (
+        not fulltext
+        or getattr(model, "mod_abbr", None) != "ZFIN"
+        or getattr(model, "topic", None) != "ATP:0000005"
+    ):
+        return []
+
+    upper_to_original = getattr(model, "upper_to_original_mapping", {}) or {}
+    rescued: set[str] = set()
+    references = MARKDOWN_REFERENCES_RE.search(fulltext)
+    article_body = fulltext[:references.start()] if references else fulltext
+    for span_match in MARKDOWN_ITALIC_SPAN_RE.finditer(article_body):
+        span = span_match.group(1)
+        # Long spans usually come from unmatched markdown asterisks. Colons,
+        # parentheses, and HTML tags identify constructs/genotypes rather than
+        # standalone gene-symbol typography.
+        if len(span) > 200 or re.search(r"[:()<>]", span):
+            continue
+        # A parenthesized italic word such as ``(*top*)`` is normally a figure
+        # orientation/label, not a gene mention.
+        if (
+            span_match.start() > 0
+            and span_match.end() < len(article_body)
+            and article_body[span_match.start() - 1] == "("
+            and article_body[span_match.end()] == ")"
+        ):
+            continue
+        # Accept complete italic symbols and complete comma/semicolon list
+        # items. Do not mine substrings from constructs such as ``*5’del*`` or
+        # partially emphasized symbols such as ``*spi1b*``.
+        for item in re.split(r"[,;]", span):
+            token = item.strip().rstrip(".")
+            if not MARKDOWN_GENE_LIST_ITEM_RE.fullmatch(token):
+                continue
+            curated = upper_to_original.get(token.upper())
+            # ZFIN gene symbols are lower-case. Exact case avoids treating
+            # upper-case human proteins/antibodies as zebrafish genes.
+            if curated == token and curated.isalpha():
+                rescued.add(curated)
+    return sorted(rescued)
+
+
+# Genotype nomenclature renders the allele as a superscript on its gene, e.g.
+# ``nkx3.1<sup>ca116</sup>`` or ``sdhb<sup>rmc200</sup>``. Once the markup is
+# flattened for NER the tags vanish and the allele fuses onto the gene token
+# (``nkx3.1ca116``, ``sdhbrmc200``), so ALLELE_NAME_PATTERN — which requires a
+# non-alphanumeric left delimiter — can no longer isolate it. Recover the allele
+# straight from the superscript span in the raw markdown instead.
+MARKDOWN_SUPERSCRIPT_SPAN_RE = re.compile(r"<sup>(.*?)</sup>", re.IGNORECASE | re.DOTALL)
+MARKDOWN_EMPHASIS_CHARS_RE = re.compile(r"[*_`\s]+")
+
+
+def rescue_superscript_alleles_from_markdown(raw_markdown: str, model) -> List[str]:
+    """Return curated alleles written as a gene superscript (``gene<sup>allele</sup>``).
+
+    Such alleles fuse onto the preceding gene once the markup is stripped, so the
+    standalone-token scan misses them. Intersecting each superscript's cleaned
+    content with the curated allele list keeps this safe: only an exact curated
+    allele name (case included) can ever be rescued, so citation/zygosity
+    superscripts (``<sup>1,2</sup>``, ``<sup>+/-</sup>``) are ignored.
+    """
+    if not raw_markdown:
+        return []
+    curated = getattr(model, "entities_to_extract", None)
+    if not curated:
+        return []
+    curated_set = {c for c in curated if isinstance(c, str)}
+    if not curated_set:
+        return []
+    rescued: set[str] = set()
+    for span_match in MARKDOWN_SUPERSCRIPT_SPAN_RE.finditer(raw_markdown):
+        # Strip markdown emphasis markers and whitespace the pandoc output leaves
+        # inside the span (e.g. ``*ca116*``) before matching.
+        inner = MARKDOWN_EMPHASIS_CHARS_RE.sub("", span_match.group(1) or "")
+        if not inner:
+            continue
+        # A superscript may hold a bare allele (``ca116``) or one decorated with a
+        # zygosity/reference marker (``ca116/+``); test the whole cleaned token and
+        # each slash-delimited part.
+        for token in [inner, *inner.split("/")]:
+            if token and token in curated_set:
+                rescued.add(token)
+    return sorted(rescued)
