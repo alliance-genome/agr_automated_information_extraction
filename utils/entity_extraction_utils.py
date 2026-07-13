@@ -1166,7 +1166,11 @@ def names_to_curies(model: object, names: List[str]) -> List[str]:
 # explicit guard for the clearest cases and the collisions called out in the
 # ZFIN ticket (applied regardless of threshold). Kept intentionally small and
 # limited to unambiguous English words so real gene symbols are not dropped.
-GENE_ALLELE_FALSE_POSITIVE_WORDS = {
+# ZFIN-ONLY collision stopwords. Every entry below is a collision observed in the
+# ZFIN gene/allele test set; the list is applied only when mod_abbr == "ZFIN"
+# (see agr_entity_extraction_pipeline_fast.py). It must never be applied to other
+# MODs, whose symbol/word collisions differ.
+ZFIN_GENE_ALLELE_FALSE_POSITIVE_WORDS = {
     "not", "way", "min", "led", "lead", "end", "late", "lot", "rest", "sat",
     "tag", "web", "dry", "prep", "vol", "tank",
     # methods / stats abbreviations seen colliding with ZFIN gene symbols

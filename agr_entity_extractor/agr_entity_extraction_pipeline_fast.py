@@ -66,7 +66,7 @@ from utils.entity_extraction_utils import (
     STRAIN_NAME_PATTERN,
     get_target_entities,
     apply_tfidf_count_gate,
-    GENE_ALLELE_FALSE_POSITIVE_WORDS,
+    ZFIN_GENE_ALLELE_FALSE_POSITIVE_WORDS,
 )
 
 # Silence HF info/warnings entirely
@@ -361,7 +361,10 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
             len(superscript_allele_rescues), ", ".join(superscript_allele_rescues),
         )
         entities = sorted(set(entities) | set(superscript_allele_rescues))
-    entities = [e for e in entities if e.lower() not in GENE_ALLELE_FALSE_POSITIVE_WORDS]
+    # The collision stopword list is derived entirely from the ZFIN test set, so it
+    # is applied ONLY for ZFIN. Other MODs (WB, etc.) are left untouched.
+    if getattr(model, "mod_abbr", None) == "ZFIN":
+        entities = [e for e in entities if e.lower() not in ZFIN_GENE_ALLELE_FALSE_POSITIVE_WORDS]
     if len(entities) != before_gate:
         logger.info("GATE/STOPWORD: %d -> %d (tfidf_threshold=%s, min_matches=%s)",
                     before_gate, len(entities),
