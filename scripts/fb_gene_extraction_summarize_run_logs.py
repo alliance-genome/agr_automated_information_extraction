@@ -11,7 +11,7 @@ that dict out of every ``*.log`` file in a directory and writes one row per
 file to a tab-separated file for easy viewing.
 
 Usage:
-    python3 scripts/summarize_run_logs.py <logs_dir> [-o run_summary.tsv]
+    python3 scripts/fb_gene_extraction_summarize_run_logs.py <logs_dir> [-o run_summary.tsv]
 
 Columns: date, filename, then one column per counter (union across all files,
 in first-seen order). Rows are sorted by date, then filename. Files without a
