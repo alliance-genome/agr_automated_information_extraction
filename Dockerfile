@@ -9,6 +9,12 @@ ADD agr_document_classifier/agr_document_classification_pipeline.py .
 ADD agr_document_classifier/agr_document_classifier_classify.py .
 ADD agr_document_classifier/agr_document_classifier_trainer.py .
 ADD agr_document_classifier/agr_priority_classifier_balanced.py .
+# Antibody string-matching classifier (SCRUM-5601): copy as an importable package so
+# `python3 -m agr_document_classifier.agr_antibody_string_matching_classifier` can resolve
+# `from agr_document_classifier.antibody_rules import ...`.
+ADD agr_document_classifier/__init__.py ./agr_document_classifier/__init__.py
+ADD agr_document_classifier/antibody_rules.py ./agr_document_classifier/antibody_rules.py
+ADD agr_document_classifier/agr_antibody_string_matching_classifier.py ./agr_document_classifier/agr_antibody_string_matching_classifier.py
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
