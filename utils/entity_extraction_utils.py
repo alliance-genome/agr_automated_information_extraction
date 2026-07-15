@@ -43,18 +43,42 @@ _ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str], Dict[str, 
 # --------------------------------------------------------------------- #
 # PATTERNS & TOPIC MAPPING                                              #
 # --------------------------------------------------------------------- #
-# Allele extraction topics. Callers may run the allele pipeline under either the
-# generic "allele" topic (ATP:0000006) or the "classical allele" topic
-# (ATP:0000285). Regardless of which one is used to drive extraction, the tag we
-# report to ABC always uses "classical allele" (ATP:0000285) for both the topic
-# and the entity_type, to match the WB allele data import convention.
+# Allele extraction topics. Callers run the allele pipeline under the generic
+# "allele" topic (ATP:0000006) or the "classical allele" topic (ATP:0000285); the
+# curated ZFIN "allele" list actually mixes classical and transgenic alleles. At
+# reporting time each hit is routed to its own ABC topic: transgenic-type alleles
+# (ATP:0000110) vs classical alleles (ATP:0000285). See allele_abc_topic().
 ALLELE_EXTRACTION_TOPICS = frozenset({"ATP:0000006", "ATP:0000285"})
-ABC_ALLELE_TOPIC = "ATP:0000285"
+ABC_ALLELE_TOPIC = "ATP:0000285"           # classical allele (default report topic)
+TRANSGENIC_ALLELE_TOPIC = "ATP:0000110"    # transgenic allele
+
+# ZFIN feature-type suffixes denoting a transgenic-type allele: transgenic
+# insertion (Tg), enhancer trap (Et), gene trap (Gt), protein trap (Pt).
+# Classical point/deletion alleles carry no such suffix. This is a naming PROXY
+# for the authoritative mutation-type field; swap build_transgenic_allele_curies
+# for a curie->mutation-type map once the curation API exposes it.
+ZFIN_TRANSGENIC_SUFFIX_RE = re.compile(r'(Tg|Et|Gt|Pt)$')
 
 
 def is_allele_topic(topic: Optional[str]) -> bool:
     """True if ``topic`` drives allele extraction (generic or classical allele)."""
     return topic in ALLELE_EXTRACTION_TOPICS
+
+
+def build_transgenic_allele_curies(name_to_curie: Dict[str, str]) -> Set[str]:
+    """Return the set of allele curies that are transgenic, inferred from the
+    curated-name suffix.
+
+    A curie is transgenic if ANY curated name mapping to it ends with a ZFIN
+    transgenic-type suffix (Tg/Et/Gt/Pt). Classification is therefore keyed on the
+    curie, not the matched string: a suffix-less base-form alias (``ca41``, which
+    shares a curie with ``ca41Tg``) is classified transgenic via its suffixed
+    sibling. Curies with no suffixed name are treated as classical.
+    """
+    return {
+        curie for name, curie in name_to_curie.items()
+        if isinstance(name, str) and ZFIN_TRANSGENIC_SUFFIX_RE.search(name)
+    }
 
 
 STRAIN_NAME_PATTERN = re.compile(

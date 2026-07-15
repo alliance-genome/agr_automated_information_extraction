@@ -62,6 +62,8 @@ from utils.entity_extraction_utils import (
     filter_false_positive_alleles,
     is_allele_topic,
     ABC_ALLELE_TOPIC,
+    TRANSGENIC_ALLELE_TOPIC,
+    build_transgenic_allele_curies,
     SUSPICIOUS_PREFIX_RE,
     ALLELE_NAME_PATTERN,
     GENERIC_NAME_PATTERN,
@@ -112,6 +114,50 @@ def prime_model_entities(model, mod_abbr: str, topic: str):
     # Keep the MOD on the model so MOD-specific precision rules can be applied
     # after the shared curated-list priming step.
     model.mod_abbr = mod_abbr
+
+    # ZFIN alleles: precompute which curies are transgenic (by curated-name suffix)
+    # so reporting can route each hit to its own ABC topic. Suffix PROXY for the
+    # authoritative mutation-type field; a drop-in swap when the API exposes it.
+    model.transgenic_allele_curies = (
+        build_transgenic_allele_curies(getattr(model, "name_to_curie_mapping", {}) or {})
+        if mod_abbr == "ZFIN" and is_allele_topic(topic) else set()
+    )
+
+
+def allele_abc_topic(model, ent_curie: str) -> str:
+    """Route a resolved allele curie to its ABC topic: transgenic (ATP:0000110)
+    if the curie is in the model's transgenic set, else classical (ATP:0000285)."""
+    if ent_curie in getattr(model, "transgenic_allele_curies", set()):
+        return TRANSGENIC_ALLELE_TOPIC
+    return ABC_ALLELE_TOPIC
+
+
+def write_test_output(test_fh, curie: str, all_entities: List[str], model, topic: str) -> None:
+    """Write the per-paper test-output row(s).
+
+    For allele topics, split the extracted alleles by type and emit TWO tab-
+    separated lines - ``<curie>\tclassical\t...`` and ``<curie>\ttransgenic\t...``
+    - classifying each by its resolved curie (same rule as ABC reporting). Other
+    topics emit a single ``<curie>\t...`` line unchanged.
+    """
+    if is_allele_topic(topic):
+        transgenic_curies = getattr(model, "transgenic_allele_curies", set())
+        classical: List[str] = []
+        transgenic: List[str] = []
+        for ent in all_entities:
+            try:
+                ent_curie = resolve_entity_curie(model, ent, strict=True)
+            except KeyError:
+                ent_curie = None
+            if ent_curie and ent_curie in transgenic_curies:
+                transgenic.append(ent)
+            else:
+                classical.append(ent)
+        test_fh.write(f"{curie}\tclassical\t{' | '.join(classical)}\n")
+        test_fh.write(f"{curie}\ttransgenic\t{' | '.join(transgenic)}\n")
+    else:
+        test_fh.write(f"{curie}\t{' | '.join(all_entities)}\n")
+    test_fh.flush()
 
 
 # --------------------------------------------------------------------- #
@@ -449,8 +495,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             all_entities = build_entities_from_results(results, title, abstract, fulltext, model, raw_markdown=md.raw_md)
 
             if test_mode:
-                test_fh.write(f"{curie}\t{' | '.join(all_entities)}\n")
-                test_fh.flush()
+                write_test_output(test_fh, curie, all_entities, model, topic)
             else:
                 if not all_entities:
                     send_entity_tag_to_abc(
@@ -495,11 +540,15 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             entity_species = getattr(model, "curie_to_taxon_mapping", {}).get(ent_curie, species)
                         else:
                             entity_species = species
+                        # Route each allele to its own ABC topic (transgenic
+                        # ATP:0000110 vs classical ATP:0000285); non-allele topics
+                        # report unchanged.
+                        ent_topic = allele_abc_topic(model, ent_curie) if is_allele_topic(topic) else abc_topic
                         send_entity_tag_to_abc(
                             reference_curie=curie,
                             species=entity_species,
-                            topic=abc_topic,
-                            entity_type=abc_topic,
+                            topic=ent_topic,
+                            entity_type=ent_topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             data_novelty=data_novelty,
@@ -590,8 +639,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             all_entities = build_entities_from_results(results, title, abstract, fulltext, model, raw_markdown=raw_markdown)
 
             if test_mode:
-                test_fh.write(f"{curie}\t{' | '.join(all_entities)}\n")
-                test_fh.flush()
+                write_test_output(test_fh, curie, all_entities, model, topic)
             else:
                 if not all_entities:
                     send_entity_tag_to_abc(
@@ -636,11 +684,15 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             entity_species = getattr(model, "curie_to_taxon_mapping", {}).get(ent_curie, species)
                         else:
                             entity_species = species
+                        # Route each allele to its own ABC topic (transgenic
+                        # ATP:0000110 vs classical ATP:0000285); non-allele topics
+                        # report unchanged.
+                        ent_topic = allele_abc_topic(model, ent_curie) if is_allele_topic(topic) else abc_topic
                         send_entity_tag_to_abc(
                             reference_curie=curie,
                             species=entity_species,
-                            topic=abc_topic,
-                            entity_type=abc_topic,
+                            topic=ent_topic,
+                            entity_type=ent_topic,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             data_novelty=data_novelty,
