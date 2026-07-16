@@ -20,7 +20,8 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
     set_blue_api_base_url, \
     get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag, \
-    get_current_workflow_status
+    get_current_workflow_status, get_reference_embedding
+from utils.abc_embeddings import parse_embedding_marker, ABC_EMBEDDING_DIM
 from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
 
@@ -92,6 +93,37 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     X = sp.vstack(rows, format="csr") if sparse_features else np.vstack(rows)
     classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X)
     return files_loaded, classifications, confidence_scores, valid_embeddings
+
+
+def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model):
+    """Classify references using the ABC precomputed embeddings (SCRUM-5781).
+
+    The per-reference feature is the mean of the main-PDF paragraph embeddings
+    (:func:`utils.abc_utils.get_reference_embedding`). Returns the same 4-tuple
+    shape as :func:`classify_documents` — ``(ids_loaded, classifications,
+    confidence_scores, valid_embeddings)`` — but ``ids_loaded`` holds reference
+    curies rather than file paths (downstream recovers the curie from either).
+
+    A reference with no available embedding is kept as a zero row flagged invalid,
+    so the caller fails that job just like a missing MD in the BioWordVec path.
+    """
+    rows = []
+    ids_loaded = []
+    valid_embeddings = []
+    for reference_curie in reference_curies:
+        vector = get_reference_embedding(reference_curie, mod_abbr)
+        ids_loaded.append(reference_curie)
+        if vector is None:
+            rows.append(np.zeros(ABC_EMBEDDING_DIM, dtype=np.float32))
+            valid_embeddings.append(False)
+        else:
+            rows.append(vector)
+            valid_embeddings.append(True)
+    if not ids_loaded:
+        return ids_loaded, np.array([]), [], valid_embeddings
+    X = np.vstack(rows)
+    classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X)
+    return ids_loaded, classifications, confidence_scores, valid_embeddings
 
 
 def predict_labels_and_confidence(classifier_model, X):
@@ -192,6 +224,16 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         else:
             raise
 
+    # Retrocompat switch (SCRUM-5781): a model trained on ABC embeddings carries a
+    # marker in its metadata description. When present we fetch ABC embeddings for
+    # it; when absent the model is a legacy BioWordVec one and the on-the-fly text
+    # path below runs unchanged.
+    abc_marker = parse_embedding_marker(model_meta_data.get("description"))
+    use_abc_embeddings = abc_marker is not None
+    if use_abc_embeddings:
+        logger.info(f"Model for mod: {mod_abbr}, topic: {topic} uses ABC embeddings "
+                    f"(profile {abc_marker['profile_name']} v{abc_marker['version']}).")
+
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
     classifier_model = joblib.load(classifier_file_path)
@@ -206,43 +248,52 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
                           test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling,
                           use_lsh_features=use_lsh_features,
-                          include_keywords=include_keywords, include_metadata=include_metadata)
+                          include_keywords=include_keywords, include_metadata=include_metadata,
+                          use_abc_embeddings=use_abc_embeddings)
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
                       test_mode, use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
-                      include_keywords=False, include_metadata=False):
+                      include_keywords=False, include_metadata=False, use_abc_embeddings=False):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
-    prepare_classification_directory()
-    download_md_files_for_references(list(reference_curie_job_map.keys()),
-                                     "/data/agr_document_classifier/to_classify", mod_abbr)
-    expected_curies = set(reference_curie_job_map.keys())
-    downloaded_curies = {
-        os.path.splitext(f)[0].replace("_", ":")
-        for f in os.listdir("/data/agr_document_classifier/to_classify")
-        if f.endswith(".md") and ".supp_" not in f
-    }
-    missing_curies = expected_curies - downloaded_curies
-    if missing_curies:
-        logger.warning(
-            "No MD available in ABC for %d/%d references in this batch (mod=%s topic=%s); "
-            "marking those jobs failed",
-            len(missing_curies), len(expected_curies), mod_abbr, topic,
-        )
-        if not test_mode:
-            for curie in missing_curies:
-                job = reference_curie_job_map[curie]
-                set_job_started(job)
-                set_job_failure(job)
-    files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
-        embedding_model=embedding_model,
-        classifier_model=classifier_model,
-        input_docs_dir="/data/agr_document_classifier/to_classify",
-        use_bow_features=use_bow_features,
-        use_max_pooling=use_max_pooling,
-        use_lsh_features=use_lsh_features,
-        include_keywords=include_keywords,
-        include_metadata=include_metadata)
+    if use_abc_embeddings:
+        # ABC-embedding models classify from the precomputed vectors directly — no
+        # MD download and no BioWordVec/BoW/max/LSH blocks. References without an
+        # embedding come back flagged invalid and are failed in the sender below,
+        # matching the missing-MD policy of the BioWordVec path.
+        files_loaded, classifications, conf_scores, valid_embeddings = classify_documents_from_abc_embeddings(
+            list(reference_curie_job_map.keys()), mod_abbr, classifier_model)
+    else:
+        prepare_classification_directory()
+        download_md_files_for_references(list(reference_curie_job_map.keys()),
+                                         "/data/agr_document_classifier/to_classify", mod_abbr)
+        expected_curies = set(reference_curie_job_map.keys())
+        downloaded_curies = {
+            os.path.splitext(f)[0].replace("_", ":")
+            for f in os.listdir("/data/agr_document_classifier/to_classify")
+            if f.endswith(".md") and ".supp_" not in f
+        }
+        missing_curies = expected_curies - downloaded_curies
+        if missing_curies:
+            logger.warning(
+                "No MD available in ABC for %d/%d references in this batch (mod=%s topic=%s); "
+                "marking those jobs failed",
+                len(missing_curies), len(expected_curies), mod_abbr, topic,
+            )
+            if not test_mode:
+                for curie in missing_curies:
+                    job = reference_curie_job_map[curie]
+                    set_job_started(job)
+                    set_job_failure(job)
+        files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
+            embedding_model=embedding_model,
+            classifier_model=classifier_model,
+            input_docs_dir="/data/agr_document_classifier/to_classify",
+            use_bow_features=use_bow_features,
+            use_max_pooling=use_max_pooling,
+            use_lsh_features=use_lsh_features,
+            include_keywords=include_keywords,
+            include_metadata=include_metadata)
     if test_mode:
         for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                           valid_embeddings):
@@ -316,7 +367,10 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                     ml_model_id=model_meta_data['ml_model_id'])
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
-        os.remove(file_path)
+        # Legacy path writes a real MD file to clean up here; the ABC path passes
+        # reference curies (no file on disk), so only remove when it exists.
+        if os.path.exists(file_path):
+            os.remove(file_path)
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
 
 

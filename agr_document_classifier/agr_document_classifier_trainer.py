@@ -21,7 +21,9 @@ from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
-from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
+from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
+                             get_reference_embedding)
+from utils.abc_embeddings import format_embedding_marker
 from utils.embedding import load_embedding_model, build_feature_matrix
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
@@ -89,13 +91,54 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     return X_clean, y_clean, outlier_mask
 
 
+def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str):
+    """Build ``(X, y)`` from the ABC precomputed classifier embeddings.
+
+    ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists.
+    Each reference's feature is the mean of its main-PDF paragraph embeddings
+    (:func:`utils.abc_utils.get_reference_embedding`). References without an
+    available embedding are dropped and counted — the same policy the BioWordVec
+    path applies to references with no downloadable MD file."""
+    rows = []
+    y = []
+    missing = 0
+    for label in ["positive", "negative"]:
+        for reference_curie in abc_curies.get(label, []):
+            vector = get_reference_embedding(reference_curie, mod_abbreviation)
+            if vector is None:
+                missing += 1
+                continue
+            rows.append(vector)
+            y.append(int(label == "positive"))
+    if not rows:
+        raise ValueError("No ABC embeddings could be retrieved for the training set; "
+                         "cannot train. Check that the references have been embedded.")
+    logger.info(f"ABC embeddings retrieved for {len(rows)} references "
+                f"({missing} references had no embedding and were dropped).")
+    return np.vstack(rows), y
+
+
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
                      outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1,
                      use_bow_features: bool = False, use_max_pooling: bool = False,
                      use_lsh_features: bool = False,
-                     include_keywords: bool = False, include_metadata: bool = False):
+                     include_keywords: bool = False, include_metadata: bool = False,
+                     use_abc_embeddings: bool = False, abc_curies: dict = None,
+                     mod_abbreviation: str = None):
+    if use_abc_embeddings:
+        # New path (SCRUM-5781): use the ABC's precomputed OpenAI embeddings instead
+        # of loading BioWordVec and pooling word vectors over downloaded Markdown.
+        logger.info("Loading training set from ABC precomputed embeddings.")
+        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation)
+        logger.info("Finished loading training set.")
+        logger.info(f"Dataset size: {str(len(y))}")
+        y = np.array(y)
+        # ABC embeddings are a plain dense matrix — no sparse BoW/LSH wide-matrix
+        # handling applies, so those stay False here.
+        return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination)
+
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
     texts = []
@@ -145,6 +188,12 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info(f"Dataset size: {str(len(y))}")
 
     y = np.array(y)
+    return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                                 use_bow_features=use_bow_features, use_lsh_features=use_lsh_features)
+
+
+def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                          use_bow_features=False, use_lsh_features=False):
 
     # Step 1: Split data into train+val (80%) and holdout test set (20%)
     X_train_val, X_test, y_train_val, y_test = train_test_split(
@@ -355,7 +404,7 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     data_novelty: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
                     species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False,
-                    training_data_dir: str = None):
+                    training_data_dir: str = None, description: Union[str, None] = None):
     if training_data_dir is None:
         training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
     topic_formatted = topic.replace(':', '_')
@@ -370,7 +419,8 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
         upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
                         data_novelty=data_novelty, production=production,
                         no_data=no_data, species=species,
-                        model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
+                        model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib",
+                        description=description)
 
 
 def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, version_num, file_extension,
@@ -429,6 +479,14 @@ def parse_arguments():
                         help="Include article metadata in the document text (off by default; must be "
                              "passed identically at classification time)",
                         required=False)
+    parser.add_argument("--use_abc_embeddings", action="store_true",
+                        help="Train on the ABC's precomputed OpenAI embeddings (profile "
+                             "'classifier_fulltext_paragraph_chunk_refs_excluded_md_cleaned') instead of "
+                             "computing BioWordVec vectors on the fly. The per-reference feature is the mean "
+                             "of the main-PDF paragraph embeddings. No MD download and no --embedding_model_path "
+                             "needed. The resulting model is tagged so the classifier fetches ABC embeddings "
+                             "for it while legacy models keep using BioWordVec.",
+                        required=False)
     parser.add_argument("-S", "--skip_training_set_download", action="store_true",
                         help="Assume that tei files from training set are already present and do not download them "
                              "again",
@@ -467,11 +525,10 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def download_training_set(args, training_data_dir):
-    # Get training set with optional version
-    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                             version=args.dataset_version)
-
+def get_filtered_training_curies(args, training_set):
+    """Split a training set into positive/negative reference-curie lists, applying
+    the optional ``--filter_date_before`` cutoff. Returns
+    ``{"positive": [...], "negative": [...]}``."""
     reference_ids_positive = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
                               classification_value == "positive"]
     reference_ids_negative = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
@@ -510,6 +567,18 @@ def download_training_set(args, training_data_dir):
         reference_ids_positive = filtered_positive
         reference_ids_negative = filtered_negative
 
+    return {"positive": reference_ids_positive, "negative": reference_ids_negative}
+
+
+def download_training_set(args, training_data_dir):
+    # Get training set with optional version
+    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                                             version=args.dataset_version)
+
+    curies = get_filtered_training_curies(args, training_set)
+    reference_ids_positive = curies["positive"]
+    reference_ids_negative = curies["negative"]
+
     shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
     os.makedirs(os.path.join(training_data_dir, "positive"), exist_ok=True)
@@ -540,7 +609,7 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
-def train_and_save_model(args, training_data_dir, training_set):
+def train_and_save_model(args, training_data_dir, training_set, abc_curies=None):
     if args.test_mode:
         logger.info("Running in test mode. Model will be saved locally and not uploaded to ABC.")
     classifier, stats = train_classifier(
@@ -557,18 +626,37 @@ def train_and_save_model(args, training_data_dir, training_set):
         use_max_pooling=args.use_max_pooling,
         use_lsh_features=args.use_lsh_features,
         include_keywords=args.include_keywords,
-        include_metadata=args.include_metadata)
+        include_metadata=args.include_metadata,
+        use_abc_embeddings=args.use_abc_embeddings,
+        abc_curies=abc_curies,
+        mod_abbreviation=args.mod_train)
     logger.info(f"Best classifier stats: {str(stats)}")
+    # Tag ABC-embedding models so the classifier fetches ABC embeddings for them;
+    # legacy (BioWordVec) models carry no marker and keep their on-the-fly path.
+    description = format_embedding_marker() if args.use_abc_embeddings else None
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode,
-                    training_data_dir=training_data_dir)
+                    training_data_dir=training_data_dir, description=description)
 
 
 def train_mode(args):
     training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
+    if args.use_abc_embeddings:
+        # ABC-embedding path: no MD download, we only need the metadata (dataset_id)
+        # plus the positive/negative curie lists to fetch precomputed embeddings.
+        logger.info("Using ABC precomputed embeddings; skipping MD/TEI download.")
+        training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                                                 metadata_only=False, version=args.dataset_version)
+        abc_curies = get_filtered_training_curies(args, training_set)
+        if args.skip_training:
+            upload_pre_existing_model(args, training_set, training_data_dir)
+        else:
+            train_and_save_model(args, training_data_dir, training_set, abc_curies=abc_curies)
+        return
+
     if args.skip_training_set_download:
         logger.info("Skipping training set download")
         training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
@@ -587,6 +675,10 @@ def main():
         if not re.search(r'^NCBITaxon:\d+$', args.alternative_species):
             print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
             sys.exit(1)
+    # The BioWordVec path needs a word-embedding model; the ABC-embedding path does not.
+    if not args.use_abc_embeddings and not args.skip_training and not args.embedding_model_path:
+        print("--embedding_model_path is required unless --use_abc_embeddings is set.")
+        sys.exit(1)
     configure_logging(args.log_level)
 
     train_mode(args)
