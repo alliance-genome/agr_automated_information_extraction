@@ -1086,7 +1086,18 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
                     topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
                     no_data: Union[bool, None] = True, species: Union[str, None] = None,
                     data_novelty: Union[str, None] = None, description: Union[str, None] = None,):
-    upload_url = f"{blue_api_base_url}/ml_model/upload"
+    # The model normally uploads to the same ABC as everything else
+    # (``blue_api_base_url``). ``ABC_UPLOAD_API_SERVER`` overrides only the upload
+    # target, so a run can read training data / embeddings from one environment
+    # (e.g. prod, where the embeddings live) and still upload the model to another
+    # (e.g. stage). dataset_id is shared across environments, so the uploaded
+    # metadata stays consistent.
+    upload_base = os.environ.get("ABC_UPLOAD_API_SERVER", "").strip() or blue_api_base_url
+    if upload_base.startswith("literature"):
+        upload_base = f"https://{upload_base}"
+    upload_url = f"{upload_base}/ml_model/upload"
+    if upload_base != blue_api_base_url:
+        logger.info(f"Uploading model to override server: {upload_base}")
     token = get_authentication_token()
     headers = generate_headers(token)
 

@@ -97,6 +97,15 @@ curie ─ show_all ─▶ embedding row (profile match, source=converted_merged_
   needed on the consumer side (reading only). Install `pyarrow` in the cervino
   conda env before training.
 
+## Cross-environment upload (operational)
+The FB embeddings currently exist only on **prod** (verified 2026-07-16: prod
+10/10 sample references embedded, stage 0/10), while the FB datasets exist on both
+with the same `dataset_id`. To honor "train + upload to stage" without embeddings
+on stage, `upload_ml_model` honors an optional `ABC_UPLOAD_API_SERVER` env var that
+redirects **only** the model upload. A run therefore reads datasets + embeddings
+from prod (`ABC_API_SERVER=…prod…`) and uploads the model to stage
+(`ABC_UPLOAD_API_SERVER=…stage…`), all with `production=false`.
+
 ## Testing
 - Unit tests with a synthetic parquet (pyarrow) and mocked `show_all`/download:
   - `paragraph_mean_from_parquet` averages only paragraph rows; `None` on
