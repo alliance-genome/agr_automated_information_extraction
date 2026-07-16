@@ -76,13 +76,15 @@ Single source of truth for the profile constants + marker format + parquet read.
   field in the upload payload.
 
 ### Trainer `agr_document_classifier_trainer.py`
-- New flag `--use_abc_embeddings`. When set:
-  - `--embedding_model_path` is not required (no BioWordVec load).
-  - Build `X` from the ABC paragraph-mean vector of each positive/negative curie
-    (references with no embedding are dropped and logged — same policy as a
-    missing MD today). No MD download, no text pipeline, no BoW/max/LSH blocks.
-  - Stamp the marker into `description` and pass it to `upload_ml_model`.
-- The existing BioWordVec path is untouched when the flag is off.
+- ABC embeddings are the **default (and only) training source** — there is no
+  `--use_abc_embeddings` flag. Every run builds `X` from the L2-chunk-mean pool of
+  each positive/negative curie's main-PDF embedding, concatenated with the hashed
+  BoW block (always on). References with no embedding are dropped and logged (same
+  policy as a missing MD). `--filter_date_before` defaults to `2005-01-01`; pass an
+  empty string to disable. No MD download and no `--embedding_model_path` needed.
+- Stamp the marker (`bow=true`) into `description` and pass it to `upload_ml_model`.
+- The BioWordVec `train_classifier(use_abc_embeddings=False)` path remains for
+  programmatic/test use but is not reachable from the CLI.
 
 ### Classifier `agr_document_classifier_classify.py`
 - Per model, after `get_model_data`, parse `description` for the marker.

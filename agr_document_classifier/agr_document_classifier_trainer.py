@@ -495,14 +495,6 @@ def parse_arguments():
                         help="Include article metadata in the document text (off by default; must be "
                              "passed identically at classification time)",
                         required=False)
-    parser.add_argument("--use_abc_embeddings", action="store_true",
-                        help="Train on the ABC's precomputed OpenAI embeddings (profile "
-                             "'classifier_fulltext_paragraph_chunk_refs_excluded_md_cleaned') instead of "
-                             "computing BioWordVec vectors on the fly. The per-reference feature is the mean "
-                             "of the main-PDF paragraph embeddings. No MD download and no --embedding_model_path "
-                             "needed. The resulting model is tagged so the classifier fetches ABC embeddings "
-                             "for it while legacy models keep using BioWordVec.",
-                        required=False)
     parser.add_argument("-S", "--skip_training_set_download", action="store_true",
                         help="Assume that tei files from training set are already present and do not download them "
                              "again",
@@ -528,8 +520,9 @@ def parse_arguments():
                                                                  "locally.", required=False)
     parser.add_argument("--dataset_version", type=int, required=False,
                         help="Specific dataset version to use for training (defaults to latest)")
-    parser.add_argument("--filter_date_before", type=str, required=False,
-                        help="Filter out references published before this date (YYYY-MM-DD format)")
+    parser.add_argument("--filter_date_before", type=str, required=False, default="2005-01-01",
+                        help="Filter out references published before this date (YYYY-MM-DD format). "
+                             "Defaults to 2005-01-01; pass an empty string to disable date filtering.")
     # Outlier detection arguments
     parser.add_argument("--remove_outliers", action="store_true",
                         help="Enable outlier detection and removal")
@@ -628,6 +621,9 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
 def train_and_save_model(args, training_data_dir, training_set, abc_curies=None):
     if args.test_mode:
         logger.info("Running in test mode. Model will be saved locally and not uploaded to ABC.")
+    # ABC precomputed embeddings + hashed BoW are the standard training recipe now
+    # (SCRUM-5781/6052): embedding alone underperformed BoW, embedding+BoW matched
+    # the BoW baseline, so both are always used.
     classifier, stats = train_classifier(
         embedding_model_path=args.embedding_model_path,
         training_data_dir=training_data_dir,
@@ -638,21 +634,19 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
         remove_outliers=args.remove_outliers,
         outlier_method=args.outlier_method,
         outlier_contamination=args.outlier_contamination,
-        use_bow_features=args.use_bow_features,
+        use_bow_features=True,
         use_max_pooling=args.use_max_pooling,
         use_lsh_features=args.use_lsh_features,
         include_keywords=args.include_keywords,
         include_metadata=args.include_metadata,
-        use_abc_embeddings=args.use_abc_embeddings,
+        use_abc_embeddings=True,
         abc_curies=abc_curies,
         mod_abbreviation=args.mod_train)
     logger.info(f"Best classifier stats: {str(stats)}")
-    # Tag ABC-embedding models so the classifier fetches ABC embeddings for them
-    # (and records whether BoW was concatenated, so classify rebuilds the identical
-    # feature vector); legacy (BioWordVec) models carry no marker and keep their
-    # on-the-fly path.
-    description = (format_embedding_marker(use_bow=args.use_bow_features)
-                   if args.use_abc_embeddings else None)
+    # Tag the model so the classifier fetches ABC embeddings for it (and rebuilds
+    # the identical embedding+BoW vector). Legacy BioWordVec models carry no marker
+    # and keep their on-the-fly path.
+    description = format_embedding_marker(use_bow=True)
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,
@@ -662,30 +656,18 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
 
 
 def train_mode(args):
+    # ABC precomputed embeddings are the default (and only) training source now.
+    # We need the dataset metadata (dataset_id) plus the positive/negative curie
+    # lists to fetch the embeddings; no MD/TEI download.
     training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
-    if args.use_abc_embeddings:
-        # ABC-embedding path: no MD download, we only need the metadata (dataset_id)
-        # plus the positive/negative curie lists to fetch precomputed embeddings.
-        logger.info("Using ABC precomputed embeddings; skipping MD/TEI download.")
-        training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                                 metadata_only=False, version=args.dataset_version)
-        abc_curies = get_filtered_training_curies(args, training_set)
-        if args.skip_training:
-            upload_pre_existing_model(args, training_set, training_data_dir)
-        else:
-            train_and_save_model(args, training_data_dir, training_set, abc_curies=abc_curies)
-        return
-
-    if args.skip_training_set_download:
-        logger.info("Skipping training set download")
-        training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                                 metadata_only=True, version=args.dataset_version)
-    else:
-        training_set = download_training_set(args, training_data_dir)
+    logger.info("Training on ABC precomputed embeddings (default).")
+    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                                             metadata_only=False, version=args.dataset_version)
+    abc_curies = get_filtered_training_curies(args, training_set)
     if args.skip_training:
         upload_pre_existing_model(args, training_set, training_data_dir)
     else:
-        train_and_save_model(args, training_data_dir, training_set)
+        train_and_save_model(args, training_data_dir, training_set, abc_curies=abc_curies)
 
 
 def main():
@@ -694,10 +676,6 @@ def main():
         if not re.search(r'^NCBITaxon:\d+$', args.alternative_species):
             print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
             sys.exit(1)
-    # The BioWordVec path needs a word-embedding model; the ABC-embedding path does not.
-    if not args.use_abc_embeddings and not args.skip_training and not args.embedding_model_path:
-        print("--embedding_model_path is required unless --use_abc_embeddings is set.")
-        sys.exit(1)
     configure_logging(args.log_level)
 
     train_mode(args)
