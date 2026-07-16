@@ -28,21 +28,30 @@ already in production working exactly as before.
 
 ## Decisions (confirmed with PO)
 
-1. **Feature = mean of the paragraph-level embeddings** in the main-PDF parquet
-   (rows with `is_document_level == False`), producing one 1536-d vector per
-   reference. The document-level row is ignored.
-2. **Main PDF only:** select the embedding whose `source.file_class ==
+1. **Dense feature = L2-normalized chunk-mean pool** of the main-PDF paragraph
+   embeddings (each paragraph vector L2-normalized, averaged, mean L2-normalized;
+   `is_document_level` row excluded) — the SCRUM-6052 recipe.
+2. **Concatenate the hashed BoW block** (`--use_bow_features`) over the parquet's
+   own references-excluded paragraph text. Rationale (SCRUM-6052): the embedding
+   alone underperformed BoW; embedding+BoW matched the BoW baseline. BoW text is
+   taken from the parquet content (not a separate MD download) so classify needs
+   only the parquet; this is a deliberate, transparent deviation from the
+   prototype's MD-fulltext BoW with negligible expected impact.
+3. **Date threshold** `--filter_date_before 2005-01-01`; **no outlier removal**
+   (PO found it gave no advantage).
+4. **Main PDF only:** select the embedding whose `source.file_class ==
    "converted_merged_main"`. Supplement embeddings are ignored.
-3. **Retrocompat via a per-model marker** (not a global date cutoff): the trainer
-   stamps a machine-readable marker into the model's ABC `ml_model.description`.
-   The classifier reads it per model — marker present ⇒ ABC-embedding path; absent
-   ⇒ the existing BioWordVec on-the-fly path, byte-for-byte unchanged. This needs
-   **no ABC schema change**: the `description` column already exists, the
-   `/ml_model/upload` endpoint already accepts it, and `get_model_data` already
-   returns it.
-4. **Scope of retraining:** all FB document-classification topics that have a
-   training dataset on the target ABC, plus the "no genetic data" classifier
-   (FB `ATP:0000207`). Upload to dev/stage with `production=false`.
+5. **Retrocompat via a per-model marker** (not a global date cutoff): the trainer
+   stamps a machine-readable marker into the model's ABC `ml_model.description`,
+   including `bow=true/false`. The classifier reads it per model — marker present ⇒
+   ABC-embedding path (rebuilding the identical embedding[+BoW] vector); absent ⇒
+   the existing BioWordVec on-the-fly path, byte-for-byte unchanged. No ABC schema
+   change: `description` already exists on `/ml_model/upload` and `get_model_data`.
+6. **Scope of retraining:** the five FB document-classification topics with a
+   training dataset — disease (`ATP:0000152`), new transgene (`ATP:0000013`), new
+   allele (`ATP:0000006`), physical interaction (`ATP:0000069`), and "no genetic
+   data" (`ATP:0000207`). Read datasets + embeddings from prod (the only place FB
+   embeddings currently exist); upload to stage with `production=false`.
 
 ## Components
 

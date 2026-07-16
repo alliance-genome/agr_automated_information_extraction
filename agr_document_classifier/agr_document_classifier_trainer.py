@@ -12,6 +12,7 @@ from typing import List, Union
 import joblib
 import nltk
 import numpy as np
+import scipy.sparse as sp
 from gensim.models import KeyedVectors
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split
@@ -24,7 +25,7 @@ from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
                              get_reference_embedding)
 from utils.abc_embeddings import format_embedding_marker
-from utils.embedding import load_embedding_model, build_feature_matrix
+from utils.embedding import load_embedding_model, build_feature_matrix, get_bow_vectorizer
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
 
@@ -91,31 +92,42 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     return X_clean, y_clean, outlier_mask
 
 
-def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str):
+def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_bow: bool = False):
     """Build ``(X, y)`` from the ABC precomputed classifier embeddings.
 
     ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists.
-    Each reference's feature is the mean of its main-PDF paragraph embeddings
-    (:func:`utils.abc_utils.get_reference_embedding`). References without an
-    available embedding are dropped and counted — the same policy the BioWordVec
-    path applies to references with no downloadable MD file."""
+    Each reference's dense feature is the L2-normalized chunk-mean pool of its
+    main-PDF paragraph embeddings (:func:`utils.abc_utils.get_reference_embedding`).
+    When ``use_bow`` is set, the same stateless hashed bag-of-words block the
+    BioWordVec classifiers use is concatenated onto the embedding — hashed over the
+    references-excluded paragraph text carried in the parquet — yielding a sparse
+    matrix (SCRUM-6052 recipe). References without an available embedding are
+    dropped and counted, the same policy the BioWordVec path applies to references
+    with no downloadable MD file."""
     rows = []
     y = []
     missing = 0
+    bow_vectorizer = get_bow_vectorizer() if use_bow else None
     for label in ["positive", "negative"]:
         for reference_curie in abc_curies.get(label, []):
-            vector = get_reference_embedding(reference_curie, mod_abbreviation)
-            if vector is None:
+            result = get_reference_embedding(reference_curie, mod_abbreviation)
+            if result is None:
                 missing += 1
                 continue
-            rows.append(vector)
+            pooled, text = result
+            if use_bow:
+                bow = bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""])
+                rows.append(sp.hstack([sp.csr_matrix(pooled.reshape(1, -1)), bow], format="csr"))
+            else:
+                rows.append(pooled)
             y.append(int(label == "positive"))
     if not rows:
         raise ValueError("No ABC embeddings could be retrieved for the training set; "
                          "cannot train. Check that the references have been embedded.")
     logger.info(f"ABC embeddings retrieved for {len(rows)} references "
-                f"({missing} references had no embedding and were dropped).")
-    return np.vstack(rows), y
+                f"({missing} references had no embedding and were dropped). BoW={use_bow}.")
+    X = sp.vstack(rows, format="csr") if use_bow else np.vstack(rows)
+    return X, y
 
 
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
@@ -130,14 +142,18 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     if use_abc_embeddings:
         # New path (SCRUM-5781): use the ABC's precomputed OpenAI embeddings instead
         # of loading BioWordVec and pooling word vectors over downloaded Markdown.
+        # BoW (when enabled) is hashed from the parquet's own paragraph text, so no
+        # Markdown download is needed.
         logger.info("Loading training set from ABC precomputed embeddings.")
-        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation)
+        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation,
+                                             use_bow=use_bow_features)
         logger.info("Finished loading training set.")
         logger.info(f"Dataset size: {str(len(y))}")
         y = np.array(y)
-        # ABC embeddings are a plain dense matrix — no sparse BoW/LSH wide-matrix
-        # handling applies, so those stay False here.
-        return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination)
+        # When BoW is on the matrix is wide+sparse, so the same SVC/MLP skip and
+        # XGBoost concurrency cap the BioWordVec path uses must apply here too.
+        return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                                     use_bow_features=use_bow_features, use_lsh_features=False)
 
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
@@ -631,9 +647,12 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
         abc_curies=abc_curies,
         mod_abbreviation=args.mod_train)
     logger.info(f"Best classifier stats: {str(stats)}")
-    # Tag ABC-embedding models so the classifier fetches ABC embeddings for them;
-    # legacy (BioWordVec) models carry no marker and keep their on-the-fly path.
-    description = format_embedding_marker() if args.use_abc_embeddings else None
+    # Tag ABC-embedding models so the classifier fetches ABC embeddings for them
+    # (and records whether BoW was concatenated, so classify rebuilds the identical
+    # feature vector); legacy (BioWordVec) models carry no marker and keep their
+    # on-the-fly path.
+    description = (format_embedding_marker(use_bow=args.use_bow_features)
+                   if args.use_abc_embeddings else None)
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,

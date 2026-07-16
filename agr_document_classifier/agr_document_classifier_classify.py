@@ -95,33 +95,42 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
 
-def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model):
+def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model, use_bow=False):
     """Classify references using the ABC precomputed embeddings (SCRUM-5781).
 
-    The per-reference feature is the mean of the main-PDF paragraph embeddings
-    (:func:`utils.abc_utils.get_reference_embedding`). Returns the same 4-tuple
-    shape as :func:`classify_documents` — ``(ids_loaded, classifications,
-    confidence_scores, valid_embeddings)`` — but ``ids_loaded`` holds reference
-    curies rather than file paths (downstream recovers the curie from either).
+    The per-reference dense feature is the L2-normalized chunk-mean pool of the
+    main-PDF paragraph embeddings (:func:`utils.abc_utils.get_reference_embedding`);
+    when ``use_bow`` is set the hashed BoW block over the parquet's paragraph text
+    is concatenated, exactly as at train time (the model's metadata marker says
+    which). Returns the same 4-tuple shape as :func:`classify_documents` —
+    ``(ids_loaded, classifications, confidence_scores, valid_embeddings)`` — but
+    ``ids_loaded`` holds reference curies rather than file paths (downstream
+    recovers the curie from either).
 
     A reference with no available embedding is kept as a zero row flagged invalid,
     so the caller fails that job just like a missing MD in the BioWordVec path.
     """
+    bow_vectorizer = get_bow_vectorizer() if use_bow else None
     rows = []
     ids_loaded = []
     valid_embeddings = []
     for reference_curie in reference_curies:
-        vector = get_reference_embedding(reference_curie, mod_abbr)
+        result = get_reference_embedding(reference_curie, mod_abbr)
         ids_loaded.append(reference_curie)
-        if vector is None:
-            rows.append(np.zeros(ABC_EMBEDDING_DIM, dtype=np.float32))
+        if result is None:
+            pooled, text = np.zeros(ABC_EMBEDDING_DIM, dtype=np.float32), ""
             valid_embeddings.append(False)
         else:
-            rows.append(vector)
+            pooled, text = result
             valid_embeddings.append(True)
+        if use_bow:
+            bow = bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""])
+            rows.append(sp.hstack([sp.csr_matrix(pooled.reshape(1, -1)), bow], format="csr"))
+        else:
+            rows.append(pooled)
     if not ids_loaded:
         return ids_loaded, np.array([]), [], valid_embeddings
-    X = np.vstack(rows)
+    X = sp.vstack(rows, format="csr") if use_bow else np.vstack(rows)
     classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X)
     return ids_loaded, classifications, confidence_scores, valid_embeddings
 
@@ -230,9 +239,11 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
     # path below runs unchanged.
     abc_marker = parse_embedding_marker(model_meta_data.get("description"))
     use_abc_embeddings = abc_marker is not None
+    abc_use_bow = bool(abc_marker and abc_marker.get("bow"))
     if use_abc_embeddings:
         logger.info(f"Model for mod: {mod_abbr}, topic: {topic} uses ABC embeddings "
-                    f"(profile {abc_marker['profile_name']} v{abc_marker['version']}).")
+                    f"(profile {abc_marker['profile_name']} v{abc_marker['version']}, "
+                    f"bow={abc_use_bow}).")
 
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)
@@ -249,20 +260,22 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
                           test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling,
                           use_lsh_features=use_lsh_features,
                           include_keywords=include_keywords, include_metadata=include_metadata,
-                          use_abc_embeddings=use_abc_embeddings)
+                          use_abc_embeddings=use_abc_embeddings, abc_use_bow=abc_use_bow)
 
 
 def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
                       test_mode, use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
-                      include_keywords=False, include_metadata=False, use_abc_embeddings=False):
+                      include_keywords=False, include_metadata=False, use_abc_embeddings=False,
+                      abc_use_bow=False):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     if use_abc_embeddings:
         # ABC-embedding models classify from the precomputed vectors directly — no
-        # MD download and no BioWordVec/BoW/max/LSH blocks. References without an
-        # embedding come back flagged invalid and are failed in the sender below,
-        # matching the missing-MD policy of the BioWordVec path.
+        # MD download and no BioWordVec/max/LSH blocks. The BoW block (if the model
+        # was trained with it, per its marker) is hashed from the parquet's own
+        # paragraph text. References without an embedding come back flagged invalid
+        # and are failed in the sender below, matching the missing-MD policy.
         files_loaded, classifications, conf_scores, valid_embeddings = classify_documents_from_abc_embeddings(
-            list(reference_curie_job_map.keys()), mod_abbr, classifier_model)
+            list(reference_curie_job_map.keys()), mod_abbr, classifier_model, use_bow=abc_use_bow)
     else:
         prepare_classification_directory()
         download_md_files_for_references(list(reference_curie_job_map.keys()),

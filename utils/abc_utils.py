@@ -14,7 +14,7 @@ import psycopg2
 import requests
 from agr_cognito_py import get_authentication_token, generate_headers
 from utils.abc_embeddings import (ABC_EMBEDDING_PROFILE, ABC_EMBEDDING_VERSION,
-                                  MAIN_SOURCE_FILE_CLASS, paragraph_mean_from_parquet)
+                                  MAIN_SOURCE_FILE_CLASS, paragraph_pool_and_text)
 from utils.ateam_utils import get_all_curated_entities as _get_all_curated_entities
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
@@ -985,15 +985,17 @@ def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abb
 
 def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
                             profile_name: str = ABC_EMBEDDING_PROFILE,
-                            version: int = ABC_EMBEDDING_VERSION) -> Optional[np.ndarray]:
-    """Return the ABC precomputed classifier embedding for a reference's MAIN PDF
-    text, as a single float32 vector, or ``None`` when it is unavailable.
+                            version: int = ABC_EMBEDDING_VERSION) -> Optional[Tuple[np.ndarray, str]]:
+    """Return ``(pooled_vector, paragraph_text)`` for a reference's MAIN-PDF ABC
+    embedding, or ``None`` when it is unavailable.
 
-    The vector is the mean of the paragraph-level chunk embeddings
-    (:func:`utils.abc_embeddings.paragraph_mean_from_parquet`) stored in the
-    embedding parquet whose profile is ``profile_name``/``version`` and whose
-    source Markdown is the ``converted_merged_main`` (SCRUM-6142). Supplement
-    embeddings and other profiles are ignored.
+    ``pooled_vector`` is the L2-normalized chunk-mean pool of the paragraph
+    embeddings and ``paragraph_text`` is the concatenated paragraph content (for
+    the hashed BoW block) — both from
+    :func:`utils.abc_embeddings.paragraph_pool_and_text`, read out of the embedding
+    parquet whose profile is ``profile_name``/``version`` and whose source Markdown
+    is the ``converted_merged_main`` (SCRUM-6142). Supplement embeddings and other
+    profiles are ignored.
 
     Discovery uses the existing ``show_all`` metadata (which annotates every
     ``embedding`` row with its ``profile_name``/``version`` and a ``source``
@@ -1030,7 +1032,7 @@ def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
         logger.error("Embedding parquet download returned no bytes for %s", reference_curie)
         return None
     try:
-        return paragraph_mean_from_parquet(parquet_bytes)
+        return paragraph_pool_and_text(parquet_bytes)
     except Exception as e:
         logger.error("Failed to read embedding parquet for %s: %s", reference_curie, e)
         return None
