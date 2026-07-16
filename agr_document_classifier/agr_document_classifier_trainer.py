@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from typing import List, Union
 
+import utils.thread_limits  # noqa: F401  (import first: pins native threads to 1)
 import joblib
 import nltk
 import numpy as np
