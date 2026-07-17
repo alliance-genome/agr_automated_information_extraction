@@ -13,6 +13,8 @@ import numpy as np
 import psycopg2
 import requests
 from agr_cognito_py import get_authentication_token, generate_headers
+from utils.abc_embeddings import (ABC_EMBEDDING_PROFILE, ABC_EMBEDDING_VERSION,
+                                  MAIN_SOURCE_FILE_CLASS, paragraph_pool_and_text)
 from utils.ateam_utils import get_all_curated_entities as _get_all_curated_entities
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
@@ -981,6 +983,61 @@ def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abb
             out_file.write(supp_bytes)
 
 
+def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
+                            profile_name: str = ABC_EMBEDDING_PROFILE,
+                            version: int = ABC_EMBEDDING_VERSION) -> Optional[Tuple[np.ndarray, str]]:
+    """Return ``(pooled_vector, paragraph_text)`` for a reference's MAIN-PDF ABC
+    embedding, or ``None`` when it is unavailable.
+
+    ``pooled_vector`` is the L2-normalized chunk-mean pool of the paragraph
+    embeddings and ``paragraph_text`` is the concatenated paragraph content (for
+    the hashed BoW block) — both from
+    :func:`utils.abc_embeddings.paragraph_pool_and_text`, read out of the embedding
+    parquet whose profile is ``profile_name``/``version`` and whose source Markdown
+    is the ``converted_merged_main`` (SCRUM-6142). Supplement embeddings and other
+    profiles are ignored.
+
+    Discovery uses the existing ``show_all`` metadata (which annotates every
+    ``embedding`` row with its ``profile_name``/``version`` and a ``source``
+    pointer) and the existing ``download_file`` fetch — MOD access on the parquet
+    is inherited from its source file, so no extra access handling is needed here.
+
+    ``None`` is returned (never raised) for every "not available" case — no
+    embedding row, an empty/broken parquet, or no paragraph rows — so callers can
+    treat it exactly like a missing MD file.
+    """
+    resp_obj = _show_all_for_reference(reference_curie)
+    if resp_obj is None:
+        return None
+
+    embedding_ref_file = None
+    for ref_file in resp_obj:
+        if ref_file.get("file_class") != "embedding":
+            continue
+        if ref_file.get("profile_name") != profile_name:
+            continue
+        if ref_file.get("version") != version:
+            continue
+        source = ref_file.get("source") or {}
+        if source.get("file_class") != MAIN_SOURCE_FILE_CLASS:
+            continue
+        embedding_ref_file = ref_file
+        break
+    if embedding_ref_file is None:
+        logger.debug("No %s embedding (main source) for %s", profile_name, reference_curie)
+        return None
+
+    parquet_bytes = get_file_from_abc_reffile_obj(embedding_ref_file)
+    if not parquet_bytes:
+        logger.error("Embedding parquet download returned no bytes for %s", reference_curie)
+        return None
+    try:
+        return paragraph_pool_and_text(parquet_bytes)
+    except Exception as e:
+        logger.error("Failed to read embedding parquet for %s: %s", reference_curie, e)
+        return None
+
+
 def get_model_data(mod_abbreviation: str, task_type: str, topic: str):
     model_data = None
     get_model_url = f"{blue_api_base_url}/ml_model/metadata/{task_type}/{mod_abbreviation}/{topic}"
@@ -1030,8 +1087,22 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
                     topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
                     no_data: Union[bool, None] = True, species: Union[str, None] = None,
-                    data_novelty: Union[str, None] = None,):
-    upload_url = f"{blue_api_base_url}/ml_model/upload"
+                    data_novelty: Union[str, None] = None, embedding_recipe: Union[dict, None] = None,):
+    # The model normally uploads to the same ABC as everything else
+    # (``blue_api_base_url``). ``ABC_UPLOAD_API_SERVER`` overrides only the upload
+    # target, so a run can read training data / embeddings from one environment
+    # (e.g. prod, where the embeddings live) and still upload the model to another
+    # (e.g. stage). dataset_id is shared across environments, so the uploaded
+    # metadata stays consistent.
+    upload_base = os.environ.get("ABC_UPLOAD_API_SERVER", "").strip() or blue_api_base_url
+    # Accept a scheme-less host (e.g. "stage-literature-rest.alliancegenome.org")
+    # and default it to https, so any host works — not only ones starting with
+    # "literature". A value that already carries a scheme is left untouched.
+    if "://" not in upload_base:
+        upload_base = f"https://{upload_base}"
+    upload_url = f"{upload_base}/ml_model/upload"
+    if upload_base != blue_api_base_url:
+        logger.info(f"Uploading model to override server: {upload_base}")
     token = get_authentication_token()
     headers = generate_headers(token)
 
@@ -1053,6 +1124,11 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "data_novelty": data_novelty,
         "species": species
     }
+    # ABC-embedding recipe (SCRUM-5781): dedicated ml_model columns so the model
+    # self-describes its feature recipe. Only sent for ABC-embedding models; legacy
+    # uploads leave these columns NULL.
+    if embedding_recipe:
+        metadata.update(embedding_recipe)
 
     model_dir = os.path.dirname(model_path)
     if topic is None:

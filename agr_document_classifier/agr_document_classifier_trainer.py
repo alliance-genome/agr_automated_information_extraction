@@ -9,9 +9,11 @@ import sys
 from datetime import datetime
 from typing import List, Union
 
+import utils.thread_limits  # noqa: F401  (import first: pins native threads to 1)
 import joblib
 import nltk
 import numpy as np
+import scipy.sparse as sp
 from gensim.models import KeyedVectors
 from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split
@@ -21,8 +23,10 @@ from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from models import POSSIBLE_CLASSIFIERS
-from utils.abc_utils import get_training_set_from_abc, upload_ml_model, get_reference_date
-from utils.embedding import load_embedding_model, build_feature_matrix
+from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
+                             get_reference_embedding)
+from utils.abc_embeddings import abc_embedding_recipe
+from utils.embedding import load_embedding_model, build_feature_matrix, get_bow_vectorizer
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
 
@@ -89,13 +93,71 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     return X_clean, y_clean, outlier_mask
 
 
+def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_bow: bool = False):
+    """Build ``(X, y)`` from the ABC precomputed classifier embeddings.
+
+    ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists.
+    Each reference's dense feature is the L2-normalized chunk-mean pool of its
+    main-PDF paragraph embeddings (:func:`utils.abc_utils.get_reference_embedding`).
+    When ``use_bow`` is set, the same stateless hashed bag-of-words block the
+    BioWordVec classifiers use is concatenated onto the embedding — hashed over the
+    references-excluded paragraph text carried in the parquet — yielding a sparse
+    matrix (SCRUM-6052 recipe). References without an available embedding are
+    dropped and counted, the same policy the BioWordVec path applies to references
+    with no downloadable MD file."""
+    rows = []
+    y = []
+    missing = 0
+    bow_vectorizer = get_bow_vectorizer() if use_bow else None
+    for label in ["positive", "negative"]:
+        for reference_curie in abc_curies.get(label, []):
+            result = get_reference_embedding(reference_curie, mod_abbreviation)
+            if result is None:
+                missing += 1
+                continue
+            pooled, text = result
+            if use_bow:
+                bow = bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""])
+                rows.append(sp.hstack([sp.csr_matrix(pooled.reshape(1, -1)), bow], format="csr"))
+            else:
+                rows.append(pooled)
+            y.append(int(label == "positive"))
+    if not rows:
+        raise ValueError("No ABC embeddings could be retrieved for the training set; "
+                         "cannot train. Check that the references have been embedded.")
+    logger.info(f"ABC embeddings retrieved for {len(rows)} references "
+                f"({missing} references had no embedding and were dropped). BoW={use_bow}.")
+    X = sp.vstack(rows, format="csr") if use_bow else np.vstack(rows)
+    return X, y
+
+
 def train_classifier(embedding_model_path: str, training_data_dir: str, weighted_average_word_embedding: bool = False,
                      standardize_embeddings: bool = False, normalize_embeddings: bool = False,
                      sections_to_use: List[str] = None, remove_outliers: bool = False,
                      outlier_method: str = 'isolation_forest', outlier_contamination: float = 0.1,
                      use_bow_features: bool = False, use_max_pooling: bool = False,
                      use_lsh_features: bool = False,
-                     include_keywords: bool = False, include_metadata: bool = False):
+                     include_keywords: bool = False, include_metadata: bool = False,
+                     use_abc_embeddings: bool = False, abc_curies: dict = None,
+                     mod_abbreviation: str = None):
+    if use_abc_embeddings:
+        # New path (SCRUM-5781): use the ABC's precomputed OpenAI embeddings instead
+        # of loading BioWordVec and pooling word vectors over downloaded Markdown.
+        # BoW (when enabled) is hashed from the parquet's own paragraph text, so no
+        # Markdown download is needed.
+        logger.info("Loading training set from ABC precomputed embeddings.")
+        # BoW is a fixed convention for ABC-embedding models (classify hardcodes it
+        # on too), so force it here regardless of use_bow_features — a model trained
+        # without it would mismatch feature dims at classify time.
+        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation, use_bow=True)
+        logger.info("Finished loading training set.")
+        logger.info(f"Dataset size: {str(len(y))}")
+        y = np.array(y)
+        # The matrix is wide+sparse (embedding + BoW), so the same SVC/MLP skip and
+        # gradient-booster concurrency cap the BioWordVec BoW path uses apply here.
+        return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                                     use_bow_features=True, use_lsh_features=False)
+
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
     texts = []
@@ -145,6 +207,12 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     logger.info(f"Dataset size: {str(len(y))}")
 
     y = np.array(y)
+    return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                                 use_bow_features=use_bow_features, use_lsh_features=use_lsh_features)
+
+
+def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                          use_bow_features=False, use_lsh_features=False):
 
     # Step 1: Split data into train+val (80%) and holdout test set (20%)
     X_train_val, X_test, y_train_val, y_test = train_test_split(
@@ -200,16 +268,18 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         n_iter = 50 if classifier_name in ['LogisticRegression', 'SGDClassifier'] else 30
 
         # RandomizedSearchCV fans every candidate fit out to its own worker
-        # process. On the wide sparse BoW/LSH matrix (2**18 columns) an XGBoost
-        # worker allocates gradient-histogram buffers sized by n_features
-        # (~3 GB per fit), so the default n_jobs=-1 (one worker per core) peaked
-        # at ~51 GB on the largest dataset and systemd-oomd killed the whole user
-        # slice. Cap XGBoost's *search* concurrency on wide matrices; the lighter
-        # models materialise far less and ran fine at full width. n_jobs does not
-        # change the result (the search is deterministic given random_state), so
-        # model-selection stats are unaffected. Override with SEARCH_MAX_JOBS.
+        # process. On the wide sparse BoW/LSH matrix (2**18 columns) a worker
+        # allocates buffers sized by n_features (XGBoost gradient histograms
+        # ~3 GB/fit; LightGBM feature histograms similarly), so the default
+        # n_jobs=-1 (one worker per core) peaks memory and a worker gets OS-killed
+        # (SIGSEGV) — reproduced on the larger FB training sets (e.g. disease,
+        # ~2774 refs) where LightGBM crashed even with native threads pinned to 1,
+        # while the smaller sets (~1500 refs) survived. Cap the *search* concurrency
+        # for every model on wide matrices; n_jobs does not change the result (the
+        # search is deterministic given random_state), so model-selection stats are
+        # unaffected. Override with SEARCH_MAX_JOBS.
         search_n_jobs = -1
-        if (use_bow_features or use_lsh_features) and classifier_name == 'XGBClassifier':
+        if use_bow_features or use_lsh_features:
             search_n_jobs = int(os.environ.get('SEARCH_MAX_JOBS', '4'))
 
         random_search = RandomizedSearchCV(
@@ -355,7 +425,7 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     data_novelty: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
                     species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False,
-                    training_data_dir: str = None):
+                    training_data_dir: str = None, embedding_recipe: Union[dict, None] = None):
     if training_data_dir is None:
         training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
     topic_formatted = topic.replace(':', '_')
@@ -370,7 +440,8 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
         upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
                         data_novelty=data_novelty, production=production,
                         no_data=no_data, species=species,
-                        model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
+                        model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib",
+                        embedding_recipe=embedding_recipe)
 
 
 def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, version_num, file_extension,
@@ -454,8 +525,9 @@ def parse_arguments():
                                                                  "locally.", required=False)
     parser.add_argument("--dataset_version", type=int, required=False,
                         help="Specific dataset version to use for training (defaults to latest)")
-    parser.add_argument("--filter_date_before", type=str, required=False,
-                        help="Filter out references published before this date (YYYY-MM-DD format)")
+    parser.add_argument("--filter_date_before", type=str, required=False, default="2005-01-01",
+                        help="Filter out references published before this date (YYYY-MM-DD format). "
+                             "Defaults to 2005-01-01; pass an empty string to disable date filtering.")
     # Outlier detection arguments
     parser.add_argument("--remove_outliers", action="store_true",
                         help="Enable outlier detection and removal")
@@ -467,11 +539,10 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def download_training_set(args, training_data_dir):
-    # Get training set with optional version
-    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                             version=args.dataset_version)
-
+def get_filtered_training_curies(args, training_set):
+    """Split a training set into positive/negative reference-curie lists, applying
+    the optional ``--filter_date_before`` cutoff. Returns
+    ``{"positive": [...], "negative": [...]}``."""
     reference_ids_positive = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
                               classification_value == "positive"]
     reference_ids_negative = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
@@ -510,6 +581,18 @@ def download_training_set(args, training_data_dir):
         reference_ids_positive = filtered_positive
         reference_ids_negative = filtered_negative
 
+    return {"positive": reference_ids_positive, "negative": reference_ids_negative}
+
+
+def download_training_set(args, training_data_dir):
+    # Get training set with optional version
+    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                                             version=args.dataset_version)
+
+    curies = get_filtered_training_curies(args, training_set)
+    reference_ids_positive = curies["positive"]
+    reference_ids_negative = curies["negative"]
+
     shutil.rmtree(os.path.join(training_data_dir, "positive"), ignore_errors=True)
     shutil.rmtree(os.path.join(training_data_dir, "negative"), ignore_errors=True)
     os.makedirs(os.path.join(training_data_dir, "positive"), exist_ok=True)
@@ -540,9 +623,12 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
-def train_and_save_model(args, training_data_dir, training_set):
+def train_and_save_model(args, training_data_dir, training_set, abc_curies=None):
     if args.test_mode:
         logger.info("Running in test mode. Model will be saved locally and not uploaded to ABC.")
+    # ABC precomputed embeddings + hashed BoW are the standard training recipe now
+    # (SCRUM-5781/6052): embedding alone underperformed BoW, embedding+BoW matched
+    # the BoW baseline, so both are always used.
     classifier, stats = train_classifier(
         embedding_model_path=args.embedding_model_path,
         training_data_dir=training_data_dir,
@@ -553,32 +639,41 @@ def train_and_save_model(args, training_data_dir, training_set):
         remove_outliers=args.remove_outliers,
         outlier_method=args.outlier_method,
         outlier_contamination=args.outlier_contamination,
-        use_bow_features=args.use_bow_features,
+        use_bow_features=True,
         use_max_pooling=args.use_max_pooling,
         use_lsh_features=args.use_lsh_features,
         include_keywords=args.include_keywords,
-        include_metadata=args.include_metadata)
+        include_metadata=args.include_metadata,
+        use_abc_embeddings=True,
+        abc_curies=abc_curies,
+        mod_abbreviation=args.mod_train)
     logger.info(f"Best classifier stats: {str(stats)}")
+    # Tag the model (via the ml_model embedding_* columns) so the classifier
+    # fetches ABC embeddings for it and rebuilds the identical embedding+BoW
+    # vector. Legacy BioWordVec models leave those columns NULL and keep their
+    # on-the-fly path.
+    embedding_recipe = abc_embedding_recipe()
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode,
-                    training_data_dir=training_data_dir)
+                    training_data_dir=training_data_dir, embedding_recipe=embedding_recipe)
 
 
 def train_mode(args):
+    # ABC precomputed embeddings are the default (and only) training source now.
+    # We need the dataset metadata (dataset_id) plus the positive/negative curie
+    # lists to fetch the embeddings; no MD/TEI download.
     training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
-    if args.skip_training_set_download:
-        logger.info("Skipping training set download")
-        training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
-                                                 metadata_only=True, version=args.dataset_version)
-    else:
-        training_set = download_training_set(args, training_data_dir)
+    logger.info("Training on ABC precomputed embeddings (default).")
+    training_set = get_training_set_from_abc(mod_abbreviation=args.mod_train, topic=args.datatype_train,
+                                             metadata_only=False, version=args.dataset_version)
+    abc_curies = get_filtered_training_curies(args, training_set)
     if args.skip_training:
         upload_pre_existing_model(args, training_set, training_data_dir)
     else:
-        train_and_save_model(args, training_data_dir, training_set)
+        train_and_save_model(args, training_data_dir, training_set, abc_curies=abc_curies)
 
 
 def main():
