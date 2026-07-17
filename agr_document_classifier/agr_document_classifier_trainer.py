@@ -146,15 +146,17 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         # BoW (when enabled) is hashed from the parquet's own paragraph text, so no
         # Markdown download is needed.
         logger.info("Loading training set from ABC precomputed embeddings.")
-        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation,
-                                             use_bow=use_bow_features)
+        # BoW is a fixed convention for ABC-embedding models (classify hardcodes it
+        # on too), so force it here regardless of use_bow_features — a model trained
+        # without it would mismatch feature dims at classify time.
+        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation, use_bow=True)
         logger.info("Finished loading training set.")
         logger.info(f"Dataset size: {str(len(y))}")
         y = np.array(y)
-        # When BoW is on the matrix is wide+sparse, so the same SVC/MLP skip and
-        # XGBoost concurrency cap the BioWordVec path uses must apply here too.
+        # The matrix is wide+sparse (embedding + BoW), so the same SVC/MLP skip and
+        # gradient-booster concurrency cap the BioWordVec BoW path uses apply here.
         return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
-                                     use_bow_features=use_bow_features, use_lsh_features=False)
+                                     use_bow_features=True, use_lsh_features=False)
 
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 

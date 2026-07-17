@@ -1095,7 +1095,10 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
     # (e.g. stage). dataset_id is shared across environments, so the uploaded
     # metadata stays consistent.
     upload_base = os.environ.get("ABC_UPLOAD_API_SERVER", "").strip() or blue_api_base_url
-    if upload_base.startswith("literature"):
+    # Accept a scheme-less host (e.g. "stage-literature-rest.alliancegenome.org")
+    # and default it to https, so any host works — not only ones starting with
+    # "literature". A value that already carries a scheme is left untouched.
+    if "://" not in upload_base:
         upload_base = f"https://{upload_base}"
     upload_url = f"{upload_base}/ml_model/upload"
     if upload_base != blue_api_base_url:
