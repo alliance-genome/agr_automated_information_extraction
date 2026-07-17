@@ -95,7 +95,8 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
 
-def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model, use_bow=False):
+def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model, use_bow=False,
+                                           embedding_cache=None):
     """Classify references using the ABC precomputed embeddings (SCRUM-5781).
 
     The per-reference dense feature is the L2-normalized chunk-mean pool of the
@@ -109,13 +110,23 @@ def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifie
 
     A reference with no available embedding is kept as a zero row flagged invalid,
     so the caller fails that job just like a missing MD in the BioWordVec path.
+
+    ``embedding_cache`` is an optional ``{curie: (pooled, text) | None}`` dict; when
+    provided the ABC embedding is fetched at most once per reference across calls,
+    which matters when several models are applied to the same references (the
+    re-classification pipeline shares one cache over all topics).
     """
     bow_vectorizer = get_bow_vectorizer() if use_bow else None
     rows = []
     ids_loaded = []
     valid_embeddings = []
     for reference_curie in reference_curies:
-        result = get_reference_embedding(reference_curie, mod_abbr)
+        if embedding_cache is not None and reference_curie in embedding_cache:
+            result = embedding_cache[reference_curie]
+        else:
+            result = get_reference_embedding(reference_curie, mod_abbr)
+            if embedding_cache is not None:
+                embedding_cache[reference_curie] = result
         ids_loaded.append(reference_curie)
         if result is None:
             pooled, text = np.zeros(ABC_EMBEDDING_DIM, dtype=np.float32), ""
