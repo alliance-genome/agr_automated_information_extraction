@@ -24,7 +24,7 @@ def _run_upload(monkeypatch_env):
                     task_type="biocuration_topic_classification", mod_abbreviation="FB",
                     topic="ATP:0000207", model_path=model_path, stats=_STATS, dataset_id=39,
                     file_extension="joblib", production=False,
-                    embedding_recipe={"embedding_profile": "prof", "use_bow_features": True})
+                    embedding_recipe={"embedding_profile": "prof", "embedding_version": 1})
             finally:
                 for key in monkeypatch_env:
                     os.environ.pop(key, None)
@@ -36,7 +36,7 @@ def test_upload_url_uses_override_when_set():
     assert url == "https://stage-literature-rest.alliancegenome.org/ml_model/upload"
     # the embedding recipe is sent as dedicated form fields
     assert call.kwargs["data"]["embedding_profile"] == "prof"
-    assert call.kwargs["data"]["use_bow_features"] is True
+    assert call.kwargs["data"]["embedding_version"] == 1
 
 
 def test_upload_url_defaults_to_blue_api_when_unset():

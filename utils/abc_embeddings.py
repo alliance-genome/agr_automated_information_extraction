@@ -67,17 +67,15 @@ def _l2(vector: np.ndarray) -> np.ndarray:
     return vector / norm if norm > 0 else vector
 
 
-def abc_embedding_recipe(use_bow: bool = True) -> dict:
-    """The ABC-embedding recipe fields to store on the model at train time
-    (the ``ml_model`` embedding_* columns + ``use_bow_features``), so the
-    classifier can rebuild the identical feature vector."""
+def abc_embedding_recipe() -> dict:
+    """The (profile, version) to store on the model at train time — the only pair
+    the classifier needs to select which stored embedding to fetch for a reference.
+    Pooling (L2 chunk-mean) and the BoW block are fixed conventions applied to every
+    ABC-embedding model, and model/dim are read from the parquet, so none of those
+    are stored on the model."""
     return {
         "embedding_profile": ABC_EMBEDDING_PROFILE,
         "embedding_version": ABC_EMBEDDING_VERSION,
-        "embedding_model": ABC_EMBEDDING_MODEL,
-        "embedding_dim": ABC_EMBEDDING_DIM,
-        "embedding_pooling": ABC_EMBEDDING_POOLING,
-        "use_bow_features": use_bow,
     }
 
 

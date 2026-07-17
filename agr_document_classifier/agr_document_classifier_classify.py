@@ -238,11 +238,13 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
     # embeddings for it; when absent (legacy BioWordVec model) the on-the-fly text
     # path below runs unchanged.
     use_abc_embeddings = is_abc_embedding_model(model_meta_data)
-    abc_use_bow = bool(model_meta_data.get("use_bow_features"))
+    # Pooling (L2 chunk-mean) and the BoW block are fixed conventions applied to
+    # every ABC-embedding model, so they are not stored on the model — always on.
+    abc_use_bow = True
     if use_abc_embeddings:
         logger.info(f"Model for mod: {mod_abbr}, topic: {topic} uses ABC embeddings "
                     f"(profile {model_meta_data.get('embedding_profile')} "
-                    f"v{model_meta_data.get('embedding_version')}, bow={abc_use_bow}).")
+                    f"v{model_meta_data.get('embedding_version')}).")
 
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)

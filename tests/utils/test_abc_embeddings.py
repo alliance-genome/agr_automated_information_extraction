@@ -21,14 +21,13 @@ def _parquet_bytes(rows):
 
 
 def test_recipe_fields():
-    recipe = abc_embeddings.abc_embedding_recipe(use_bow=True)
-    assert recipe["embedding_profile"] == abc_embeddings.ABC_EMBEDDING_PROFILE
-    assert recipe["embedding_version"] == abc_embeddings.ABC_EMBEDDING_VERSION
-    assert recipe["embedding_model"] == abc_embeddings.ABC_EMBEDDING_MODEL
-    assert recipe["embedding_dim"] == abc_embeddings.ABC_EMBEDDING_DIM
-    assert recipe["embedding_pooling"] == abc_embeddings.ABC_EMBEDDING_POOLING
-    assert recipe["use_bow_features"] is True
-    assert abc_embeddings.abc_embedding_recipe(use_bow=False)["use_bow_features"] is False
+    # Only (profile, version) are stored on the model; everything else is a fixed
+    # convention or read from the parquet.
+    recipe = abc_embeddings.abc_embedding_recipe()
+    assert recipe == {
+        "embedding_profile": abc_embeddings.ABC_EMBEDDING_PROFILE,
+        "embedding_version": abc_embeddings.ABC_EMBEDDING_VERSION,
+    }
 
 
 def test_is_abc_embedding_model():

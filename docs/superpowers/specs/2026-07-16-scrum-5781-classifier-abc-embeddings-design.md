@@ -43,13 +43,15 @@ already in production working exactly as before.
    "converted_merged_main"`. Supplement embeddings are ignored.
 5. **Retrocompat via dedicated `ml_model` columns** (not a global date cutoff):
    dedicated nullable columns are added to `ml_model` (agr_literature_service,
-   branch SCRUM-5781) — `embedding_profile`, `embedding_version`, `embedding_model`,
-   `embedding_dim`, `embedding_pooling`, `use_bow_features` — NULL for legacy models.
-   The trainer sets them at upload; the classifier reads them per model —
-   `embedding_profile` set ⇒ ABC-embedding path (rebuilding the identical
-   embedding[+BoW] vector); NULL/absent ⇒ the existing BioWordVec on-the-fly path,
-   byte-for-byte unchanged. (Earlier iterations stored this in
-   `description`/`parameters`; dedicated columns are cleaner and queryable.)
+   branch SCRUM-5781) — **`embedding_profile` + `embedding_version`** only — NULL
+   for legacy models. That pair is all the classifier needs *before* fetching, to
+   select which stored embedding to pull; pooling (L2 chunk-mean) and the BoW block
+   are fixed conventions applied to every ABC-embedding model (not stored), and
+   model/dim live in the parquet. The trainer sets the pair at upload; the
+   classifier reads it per model — `embedding_profile` set ⇒ ABC-embedding path;
+   NULL/absent ⇒ the existing BioWordVec on-the-fly path, byte-for-byte unchanged.
+   (Earlier iterations stored this in `description`/`parameters`; dedicated columns
+   are cleaner and queryable.)
 6. **Scope of retraining:** the five FB document-classification topics with a
    training dataset — disease (`ATP:0000152`), new transgene (`ATP:0000013`), new
    allele (`ATP:0000006`), physical interaction (`ATP:0000069`), and "no genetic
@@ -98,11 +100,10 @@ Single source of truth for the profile constants + the recipe helpers + parquet 
   - False ⇒ current BioWordVec path, unchanged.
 
 ### Backend `agr_literature_service` (branch SCRUM-5781)
-- Nullable `ml_model` columns `embedding_profile`/`embedding_version`/
-  `embedding_model`/`embedding_dim`/`embedding_pooling`/`use_bow_features`, wired
+- Nullable `ml_model` columns `embedding_profile` + `embedding_version`, wired
   through the create schema, `/ml_model/upload` Form params, and the crud
   (persist + return). Alembic migration generated separately + deployed before any
-  marked model is promoted to production.
+  ABC-embedding model is promoted to production.
 - The BioWordVec embedding model is still loaded once for the mixed run; ABC-marked
   models ignore it.
 

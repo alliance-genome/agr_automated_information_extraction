@@ -650,7 +650,7 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
     # fetches ABC embeddings for it and rebuilds the identical embedding+BoW
     # vector. Legacy BioWordVec models leave those columns NULL and keep their
     # on-the-fly path.
-    embedding_recipe = abc_embedding_recipe(use_bow=True)
+    embedding_recipe = abc_embedding_recipe()
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,
