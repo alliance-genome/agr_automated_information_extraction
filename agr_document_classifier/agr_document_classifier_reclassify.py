@@ -172,11 +172,14 @@ def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
     return {"topic": topic, "name": name, "refs": len(curies), "tets": sent, "skipped": skipped}
 
 
-def reclassify_no_gen_data(cache, dry_run, limit):
+def reclassify_no_gen_data(cache, dry_run, limit, curies_override=None):
     classifier, meta = _load_model(NO_GEN_DATA_TOPIC)
-    curies = get_curies_with_manual_indexing_tag(MOD, NO_GEN_DATA_TOPIC)
-    if limit:
-        curies = curies[:limit]
+    if curies_override:
+        curies = curies_override
+    else:
+        curies = get_curies_with_manual_indexing_tag(MOD, NO_GEN_DATA_TOPIC)
+        if limit:
+            curies = curies[:limit]
     logger.info(f"[{NO_GEN_DATA_TOPIC} no genetic data] {len(curies)} references with an existing tag")
     ids, classifications, confidences, valid = classify_documents_from_abc_embeddings(
         curies, MOD, classifier, use_bow=True, embedding_cache=cache)
@@ -204,6 +207,9 @@ def parse_arguments():
                         help="Target the stage ABC (where the retrained models live).")
     parser.add_argument("--limit", type=int, default=None,
                         help="Cap references per topic (smoke test).")
+    parser.add_argument("--curies", type=str, default=None,
+                        help="Comma-separated reference curies to target instead of enumerating "
+                             "(stage verification on a few known-embedded references).")
     parser.add_argument("--skip-no-gen-data", action="store_true",
                         help="Skip the ATP:0000207 manual_indexing update.")
     parser.add_argument("-l", "--log_level", type=str, default="INFO",
@@ -221,13 +227,19 @@ def main():
     if args.dry_run:
         logger.info("DRY RUN: no TETs created, no manual_indexing rows updated.")
 
+    explicit = [c.strip() for c in args.curies.split(",") if c.strip()] if args.curies else None
+
     tet_source_id = get_tet_source_id(mod_abbreviation=MOD, source_method=CLASSIFIER_SOURCE_METHOD,
                                       source_description=CLASSIFIER_SOURCE_DESCRIPTION)
-    tet_curies = get_reference_classification_complete_curies(MOD)
-    if args.limit:
-        tet_curies = tet_curies[:args.limit]
-    logger.info(f"{len(tet_curies)} references completed FB reference classification "
-                f"(shared by the {len(TET_TOPICS)} TET topics)")
+    if explicit:
+        tet_curies = explicit
+        logger.info(f"targeting {len(tet_curies)} explicit references (verification run)")
+    else:
+        tet_curies = get_reference_classification_complete_curies(MOD)
+        if args.limit:
+            tet_curies = tet_curies[:args.limit]
+        logger.info(f"{len(tet_curies)} references completed FB reference classification "
+                    f"(shared by the {len(TET_TOPICS)} TET topics)")
 
     # One embedding cache shared across every model so each reference is fetched once.
     cache: dict = {}
@@ -235,7 +247,7 @@ def main():
     for topic, name in TET_TOPICS.items():
         summary.append(reclassify_tet_topic(topic, name, tet_curies, tet_source_id, cache, args.dry_run))
     if not args.skip_no_gen_data:
-        summary.append(reclassify_no_gen_data(cache, args.dry_run, args.limit))
+        summary.append(reclassify_no_gen_data(cache, args.dry_run, args.limit, curies_override=explicit))
 
     logger.info("=" * 60)
     logger.info("Re-classification summary%s:", " (DRY RUN)" if args.dry_run else "")
