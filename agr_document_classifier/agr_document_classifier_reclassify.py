@@ -8,7 +8,10 @@ and just records the new models' output:
 - The four TET topics (disease ATP:0000152, physical interaction ATP:0000069,
   new allele ATP:0000006, new transgenic construct ATP:0000013) -> create NEW
   ``topic_entity_tag`` rows (new ``ml_model_id``); the old BioWordVec TETs are
-  left in place for provenance. No ``set_job_*`` / workflow-tag changes.
+  left in place for provenance. No ``set_job_*`` / workflow-tag changes. TET
+  creation uses the same gate as the production pipeline
+  (``send_classification_results``): a negated model tags every reference, a
+  non-negated model only tags positive calls (all five FB models are negated).
 - "No genetic data" (ATP:0000207) -> its result lives in ``manual_indexing_tag``,
   one row per (mod, reference, tag). We UPDATE the existing rows'
   ``confidence_score`` (the prediction column) in place and leave
@@ -152,12 +155,21 @@ def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
     classifier, meta = _load_model(topic)
     logger.info(f"[{topic} {name}] classifying {len(curies)} references")
     species = meta["species"] if (meta.get("species") or "").startswith("NCBITaxon:") else None
+    negated_model = bool(meta.get("negated"))
     ids, classifications, confidences, valid = classify_documents_from_abc_embeddings(
         curies, MOD, classifier, use_bow=True, embedding_cache=cache)
-    sent = skipped = 0
+    sent = skipped = not_tagged = 0
     for curie, cls, conf, ok in zip(ids, classifications, confidences, valid):
         if not ok:
             skipped += 1
+            continue
+        # Same TET gate as the production pipeline (send_classification_results):
+        # a negated model tags every reference; a non-negated model only tags
+        # positive calls. All FB reclassify models are negated=True, so this tags
+        # everything today, but keeping the gate avoids materializing negative TETs
+        # the normal pipeline would never create if ever run on a non-negated model.
+        if not (cls > 0 or negated_model):
+            not_tagged += 1
             continue
         if dry_run:
             sent += 1
@@ -168,8 +180,9 @@ def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
             tet_source_id=tet_source_id, ml_model_id=meta["ml_model_id"])
         sent += 1 if ok_sent else 0
     logger.info(f"[{topic} {name}] {'would create' if dry_run else 'created'} {sent} TETs "
-                f"({skipped} skipped: no embedding)")
-    return {"topic": topic, "name": name, "refs": len(curies), "tets": sent, "skipped": skipped}
+                f"({skipped} skipped: no embedding; {not_tagged} negative, not tagged)")
+    return {"topic": topic, "name": name, "refs": len(curies), "tets": sent,
+            "skipped": skipped, "not_tagged": not_tagged}
 
 
 def reclassify_no_gen_data(cache, dry_run, limit, curies_override=None):

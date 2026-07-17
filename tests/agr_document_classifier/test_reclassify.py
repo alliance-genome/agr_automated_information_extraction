@@ -57,6 +57,38 @@ def test_reference_classification_complete_query(mock_connect):
     assert params == ("FB", rc.REFERENCE_CLASSIFICATION_COMPLETE_TAGS)
 
 
+@patch("agr_document_classifier.agr_document_classifier_reclassify.send_classification_tag_to_abc")
+@patch("agr_document_classifier.agr_document_classifier_reclassify.classify_documents_from_abc_embeddings")
+@patch("agr_document_classifier.agr_document_classifier_reclassify._load_model")
+def test_tet_gate_negated_model_tags_every_reference(mock_load, mock_classify, mock_send):
+    mock_load.return_value = (object(), {"species": None, "negated": True,
+                                         "data_novelty": "ATP:0000335", "ml_model_id": 68})
+    mock_classify.return_value = (["c1", "c2", "c3"], [1, 0, 0], [0.9, 0.1, 0.2], [True, True, True])
+    mock_send.return_value = True
+
+    res = rc.reclassify_tet_topic("ATP:0000152", "disease", ["c1", "c2", "c3"], 5, {}, dry_run=False)
+
+    assert res["tets"] == 3           # negated model tags positives AND negatives
+    assert res["not_tagged"] == 0
+    assert mock_send.call_count == 3
+
+
+@patch("agr_document_classifier.agr_document_classifier_reclassify.send_classification_tag_to_abc")
+@patch("agr_document_classifier.agr_document_classifier_reclassify.classify_documents_from_abc_embeddings")
+@patch("agr_document_classifier.agr_document_classifier_reclassify._load_model")
+def test_tet_gate_non_negated_model_tags_only_positives(mock_load, mock_classify, mock_send):
+    mock_load.return_value = (object(), {"species": None, "negated": False,
+                                         "data_novelty": "ATP:0000335", "ml_model_id": 99})
+    mock_classify.return_value = (["c1", "c2", "c3"], [1, 0, 1], [0.9, 0.2, 0.8], [True, True, True])
+    mock_send.return_value = True
+
+    res = rc.reclassify_tet_topic("ATP:0000152", "disease", ["c1", "c2", "c3"], 5, {}, dry_run=False)
+
+    assert res["tets"] == 2           # matches production gate: negatives dropped
+    assert res["not_tagged"] == 1
+    assert mock_send.call_count == 2
+
+
 @patch("agr_document_classifier.agr_document_classifier_classify.predict_labels_and_confidence")
 @patch("agr_document_classifier.agr_document_classifier_classify.get_reference_embedding")
 def test_embedding_cache_fetches_each_reference_once(mock_get_emb, mock_predict):
