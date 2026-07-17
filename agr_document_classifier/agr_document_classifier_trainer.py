@@ -25,7 +25,7 @@ from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or
 from models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
                              get_reference_embedding)
-from utils.abc_embeddings import format_embedding_marker
+from utils.abc_embeddings import abc_embedding_recipe
 from utils.embedding import load_embedding_model, build_feature_matrix, get_bow_vectorizer
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
@@ -423,7 +423,7 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     data_novelty: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
                     species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False,
-                    training_data_dir: str = None, description: Union[str, None] = None):
+                    training_data_dir: str = None, embedding_recipe: Union[dict, None] = None):
     if training_data_dir is None:
         training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
     topic_formatted = topic.replace(':', '_')
@@ -439,7 +439,7 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
                         data_novelty=data_novelty, production=production,
                         no_data=no_data, species=species,
                         model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib",
-                        description=description)
+                        embedding_recipe=embedding_recipe)
 
 
 def save_stats_file(stats, file_path, task_type, mod_abbreviation, topic, version_num, file_extension,
@@ -646,16 +646,17 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
         abc_curies=abc_curies,
         mod_abbreviation=args.mod_train)
     logger.info(f"Best classifier stats: {str(stats)}")
-    # Tag the model so the classifier fetches ABC embeddings for it (and rebuilds
-    # the identical embedding+BoW vector). Legacy BioWordVec models carry no marker
-    # and keep their on-the-fly path.
-    description = format_embedding_marker(use_bow=True)
+    # Tag the model (via the ml_model embedding_* columns) so the classifier
+    # fetches ABC embeddings for it and rebuilds the identical embedding+BoW
+    # vector. Legacy BioWordVec models leave those columns NULL and keep their
+    # on-the-fly path.
+    embedding_recipe = abc_embedding_recipe(use_bow=True)
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode,
-                    training_data_dir=training_data_dir, description=description)
+                    training_data_dir=training_data_dir, embedding_recipe=embedding_recipe)
 
 
 def train_mode(args):

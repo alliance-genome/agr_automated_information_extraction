@@ -23,7 +23,8 @@ def _run_upload(monkeypatch_env):
                 abc_utils.upload_ml_model(
                     task_type="biocuration_topic_classification", mod_abbreviation="FB",
                     topic="ATP:0000207", model_path=model_path, stats=_STATS, dataset_id=39,
-                    file_extension="joblib", production=False, description="[abc_embeddings]")
+                    file_extension="joblib", production=False,
+                    embedding_recipe={"embedding_profile": "prof", "use_bow_features": True})
             finally:
                 for key in monkeypatch_env:
                     os.environ.pop(key, None)
@@ -33,8 +34,9 @@ def _run_upload(monkeypatch_env):
 def test_upload_url_uses_override_when_set():
     url, call = _run_upload({"ABC_UPLOAD_API_SERVER": "https://stage-literature-rest.alliancegenome.org"})
     assert url == "https://stage-literature-rest.alliancegenome.org/ml_model/upload"
-    # description carrying the marker is sent in the form data
-    assert call.kwargs["data"]["description"] == "[abc_embeddings]"
+    # the embedding recipe is sent as dedicated form fields
+    assert call.kwargs["data"]["embedding_profile"] == "prof"
+    assert call.kwargs["data"]["use_bow_features"] is True
 
 
 def test_upload_url_defaults_to_blue_api_when_unset():

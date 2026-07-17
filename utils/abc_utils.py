@@ -1087,7 +1087,7 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
                     topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
                     no_data: Union[bool, None] = True, species: Union[str, None] = None,
-                    data_novelty: Union[str, None] = None, description: Union[str, None] = None,):
+                    data_novelty: Union[str, None] = None, embedding_recipe: Union[dict, None] = None,):
     # The model normally uploads to the same ABC as everything else
     # (``blue_api_base_url``). ``ABC_UPLOAD_API_SERVER`` overrides only the upload
     # target, so a run can read training data / embeddings from one environment
@@ -1121,11 +1121,11 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "data_novelty": data_novelty,
         "species": species
     }
-    # ``description`` carries the ABC-embedding marker (SCRUM-5781) so the
-    # classifier can tell an ABC-embedding model from a legacy BioWordVec one.
-    # Only send it when set, to leave legacy uploads byte-identical.
-    if description is not None:
-        metadata["description"] = description
+    # ABC-embedding recipe (SCRUM-5781): dedicated ml_model columns so the model
+    # self-describes its feature recipe. Only sent for ABC-embedding models; legacy
+    # uploads leave these columns NULL.
+    if embedding_recipe:
+        metadata.update(embedding_recipe)
 
     model_dir = os.path.dirname(model_path)
     if topic is None:

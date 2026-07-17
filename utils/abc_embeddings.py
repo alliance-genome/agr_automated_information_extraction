@@ -54,13 +54,11 @@ _EMBEDDING_COLUMN = "embedding"
 _IS_DOCUMENT_LEVEL_COLUMN = "is_document_level"
 _CONTENT_COLUMN = "content"
 
-# Marker written into ``ml_model.description`` at train time and parsed at
-# classify time. Its presence is the retrocompat switch: a model whose metadata
-# carries the marker consumes ABC embeddings; a model without it (every model
-# trained before this change) keeps using the on-the-fly BioWordVec path. The
-# ``bow`` field records whether the hashed BoW block was concatenated, so classify
-# reconstructs the exact same feature vector without relying on CLI flags.
-_MARKER_SENTINEL = "[abc_embeddings]"
+# The ABC-embedding recipe is stored on the model as dedicated ``ml_model``
+# columns (SCRUM-5781), NOT overloaded into description/parameters. A model with
+# ``embedding_profile`` set was trained on ABC embeddings and the classifier
+# rebuilds the matching feature vector; a model with it NULL/absent (every model
+# trained before this change) keeps the on-the-fly BioWordVec path.
 
 
 def _l2(vector: np.ndarray) -> np.ndarray:
@@ -69,52 +67,24 @@ def _l2(vector: np.ndarray) -> np.ndarray:
     return vector / norm if norm > 0 else vector
 
 
-def format_embedding_marker(profile_name: str = ABC_EMBEDDING_PROFILE,
-                            version: int = ABC_EMBEDDING_VERSION,
-                            model: str = ABC_EMBEDDING_MODEL,
-                            dim: int = ABC_EMBEDDING_DIM,
-                            pooling: str = ABC_EMBEDDING_POOLING,
-                            use_bow: bool = False) -> str:
-    """Build the ``ml_model.description`` marker recording that a model was trained
-    on ABC embeddings and with which recipe (including whether BoW was used)."""
-    return (f"{_MARKER_SENTINEL} profile={profile_name} version={version} "
-            f"model={model} dim={dim} pooling={pooling} "
-            f"bow={'true' if use_bow else 'false'}")
-
-
-def parse_embedding_marker(description: Optional[str]) -> Optional[dict]:
-    """Parse an ABC-embedding marker out of a model's ``description``.
-
-    Returns a dict with ``profile_name``/``version``/``model``/``dim``/``pooling``/
-    ``bow`` when the marker is present, or ``None`` otherwise (i.e. a legacy
-    BioWordVec model). Parsing is tolerant: unknown/malformed tokens are ignored
-    and only the sentinel is required.
-    """
-    if not description or _MARKER_SENTINEL not in description:
-        return None
-    tail = description.split(_MARKER_SENTINEL, 1)[1]
-    parsed = {
-        "profile_name": ABC_EMBEDDING_PROFILE,
-        "version": ABC_EMBEDDING_VERSION,
-        "model": ABC_EMBEDDING_MODEL,
-        "dim": ABC_EMBEDDING_DIM,
-        "pooling": ABC_EMBEDDING_POOLING,
-        "bow": False,
+def abc_embedding_recipe(use_bow: bool = True) -> dict:
+    """The ABC-embedding recipe fields to store on the model at train time
+    (the ``ml_model`` embedding_* columns + ``use_bow_features``), so the
+    classifier can rebuild the identical feature vector."""
+    return {
+        "embedding_profile": ABC_EMBEDDING_PROFILE,
+        "embedding_version": ABC_EMBEDDING_VERSION,
+        "embedding_model": ABC_EMBEDDING_MODEL,
+        "embedding_dim": ABC_EMBEDDING_DIM,
+        "embedding_pooling": ABC_EMBEDDING_POOLING,
+        "use_bow_features": use_bow,
     }
-    for token in tail.split():
-        if "=" not in token:
-            continue
-        key, value = token.split("=", 1)
-        if key in ("version", "dim"):
-            try:
-                parsed[key] = int(value)
-            except ValueError:
-                logger.warning("Ignoring non-integer %s in embedding marker: %r", key, value)
-        elif key == "bow":
-            parsed["bow"] = value.strip().lower() == "true"
-        elif key in ("profile_name", "model", "pooling"):
-            parsed[key] = value
-    return parsed
+
+
+def is_abc_embedding_model(model_meta_data: Optional[dict]) -> bool:
+    """True if the model's metadata marks it as trained on ABC embeddings
+    (``embedding_profile`` set); legacy BioWordVec models have it NULL/absent."""
+    return bool((model_meta_data or {}).get("embedding_profile"))
 
 
 def paragraph_pool_and_text(parquet_bytes: bytes) -> Optional[Tuple[np.ndarray, str]]:

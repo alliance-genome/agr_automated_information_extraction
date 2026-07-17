@@ -21,7 +21,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     set_blue_api_base_url, \
     get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag, \
     get_current_workflow_status, get_reference_embedding
-from utils.abc_embeddings import parse_embedding_marker, ABC_EMBEDDING_DIM
+from utils.abc_embeddings import is_abc_embedding_model, ABC_EMBEDDING_DIM
 from utils.get_documents import get_documents, remove_stopwords
 from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
 
@@ -233,17 +233,16 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         else:
             raise
 
-    # Retrocompat switch (SCRUM-5781): a model trained on ABC embeddings carries a
-    # marker in its metadata description. When present we fetch ABC embeddings for
-    # it; when absent the model is a legacy BioWordVec one and the on-the-fly text
+    # Retrocompat switch (SCRUM-5781): a model trained on ABC embeddings has the
+    # embedding_* columns populated in its ml_model metadata. When set we fetch ABC
+    # embeddings for it; when absent (legacy BioWordVec model) the on-the-fly text
     # path below runs unchanged.
-    abc_marker = parse_embedding_marker(model_meta_data.get("description"))
-    use_abc_embeddings = abc_marker is not None
-    abc_use_bow = bool(abc_marker and abc_marker.get("bow"))
+    use_abc_embeddings = is_abc_embedding_model(model_meta_data)
+    abc_use_bow = bool(model_meta_data.get("use_bow_features"))
     if use_abc_embeddings:
         logger.info(f"Model for mod: {mod_abbr}, topic: {topic} uses ABC embeddings "
-                    f"(profile {abc_marker['profile_name']} v{abc_marker['version']}, "
-                    f"bow={abc_use_bow}).")
+                    f"(profile {model_meta_data.get('embedding_profile')} "
+                    f"v{model_meta_data.get('embedding_version')}, bow={abc_use_bow}).")
 
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
     jobs_to_process = copy.deepcopy(jobs)

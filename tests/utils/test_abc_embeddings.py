@@ -20,27 +20,24 @@ def _parquet_bytes(rows):
     return buffer.getvalue()
 
 
-def test_marker_round_trip_without_bow():
-    parsed = abc_embeddings.parse_embedding_marker(abc_embeddings.format_embedding_marker())
-    assert parsed is not None
-    assert parsed["profile_name"] == abc_embeddings.ABC_EMBEDDING_PROFILE
-    assert parsed["version"] == abc_embeddings.ABC_EMBEDDING_VERSION
-    assert parsed["pooling"] == abc_embeddings.ABC_EMBEDDING_POOLING
-    assert parsed["bow"] is False
+def test_recipe_fields():
+    recipe = abc_embeddings.abc_embedding_recipe(use_bow=True)
+    assert recipe["embedding_profile"] == abc_embeddings.ABC_EMBEDDING_PROFILE
+    assert recipe["embedding_version"] == abc_embeddings.ABC_EMBEDDING_VERSION
+    assert recipe["embedding_model"] == abc_embeddings.ABC_EMBEDDING_MODEL
+    assert recipe["embedding_dim"] == abc_embeddings.ABC_EMBEDDING_DIM
+    assert recipe["embedding_pooling"] == abc_embeddings.ABC_EMBEDDING_POOLING
+    assert recipe["use_bow_features"] is True
+    assert abc_embeddings.abc_embedding_recipe(use_bow=False)["use_bow_features"] is False
 
 
-def test_marker_round_trip_with_bow():
-    parsed = abc_embeddings.parse_embedding_marker(
-        abc_embeddings.format_embedding_marker(use_bow=True))
-    assert parsed is not None
-    assert parsed["bow"] is True
-
-
-def test_marker_absent_returns_none():
-    # Legacy (BioWordVec) models have no marker: description is None or unrelated.
-    assert abc_embeddings.parse_embedding_marker(None) is None
-    assert abc_embeddings.parse_embedding_marker("") is None
-    assert abc_embeddings.parse_embedding_marker("some free-form description") is None
+def test_is_abc_embedding_model():
+    # ABC-embedding model: embedding_profile is set.
+    assert abc_embeddings.is_abc_embedding_model({"embedding_profile": abc_embeddings.ABC_EMBEDDING_PROFILE})
+    # Legacy / unavailable: profile null or absent.
+    assert not abc_embeddings.is_abc_embedding_model({"embedding_profile": None})
+    assert not abc_embeddings.is_abc_embedding_model({})
+    assert not abc_embeddings.is_abc_embedding_model(None)
 
 
 def test_pool_is_l2_normalized_chunk_mean_and_excludes_document_level():
