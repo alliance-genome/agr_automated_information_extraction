@@ -266,16 +266,18 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
         n_iter = 50 if classifier_name in ['LogisticRegression', 'SGDClassifier'] else 30
 
         # RandomizedSearchCV fans every candidate fit out to its own worker
-        # process. On the wide sparse BoW/LSH matrix (2**18 columns) an XGBoost
-        # worker allocates gradient-histogram buffers sized by n_features
-        # (~3 GB per fit), so the default n_jobs=-1 (one worker per core) peaked
-        # at ~51 GB on the largest dataset and systemd-oomd killed the whole user
-        # slice. Cap XGBoost's *search* concurrency on wide matrices; the lighter
-        # models materialise far less and ran fine at full width. n_jobs does not
-        # change the result (the search is deterministic given random_state), so
-        # model-selection stats are unaffected. Override with SEARCH_MAX_JOBS.
+        # process. On the wide sparse BoW/LSH matrix (2**18 columns) a worker
+        # allocates buffers sized by n_features (XGBoost gradient histograms
+        # ~3 GB/fit; LightGBM feature histograms similarly), so the default
+        # n_jobs=-1 (one worker per core) peaks memory and a worker gets OS-killed
+        # (SIGSEGV) — reproduced on the larger FB training sets (e.g. disease,
+        # ~2774 refs) where LightGBM crashed even with native threads pinned to 1,
+        # while the smaller sets (~1500 refs) survived. Cap the *search* concurrency
+        # for every model on wide matrices; n_jobs does not change the result (the
+        # search is deterministic given random_state), so model-selection stats are
+        # unaffected. Override with SEARCH_MAX_JOBS.
         search_n_jobs = -1
-        if (use_bow_features or use_lsh_features) and classifier_name == 'XGBClassifier':
+        if use_bow_features or use_lsh_features:
             search_n_jobs = int(os.environ.get('SEARCH_MAX_JOBS', '4'))
 
         random_search = RandomizedSearchCV(
