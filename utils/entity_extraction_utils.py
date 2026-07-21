@@ -1686,3 +1686,165 @@ def rescue_superscript_alleles_from_markdown(raw_markdown: str, model) -> List[s
             if token and token in curated_set:
                 rescued.add(token)
     return sorted(rescued)
+
+
+# --------------------------------------------------------------------- #
+# ZFIN gene extraction refinements (curator-requested)                  #
+# --------------------------------------------------------------------- #
+# For ZFIN genes specifically, curators asked to:
+#   1. match LOWER-CASE symbols only - zebrafish genes are lower-case italics, so
+#      upper-case human orthologs (SLC26A4, TEAD4, MT-RNR1) and title-case mouse
+#      genes (Emx2) must not map onto their zebrafish namesakes. This is handled
+#      by running gene matching through the case_sensitive path in
+#      build_entities_from_results (curated ZFIN symbols are lower-case).
+#   2. not pull a gene out of a construct such as ``Tg(gene:reporter)`` or a
+#      promoter fusion ``gene:EGFP`` ("those are constructs, extract them
+#      separately") -> gene_has_standalone_mention().
+#   3. skip Introduction / Discussion / References and keep Results + Materials
+#      and Methods -> restrict_markdown_to_results_methods().
+ZFIN_GENE_TOPIC = "ATP:0000005"
+
+# ATX heading line, e.g. "## Results", "### Statistical analysis".
+_MD_HEADING_RE = re.compile(r'^(#{1,6})\s+(.+?)\s*$')
+# Leading enumeration pandoc keeps on some headings: "3.", "4.1", "IV.", "A)".
+_SECTION_HEADING_NUMBER_RE = re.compile(
+    r'^\s*(?:\d+(?:\.\d+)*|[IVXLCDMivxlcdm]+|[A-Za-z])[.)]\s+'
+)
+# KEEP is tested before DROP so a combined "Results and Discussion" heading is
+# kept for its results content.
+_KEEP_SECTION_RE = re.compile(
+    r'\b(results?|materials?\s+and\s+methods|methods?|methodology|'
+    r'experimental\s+(?:procedures?|section)|star\s+methods)\b',
+    re.IGNORECASE,
+)
+_DROP_SECTION_RE = re.compile(
+    r'\b(introduction|background|discussion|conclusions?|perspectives?|summary|'
+    r'references|bibliography|literature\s+cited|acknowledge?ments?|funding|'
+    r'authors?|competing|conflicts?|disclosures?|data\s+availability|'
+    r'abbreviations|supp\w*|supporting\s+information|figure\s+legends?|'
+    r'abstract|ethics|consent|declarations?)\b',
+    re.IGNORECASE,
+)
+
+
+def _classify_section_heading(title: str) -> str:
+    """Classify a heading title as ``keep`` (results/methods), ``drop`` (intro,
+    discussion, references, ...) or ``neutral`` (unknown; inherits its parent)."""
+    cleaned = re.sub(r'[*_`]+', '', title or '')
+    cleaned = re.sub(r'\{[^}]*\}', '', cleaned)            # pandoc {#id} anchors
+    cleaned = _SECTION_HEADING_NUMBER_RE.sub('', cleaned).strip()
+    if _KEEP_SECTION_RE.search(cleaned):
+        return "keep"
+    if _DROP_SECTION_RE.search(cleaned):
+        return "drop"
+    return "neutral"
+
+
+def restrict_markdown_to_results_methods(raw_md: str) -> Optional[str]:
+    """Return the markdown of the Results + Materials/Methods sections only.
+
+    Splits ``raw_md`` on ATX headings and keeps a heading's content when the
+    nearest explicitly-classified ancestor heading is a KEEP section (results or
+    methods). Neutral subsections (e.g. "Statistical analysis" under Methods)
+    inherit their parent's decision; DROP sections (Introduction, Discussion,
+    References, ...) and any heading with no KEEP ancestor are excluded.
+
+    Returns ``None`` when no Results/Methods heading is found, signalling the
+    caller to fall back to scanning the whole body - so papers with numbered,
+    combined, or absent section headers are not silently emptied.
+    """
+    if not raw_md:
+        return None
+    stack: List[Tuple[int, str]] = []           # (heading level, decision)
+    kept: List[str] = []
+    found_keep = False
+    keeping = False
+
+    def _inherited() -> str:
+        for _, dec in reversed(stack):
+            if dec in ("keep", "drop"):
+                return dec
+        return "drop"
+
+    for line in raw_md.splitlines():
+        m = _MD_HEADING_RE.match(line)
+        if m:
+            level = len(m.group(1))
+            decision = _classify_section_heading(m.group(2))
+            while stack and stack[-1][0] >= level:
+                stack.pop()
+            stack.append((level, decision))
+            keeping = _inherited() == "keep"
+            if keeping:
+                found_keep = True
+            continue                            # never keep the heading line itself
+        if keeping:
+            kept.append(line)
+
+    if not found_keep:
+        return None
+    restricted = "\n".join(kept).strip()
+    return restricted or None
+
+
+# Only letters/digits count as "identifier continuation" when deciding whether a
+# match is a whole token: a match flanked by an alphanumeric is a substring of a
+# longer identifier (``fn1a`` inside ``fn1ab``) and does not count. Punctuation
+# such as a trailing sentence period (``slc26a4.``) is a clean edge, NOT a
+# continuation - this keeps genes at sentence end from being missed.
+_GENE_IDENT_CHAR_RE = re.compile(r'[A-Za-z0-9]')
+_GENE_CONSTRUCT_LEFT_CHARS = "(:"
+_GENE_CONSTRUCT_RIGHT_CHARS = "):"
+
+
+def gene_has_standalone_mention(text: str, gene: str) -> bool:
+    """True if ``gene`` occurs at least once as a standalone token in ``text``.
+
+    A standalone occurrence is a whole-token match (not flanked by an
+    alphanumeric, so it is not a substring of a longer identifier) that is NOT
+    immediately embedded in construct notation - i.e. not directly preceded by
+    ``(`` or ``:`` and not directly followed by ``)`` or ``:``. This drops genes
+    that appear only inside transgene/reporter constructs such as
+    ``Tg(gene:reporter)`` or promoter fusions ``gene:EGFP`` while keeping the
+    same gene when it is also mentioned on its own. The ``zgc:NNNNN`` nomenclature
+    is unaffected because its colon is INTERNAL to the matched name; only the
+    characters flanking the name are inspected.
+    """
+    if not text or not gene:
+        return False
+    for m in re.finditer(re.escape(gene), text):
+        prev_c = text[m.start() - 1] if m.start() > 0 else ""
+        next_c = text[m.end()] if m.end() < len(text) else ""
+        if prev_c and _GENE_IDENT_CHAR_RE.match(prev_c):
+            continue                            # substring of a longer identifier
+        if next_c and _GENE_IDENT_CHAR_RE.match(next_c):
+            continue
+        # Truthiness guards matter: an empty boundary (start/end of text) is a
+        # clean edge, but "" in "(:" is True in Python, so it must be excluded.
+        if (prev_c and prev_c in _GENE_CONSTRUCT_LEFT_CHARS) or \
+           (next_c and next_c in _GENE_CONSTRUCT_RIGHT_CHARS):
+            continue                            # embedded in a construct
+        return True
+    return False
+
+
+def filter_construct_embedded_genes(
+    entities: List[str], text: str
+) -> Tuple[List[str], List[str]]:
+    """Partition gene candidates into those with at least one standalone mention
+    and those that only ever appear inside constructs.
+
+    Returns ``(kept, dropped)``. When ``text`` is empty every candidate is kept
+    (no evidence to reject on), mirroring the fail-open behaviour of the other
+    context filters.
+    """
+    if not text:
+        return list(entities), []
+    kept: List[str] = []
+    dropped: List[str] = []
+    for ent in entities:
+        if gene_has_standalone_mention(text, ent):
+            kept.append(ent)
+        else:
+            dropped.append(ent)
+    return kept, dropped
