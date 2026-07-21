@@ -59,8 +59,11 @@ from utils.entity_extraction_utils import (
     rescue_short_alleles_from_fulltext,
     rescue_zfin_all_letter_genes_from_markdown,
     rescue_superscript_alleles_from_markdown,
+    restrict_markdown_to_results_methods,
+    filter_construct_embedded_genes,
     filter_false_positive_alleles,
     is_allele_topic,
+    ZFIN_GENE_TOPIC,
     ABC_ALLELE_TOPIC,
     TRANSGENIC_ALLELE_TOPIC,
     build_transgenic_allele_curies,
@@ -175,14 +178,46 @@ def prefilter_text(fulltext: str, model) -> str:
     )
 
 
-def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model, raw_markdown: str = "") -> List[str]:
+def build_entities_from_results(results, title: str, abstract: str, fulltext: str, model, raw_markdown: str = "") -> List[str]:  # noqa: C901
     allele_mode = is_allele_topic(getattr(model, "topic", None))
+    # ZFIN gene extraction has its own curator-requested rules (lower-case only,
+    # no construct-embedded genes, Results/Methods sections only).
+    gene_mode = (
+        getattr(model, "mod_abbr", None) == "ZFIN"
+        and getattr(model, "topic", None) == ZFIN_GENE_TOPIC
+    )
+
+    # For ZFIN genes, restrict the body to Results + Materials/Methods so
+    # orthologs/background genes cited in the Introduction, Discussion and
+    # References are not extracted. Falls back to the whole body when those
+    # sections cannot be detected (numbered/combined/absent headers), so recall
+    # on unstructured papers is preserved. Title and abstract are always scanned
+    # (they are handled separately below and were not flagged by curators).
+    gene_raw_markdown = raw_markdown or fulltext
+    if gene_mode and raw_markdown:
+        restricted = restrict_markdown_to_results_methods(raw_markdown)
+        if restricted is not None:
+            gene_raw_markdown = restricted
+            logger.info(
+                "ZFIN-GENE-SECTIONS: restricted body to Results/Materials-and-Methods "
+                "(%d -> %d chars)", len(raw_markdown), len(restricted),
+            )
+        else:
+            logger.info(
+                "ZFIN-GENE-SECTIONS: no Results/Methods headers detected; "
+                "scanning whole body"
+            )
+    # The text the gene regex / count gate / construct filter operate on. For
+    # ZFIN genes this is the section-restricted markdown (formatting is inert to
+    # the token regex and is required by the italic rescue); otherwise the plain
+    # fulltext unchanged.
+    body_text = gene_raw_markdown if gene_mode else fulltext
 
     entities = build_entities_from_results_generic(
         results=results,
         title=title,
         abstract=abstract,
-        fulltext=fulltext,
+        fulltext=body_text,
         model=model,
         pattern=get_generic_name_pattern(model.topic),
         is_species=False,
@@ -192,14 +227,32 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
         use_count_gate=False,
         # Alleles are matched with strict case-sensitivity so look-alikes that
         # differ only by case (e.g. the balancer chromosome 'qC1' vs. the curated
-        # allele 'qc1') are never conflated. Candidates returned here already
-        # equal a curated allele name exactly.
-        case_sensitive=allele_mode,
+        # allele 'qc1') are never conflated. ZFIN genes use the same strict path
+        # so upper-case human orthologs (SLC26A4, TEAD4) and title-case mouse
+        # genes (Emx2) cannot map onto their lower-case zebrafish namesakes.
+        # Candidates returned here already equal a curated name exactly.
+        case_sensitive=allele_mode or gene_mode,
     )
+
+    # ZFIN genes: drop candidates that only ever appear embedded in a construct
+    # such as Tg(gene:reporter) or a promoter fusion gene:EGFP - curators extract
+    # those constructs separately. A gene mentioned standalone anywhere in the
+    # title, abstract or Results/Methods body is kept.
+    if gene_mode:
+        construct_text = "\n".join(t for t in (title, abstract, body_text) if t)
+        before_construct = len(entities)
+        entities, construct_dropped = filter_construct_embedded_genes(entities, construct_text)
+        if construct_dropped:
+            logger.info(
+                "ZFIN-GENE-CONSTRUCT: dropping %d construct-embedded genes "
+                "(%d -> %d): %s",
+                len(construct_dropped), before_construct, len(entities),
+                ", ".join(sorted(construct_dropped)),
+            )
 
     # The generic body regex requires a digit for precision.  Recover no-digit
     # ZFIN genes only when article typography marks them as gene symbols.
-    italic_gene_rescues = rescue_zfin_all_letter_genes_from_markdown(raw_markdown or fulltext, model)
+    italic_gene_rescues = rescue_zfin_all_letter_genes_from_markdown(gene_raw_markdown, model)
     if italic_gene_rescues:
         logger.info(
             "ZFIN-GENE-RESCUE: adding %d curated italic all-letter genes: %s",
@@ -292,7 +345,7 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     # and the precision filter once a tuned threshold is set. Then drop curated
     # symbols that are common English words (author/methods collisions), which
     # the tf-idf gate misses at threshold 0.
-    count_text = "\n".join(t for t in (title, abstract, fulltext) if t)
+    count_text = "\n".join(t for t in (title, abstract, body_text) if t)
     before_gate = len(entities)
     entities = apply_tfidf_count_gate(entities, count_text, model)
     # Italic-typography rescues are high-confidence: re-add any the tf-idf/count
