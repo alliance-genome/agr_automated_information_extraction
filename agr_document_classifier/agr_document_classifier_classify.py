@@ -31,6 +31,15 @@ from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
 
 logger = logging.getLogger(__name__)
 
+# SCRUM-6203: an FB "no genetic data" (ATP:0000207) paper only gets the "manual indexing
+# status TBD" workflow tag (ATP:0000359) -- i.e. only surfaces for manual indexing -- when the
+# classifier's positive-class confidence is at least this threshold. Previously the tag was
+# created for every classified paper (an effective threshold of 0); it was raised now that a
+# weekly pipeline exports every manual_indexing_tag score to FB directly, so the low-confidence
+# papers no longer need surfacing. The manual_indexing_tag row itself is still written for every
+# paper regardless of confidence (the export consumes all of them).
+FB_NO_GENETIC_DATA_TBD_THRESHOLD = 0.5
+
 
 def configure_logging(log_level):
     # Configure logging based on the log_level argument
@@ -332,7 +341,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
                         f"confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' "
                         f"data_novelty: '{model_meta_data['data_novelty']}'")
         logger.info(f"Finished processing batch of {len(files_loaded)} jobs in test mode. Positive: "
-                    f"{sum(classifications)}. Negative: {len(classifications)-sum(classifications)}")
+                    f"{sum(classifications)}. Negative: {len(classifications) - sum(classifications)}")
     else:
         send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings,
                                     reference_curie_job_map, mod_abbr, topic, tet_source_id, model_meta_data)
@@ -370,7 +379,13 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' data_novelty: '{model_meta_data['data_novelty']}")
             if send_to_manual_indexing:
                 result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
-                if result and topic == 'ATP:0000207':  # set the wf to TBD only for FB no gen dta
+                # SCRUM-6203: only set the "manual indexing status TBD" workflow tag for FB
+                # "no genetic data" when the model is actually positive for the topic, i.e.
+                # confidence_score >= 0.5. The manual_indexing_tag above is still written for
+                # every paper (the weekly FB export consumes all scores).
+                if (result and topic == 'ATP:0000207'
+                        and conf_score is not None
+                        and conf_score >= FB_NO_GENETIC_DATA_TBD_THRESHOLD):
                     # Only create workflow tag if no manual indexing workflow tag exists
                     current_manual_indexing_status = get_current_workflow_status(
                         reference_curie, mod_abbr, "ATP:0000273")
