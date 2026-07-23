@@ -326,6 +326,19 @@ SUPPLEMENTARY_REF_CONTEXT_RE = re.compile(
     re.IGNORECASE
 )
 
+# Developmental-staging collisions: "st9", "st20", "st23" are curated ZFIN
+# st-series alleles but in cross-species papers they are Nieuwkoop-Faber (Xenopus)
+# developmental stages ("developmental stages: NF st9, st10.5, st12.5, ... st40").
+# ALLELE_ST_TOKEN matches the st<number> shape; DEV_STAGING_CONTEXT fires only on
+# staging-specific notation - an "NF st", a decimal stage like "st10.5" (no allele
+# is written with a decimal), or "Nieuwkoop" - so genuine st-alleles in ordinary
+# papers are left untouched.
+ALLELE_ST_TOKEN_RE = re.compile(r'^st\d+$', re.IGNORECASE)
+DEV_STAGING_CONTEXT_RE = re.compile(
+    r'(?:\bNF\s*st\d)|(?:\bst\d+\.\d)|(?:Nieuwkoop)',
+    re.IGNORECASE
+)
+
 
 def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:  # noqa: C901
     """
@@ -339,6 +352,14 @@ def is_false_positive_allele(fulltext: str, candidate: str) -> tuple[bool, str]:
         return False, ""
 
     cand_lower = candidate.lower()
+
+    # 0. Developmental-staging collisions (Xenopus Nieuwkoop-Faber stages).
+    #    "NF st9", "st10.5", ... are developmental stages, not st-series alleles.
+    #    Fires only when the paper carries staging-specific notation (an "NF st",
+    #    a decimal stage like st10.5, or "Nieuwkoop"), so genuine st-alleles in
+    #    ordinary papers are unaffected.
+    if ALLELE_ST_TOKEN_RE.match(candidate) and DEV_STAGING_CONTEXT_RE.search(fulltext):
+        return True, f"developmental stage ({candidate}, Nieuwkoop-Faber staging context)"
 
     # 1. Check for transgene markers (qIs*, wIs*, etc.)
     # Only filter if used in marker/reporter context to avoid dropping studied transgenes

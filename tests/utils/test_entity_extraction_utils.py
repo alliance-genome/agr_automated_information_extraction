@@ -11,6 +11,7 @@ from utils.entity_extraction_utils import (
     restrict_markdown_to_results_methods,
     gene_has_standalone_mention,
     filter_construct_embedded_genes,
+    is_false_positive_allele,
 )
 
 
@@ -152,6 +153,37 @@ def test_standalone_gene_ion_and_alone_kept():
 def test_standalone_gene_plain_not_ion_kept():
     # A bare ca2 with no trailing '+' is a real gene mention.
     assert gene_has_standalone_mention("expression of ca2 increased", "ca2")
+
+
+# --------------------------------------------------------------------- #
+# Allele FP: Xenopus Nieuwkoop-Faber developmental-staging collisions   #
+# --------------------------------------------------------------------- #
+_STAGING_TEXT = (
+    "Embryos were fixed at the following developmental stages: NF st9 (n = 6), "
+    "st10.5 (n = 6), st12.5 (n = 6), st18 (n = 5), st20 (n = 5), st23 (n = 6), "
+    "st28 (n = 6) and st40 (n = 5)."
+)
+
+
+def test_allele_staging_st_token_rejected_in_staging_context():
+    for stg in ("st9", "st20", "st23"):
+        is_fp, reason = is_false_positive_allele(_STAGING_TEXT, stg)
+        assert is_fp, f"{stg} should be dropped in NF-staging context"
+        assert "developmental stage" in reason
+
+
+def test_allele_st_token_kept_without_staging_context():
+    # Same st-token, ordinary allele paper (no NF/decimal-stage/Nieuwkoop cue).
+    text = "the st20 mutant showed a fin phenotype; st20 carriers were crossed"
+    is_fp, _ = is_false_positive_allele(text, "st20")
+    assert not is_fp
+
+
+def test_allele_non_st_token_unaffected_by_staging_guard():
+    # A non-st allele in a paper that also uses staging notation is not touched
+    # by the staging guard (may still pass/fail other rules; here it passes).
+    is_fp, reason = is_false_positive_allele(_STAGING_TEXT, "vo84")
+    assert not (is_fp and "developmental stage" in reason)
 
 
 def test_standalone_zgc_id_with_internal_colon_kept():
