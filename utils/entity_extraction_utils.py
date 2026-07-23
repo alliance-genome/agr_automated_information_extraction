@@ -1795,6 +1795,12 @@ def restrict_markdown_to_results_methods(raw_md: str) -> Optional[str]:
 _GENE_IDENT_CHAR_RE = re.compile(r'[A-Za-z0-9]')
 _GENE_CONSTRUCT_LEFT_CHARS = "(:"
 _GENE_CONSTRUCT_RIGHT_CHARS = "):"
+# A trailing '+' (ASCII) or superscript '⁺' (U+207A) marks ion / charge notation
+# such as Ca2+, Mg2+, K+ - never a gene symbol - so an occurrence immediately
+# followed by one is not a standalone gene mention. Requested by ZFIN curators
+# after the carbonic-anhydrase gene ``ca2`` was matched inside the calcium ion
+# ``Ca2+``.
+_GENE_ION_RIGHT_CHARS = "+⁺"
 
 
 def gene_has_standalone_mention(text: str, gene: str) -> bool:
@@ -1803,12 +1809,14 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
     A standalone occurrence is a whole-token match (not flanked by an
     alphanumeric, so it is not a substring of a longer identifier) that is NOT
     immediately embedded in construct notation - i.e. not directly preceded by
-    ``(`` or ``:`` and not directly followed by ``)`` or ``:``. This drops genes
-    that appear only inside transgene/reporter constructs such as
-    ``Tg(gene:reporter)`` or promoter fusions ``gene:EGFP`` while keeping the
-    same gene when it is also mentioned on its own. The ``zgc:NNNNN`` nomenclature
-    is unaffected because its colon is INTERNAL to the matched name; only the
-    characters flanking the name are inspected.
+    ``(`` or ``:`` and not directly followed by ``)`` or ``:`` - and NOT
+    immediately followed by ``+`` (ion / charge notation, e.g. the calcium ion
+    ``Ca2+`` vs the carbonic-anhydrase gene ``ca2``). This drops genes that
+    appear only inside transgene/reporter constructs such as
+    ``Tg(gene:reporter)`` or promoter fusions ``gene:EGFP``, or only as an ion,
+    while keeping the same gene when it is also mentioned on its own. The
+    ``zgc:NNNNN`` nomenclature is unaffected because its colon is INTERNAL to the
+    matched name; only the characters flanking the name are inspected.
     """
     if not text or not gene:
         return False
@@ -1824,6 +1832,8 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
         if (prev_c and prev_c in _GENE_CONSTRUCT_LEFT_CHARS) or \
            (next_c and next_c in _GENE_CONSTRUCT_RIGHT_CHARS):
             continue                            # embedded in a construct
+        if next_c and next_c in _GENE_ION_RIGHT_CHARS:
+            continue                            # ion / charge notation (Ca2+)
         return True
     return False
 

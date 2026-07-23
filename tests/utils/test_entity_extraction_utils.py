@@ -136,6 +136,24 @@ def test_standalone_promoter_fusion_rejected():
     assert not gene_has_standalone_mention("the sox10:EGFP fusion", "sox10")
 
 
+def test_standalone_ion_notation_rejected():
+    # The calcium ion Ca2+ must not count as a mention of the gene ca2.
+    assert not gene_has_standalone_mention("influx of Ca2+ into the cell", "ca2")
+    # Superscript-plus variant (U+207A).
+    assert not gene_has_standalone_mention("cytosolic Ca2⁺ levels", "ca2")
+
+
+def test_standalone_gene_ion_and_alone_kept():
+    # Present as the ion AND as a standalone gene mention -> kept.
+    text = "Ca2+ signalling; the ca2 gene was upregulated"
+    assert gene_has_standalone_mention(text, "ca2")
+
+
+def test_standalone_gene_plain_not_ion_kept():
+    # A bare ca2 with no trailing '+' is a real gene mention.
+    assert gene_has_standalone_mention("expression of ca2 increased", "ca2")
+
+
 def test_standalone_zgc_id_with_internal_colon_kept():
     # The colon is INTERNAL to the name, not a construct delimiter.
     assert gene_has_standalone_mention("the zgc:174917 gene", "zgc:174917")
