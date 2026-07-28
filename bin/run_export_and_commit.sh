@@ -12,6 +12,9 @@
 # Example GoCD task:
 #
 #   docker run --rm \
+#     --log-driver gelf \
+#     --log-opt gelf-address=udp://logs.alliancegenome.org:12201 \
+#     --log-opt tag=agr.aie.prod.fb_textmining_export \
 #     -e BLUE_PASSWORD -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
 #     -e SVN_USERNAME -e SVN_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \

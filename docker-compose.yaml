@@ -31,3 +31,13 @@ services:
       - SENDER_PASSWORD=${SENDER_PASSWORD}
       - REPLY_TO=${REPLY_TO}
       - SLACK_CHANNEL_EMAIL=${SLACK_CHANNEL_EMAIL}
+    # Ship container stdout/stderr to the Alliance Graylog instance, mirroring the
+    # pattern used by agr_literature_service. GELF_ADDRESS / ENV_STATE / GELF_COMPONENT
+    # are consumed by Compose during interpolation (not by the container process), so
+    # they belong in the env file / invoking shell and NOT in the environment: list
+    # above. GELF_COMPONENT is set per invocation by the Makefile targets.
+    logging:
+      driver: gelf
+      options:
+        gelf-address: '${GELF_ADDRESS:-udp://logs.alliancegenome.org:12201}'
+        tag: 'agr.aie.${ENV_STATE:-dev}.${GELF_COMPONENT:-unspecified}'

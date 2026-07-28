@@ -13,6 +13,7 @@ Documents for training and classification are fetched from the ABC repository in
 - [Installation](#installation)
 - [Usage](#usage)
 - [Configuration](#configuration)
+- [Logging to Graylog](#logging-to-graylog)
 - [Development](#development)
 - [License](#license)
 
@@ -72,3 +73,65 @@ The project uses environment variables for configuration. These variables are de
 - ABC_API_SERVER: URL for the ABC API server.
 - OKTA_*: Configuration for Okta authentication.
 - CLASSIFICATION_BATCH_SIZE: Batch size for document classification.
+- ENV_STATE / GELF_ADDRESS: Centralized logging, see below.
+
+## Logging to Graylog
+
+Container stdout and stderr are shipped to the Alliance Graylog instance at
+`udp://logs.alliancegenome.org:12201` using Docker's built-in `gelf` log driver,
+the same mechanism `agr_literature_service` uses. There is no Python-side GELF
+library and no application code involved — anything a pipeline writes to stdout or
+stderr is forwarded by the Docker daemon.
+
+The driver is declared in the `logging:` block of `docker-compose.yaml` and is
+controlled by three variables, all consumed by Compose during interpolation rather
+than by the container process (so they must **not** be added to the `environment:`
+list):
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GELF_ADDRESS` | `udp://logs.alliancegenome.org:12201` | Where to send GELF packets. |
+| `ENV_STATE` | `dev` | Separates dev / stage / prod streams. Set to `prod` on production hosts. |
+| `GELF_COMPONENT` | `unspecified` | Which pipeline is running. Set per invocation by the Makefile targets. |
+
+### Finding your run in Graylog
+
+Search on the `tag` field, which is built as `agr.aie.<ENV_STATE>.<GELF_COMPONENT>` —
+for example `tag:agr.aie.prod.classify`. The Docker driver also attaches
+`container_name`, `container_id`, `image_name`, `command` (the exact `python <script>
+--args` line) and `host`, so individual runs remain distinguishable even without a tag.
+
+### Jobs launched outside Compose
+
+The FlyBase textmining jobs run from GoCD as bare `docker run`, which bypasses
+`docker-compose.yaml`. They need the equivalent flags on the `docker run` command
+itself (see the header comments in `bin/run_export_and_commit.sh` and
+`bin/check_textmining_freshness.sh`):
+
+```sh
+docker run --rm \
+  --log-driver gelf \
+  --log-opt gelf-address=udp://logs.alliancegenome.org:12201 \
+  --log-opt tag=agr.aie.prod.fb_textmining_export \
+  ...
+```
+
+### Caveats
+
+- **`docker logs` no longer works.** With a non-`json-file` driver Docker keeps no
+  local copy. Interactive `docker-compose run` still prints to your terminal, since
+  attach is independent of the log driver, so day-to-day development is unaffected.
+- **The container will not start if the GELF address cannot be resolved.** Docker
+  resolves it at container-create time. To opt out locally, create an uncommitted
+  `docker-compose.override.yaml` (Compose loads it automatically):
+  ```yaml
+  services:
+    agr_automated_information_extraction:
+      logging:
+        driver: json-file
+  ```
+- **Only stdout/stderr is shipped.** Scripts that redirect output to a file (the
+  `crontab` entry, the `.log` files parsed by
+  `scripts/fb_gene_extraction_summarize_run_logs.py`) bypass Graylog entirely.
+- **GELF over UDP is lossy and unordered**, and messages larger than ~8KB are
+  chunked. Do not rely on Graylog for anything that must not be dropped.

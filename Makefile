@@ -15,17 +15,19 @@ run-mypy:
 run-local-mypy:
 	mypy --config-file mypy.config .
 
+# GELF_COMPONENT feeds the gelf log driver's `tag` option in docker-compose.yaml, so
+# each pipeline is identifiable in Graylog as agr.aie.<ENV_STATE>.<component>.
 train:
-	docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_document_classifier.py --mode train --embedding_model_path /data/agr_document_classifier/BioWordVec.vec.bin --datatype_train $(DATATYPE) --mod_train $(MOD)
+	GELF_COMPONENT=train docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_document_classifier.py --mode train --embedding_model_path /data/agr_document_classifier/BioWordVec.vec.bin --datatype_train $(DATATYPE) --mod_train $(MOD)
 
 classify:
-	docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_document_classifier.py --mode classify --embedding_model_path /data/agr_document_classifier/BioWordVec.vec.bin
+	GELF_COMPONENT=classify docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_document_classifier.py --mode classify --embedding_model_path /data/agr_document_classifier/BioWordVec.vec.bin
 
 extract_entities:
-	docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_entity_extractor.py
+	GELF_COMPONENT=extract_entities docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python agr_entity_extractor.py
 
 classify_antibody:
-	docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python -m agr_document_classifier.agr_antibody_string_matching_classifier
+	GELF_COMPONENT=classify_antibody docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python -m agr_document_classifier.agr_antibody_string_matching_classifier
 
 doc_classifier_full_build:
 	docker build . -f Dockerfile_Base -t agr_document_classifier_base

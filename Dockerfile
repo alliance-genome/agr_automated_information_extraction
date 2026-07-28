@@ -1,6 +1,10 @@
 FROM agr_document_classifier_base
 
 ENV TZ=UTC
+# Unbuffer stdout so log lines reach the Docker gelf log driver as they are emitted.
+# Without this, Python block-buffers stdout whenever it is not a TTY (the GoCD
+# `docker run` case) and anything unflushed is lost if the process is killed.
+ENV PYTHONUNBUFFERED=1
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /usr/src/app
 ADD ./requirements.txt .
