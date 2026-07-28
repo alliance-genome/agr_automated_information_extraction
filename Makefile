@@ -33,15 +33,18 @@ classify_antibody:
 # The legacy agr_document_classifier / agr_document_classifier_base tags are still
 # applied to the same images so existing GoCD tasks keep working; drop them once
 # every pipeline references the new names.
+# IMAGE_APP_TEST is the stage variant: the same image, tagged a second time in the
+# same build, so stage and prod are guaranteed to be byte-identical.
 IMAGE_BASE=agr.literature.automated_information_extraction.server-base
 IMAGE_APP=agr.literature.automated_information_extraction.server
+IMAGE_APP_TEST=agr.literature.automated_information_extraction.server-test
 
 doc_classifier_full_build:
 	docker build . -f Dockerfile_Base -t ${IMAGE_BASE} -t agr_document_classifier_base
-	docker build . -t ${IMAGE_APP} -t agr_document_classifier
+	docker build . -t ${IMAGE_APP} -t ${IMAGE_APP_TEST} -t agr_document_classifier
 
 doc_classifier_build:
-	docker build . -t ${IMAGE_APP} -t agr_document_classifier
+	docker build . -t ${IMAGE_APP} -t ${IMAGE_APP_TEST} -t agr_document_classifier
 
 flybert_build:
 	docker build . -f Dockerfile_Base -t ${IMAGE_BASE} -t agr_document_classifier_base
