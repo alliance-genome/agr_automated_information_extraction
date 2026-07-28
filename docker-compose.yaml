@@ -4,8 +4,10 @@ services:
     build: .
     # Without this Compose derives <project>-<service>; naming it explicitly keeps
     # `docker-compose build/run` in step with the Makefile targets and makes the
-    # _image_name field in Graylog readable.
-    image: agr.literature.automated_information_extraction.server
+    # _image_name field in Graylog readable. Override APP_IMAGE to run the
+    # independently built stage image on the same host, e.g.
+    #   APP_IMAGE=agr.literature.automated_information_extraction.server-test
+    image: ${APP_IMAGE:-agr.literature.automated_information_extraction.server}
     volumes:
       - ${TRAINING_DIR}:/data/agr_document_classifier/training
       - ${CLASSIFICATION_DIR}:/data/agr_document_classifier/to_classify

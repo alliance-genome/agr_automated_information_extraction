@@ -13,6 +13,7 @@ Documents for training and classification are fetched from the ABC repository in
 - [Installation](#installation)
 - [Usage](#usage)
 - [Configuration](#configuration)
+- [Running a stage/test image](#running-a-stagetest-image)
 - [Logging to Graylog](#logging-to-graylog)
 - [Development](#development)
 - [License](#license)
@@ -74,6 +75,29 @@ The project uses environment variables for configuration. These variables are de
 - OKTA_*: Configuration for Okta authentication.
 - CLASSIFICATION_BATCH_SIZE: Batch size for document classification.
 - ENV_STATE / GELF_ADDRESS: Centralized logging, see below.
+
+## Running a stage/test image
+
+The stage image is built independently — normally from a feature branch — and runs
+against the stage/test database. It is a separate build, not a retag of the prod
+image, so a later prod build cannot silently replace it.
+
+```sh
+# build it (tags agr.literature.automated_information_extraction.server-test)
+make doc_classifier_build_test
+
+# run it on the same host as prod, pointed at the stage DB via a different env file
+make classify ENV_FILE=.env.stage \
+  APP_IMAGE=agr.literature.automated_information_extraction.server-test
+```
+
+`APP_IMAGE` selects which image the compose service runs and defaults to the prod
+image. Database credentials and every other setting come from `ENV_FILE`, so prod
+and stage can run side by side on one machine without interfering. Set
+`ENV_STATE=stage` in that env file to keep the two apart in Graylog.
+
+Note GoCD builds these images itself with raw `docker build --no-cache`, not via
+make, so the tags it applies are configured in the pipeline rather than here.
 
 ## Logging to Graylog
 
