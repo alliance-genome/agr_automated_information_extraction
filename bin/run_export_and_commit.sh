@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Self-healing wrapper for the FlyBase ABC textmining export + SVN commit step.
 #
-# This script is intended to run INSIDE the agr_document_classifier container.
+# This script is intended to run INSIDE the
+# agr.literature.automated_information_extraction.server container.
 # The container owns the SVN working copy end-to-end: it checks it out on every
 # run (the WC is ephemeral; no host bind-mount), the export scripts write to it,
 # and the wrapper commits back. SVN auth comes from $SVN_USERNAME / $SVN_PASSWORD
@@ -19,7 +20,7 @@
 #     -e SVN_USERNAME -e SVN_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
 #     -e CURATION_STATUS_DIR=/curation_status \
-#     agr_document_classifier \
+#     agr.literature.automated_information_extraction.server \
 #     ./bin/run_export_and_commit.sh
 #
 # CURATION_STATUS_DIR must be /curation_status: the export scripts hardcode

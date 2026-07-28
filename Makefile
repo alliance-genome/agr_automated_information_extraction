@@ -29,13 +29,20 @@ extract_entities:
 classify_antibody:
 	GELF_COMPONENT=classify_antibody docker-compose --env-file ${ENV_FILE} run agr_automated_information_extraction python -m agr_document_classifier.agr_antibody_string_matching_classifier
 
+# Image naming follows the Alliance convention agr.literature.<component>.<role>.
+# The legacy agr_document_classifier / agr_document_classifier_base tags are still
+# applied to the same images so existing GoCD tasks keep working; drop them once
+# every pipeline references the new names.
+IMAGE_BASE=agr.literature.automated_information_extraction.server-base
+IMAGE_APP=agr.literature.automated_information_extraction.server
+
 doc_classifier_full_build:
-	docker build . -f Dockerfile_Base -t agr_document_classifier_base
-	docker build . -t agr_document_classifier
+	docker build . -f Dockerfile_Base -t ${IMAGE_BASE} -t agr_document_classifier_base
+	docker build . -t ${IMAGE_APP} -t agr_document_classifier
 
 doc_classifier_build:
-	docker build . -t agr_document_classifier
+	docker build . -t ${IMAGE_APP} -t agr_document_classifier
 
 flybert_build:
-	docker build . -f Dockerfile_Base -t agr_document_classifier_base
+	docker build . -f Dockerfile_Base -t ${IMAGE_BASE} -t agr_document_classifier_base
 	docker build . -t flybert

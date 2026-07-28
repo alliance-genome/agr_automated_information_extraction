@@ -1,4 +1,4 @@
-FROM agr_document_classifier_base
+FROM agr.literature.automated_information_extraction.server-base
 
 ENV TZ=UTC
 # Unbuffer stdout so log lines reach the Docker gelf log driver as they are emitted.

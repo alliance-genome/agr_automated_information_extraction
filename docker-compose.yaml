@@ -2,6 +2,10 @@ version: '3'
 services:
   agr_automated_information_extraction:
     build: .
+    # Without this Compose derives <project>-<service>; naming it explicitly keeps
+    # `docker-compose build/run` in step with the Makefile targets and makes the
+    # _image_name field in Graylog readable.
+    image: agr.literature.automated_information_extraction.server
     volumes:
       - ${TRAINING_DIR}:/data/agr_document_classifier/training
       - ${CLASSIFICATION_DIR}:/data/agr_document_classifier/to_classify

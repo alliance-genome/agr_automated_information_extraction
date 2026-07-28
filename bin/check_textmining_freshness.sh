@@ -3,8 +3,9 @@
 # If any file's last commit is older than STALE_THRESHOLD_DAYS (default 3),
 # emails curators.
 #
-# Designed to run inside the agr_document_classifier container so it has access
-# to svn 1.14 and to send_report. The cron entry on the GoCD agent should be:
+# Designed to run inside the agr.literature.automated_information_extraction.server
+# container so it has access to svn 1.14 and to send_report. The cron entry on the
+# GoCD agent should be:
 #
 #   30 13 * * * docker run --rm \
 #     --log-driver gelf \
@@ -13,7 +14,7 @@
 #     -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
 #     -e SVN_USERNAME -e SVN_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
-#     agr_document_classifier \
+#     agr.literature.automated_information_extraction.server \
 #     ./bin/check_textmining_freshness.sh
 #
 # Required env vars:
