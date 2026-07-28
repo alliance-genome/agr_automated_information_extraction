@@ -1,4 +1,9 @@
-FROM agr.literature.automated_information_extraction.server-base
+# Deliberately still the legacy base-image name: GoCD builds the base image itself,
+# outside make, and tags it agr_document_classifier_base. The Makefile applies both
+# that tag and agr.literature.automated_information_extraction.server-base to the
+# same image, so this resolves either way. Flip it to the new name only once the
+# GoCD base-image build step has been updated to match.
+FROM agr_document_classifier_base
 
 ENV TZ=UTC
 # Unbuffer stdout so log lines reach the Docker gelf log driver as they are emitted.
