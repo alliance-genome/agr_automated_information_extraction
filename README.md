@@ -140,6 +140,34 @@ docker run --rm \
   ...
 ```
 
+### Network requirement: the host must be inside the Alliance VPC
+
+`logs.alliancegenome.org` resolves to `172.31.97.52`, an RFC1918 private address in
+the Alliance VPC. **Only hosts inside that network can deliver GELF packets.**
+Public DNS resolves the name from anywhere, so resolution succeeding tells you
+nothing about reachability.
+
+This fails silently and is easy to misdiagnose:
+
+- the name resolves, so the container starts and the driver initialises normally;
+- GELF over UDP is fire-and-forget — no connection, no ACK, no error;
+- the job runs to completion and exits 0, output appears on the console as usual,
+  and the messages simply never arrive in Graylog.
+
+Confirmed unreachable from the FlyBase GoCD agent `flysql26` (100% packet loss to
+`172.31.97.52`). Checks, run on the host in question:
+
+```sh
+ip route get 172.31.97.52     # default gateway means no path into the VPC
+ping -c2 172.31.97.52
+traceroute -n -U -p 12201 172.31.97.52
+```
+
+For hosts outside the VPC, either point `GELF_ADDRESS` at a reachable endpoint or
+omit the `--log-driver`/`--log-opt` flags entirely — for those jobs the GoCD console
+remains the log of record. Getting them into Graylog is a networking change
+(a reachable GELF input, or peering/firewall access), not a change to this repo.
+
 ### Caveats
 
 - **`docker logs` no longer works.** With a non-`json-file` driver Docker keeps no

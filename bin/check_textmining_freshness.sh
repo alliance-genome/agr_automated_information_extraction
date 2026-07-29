@@ -17,6 +17,12 @@
 #     agr.literature.automated_information_extraction.server \
 #     ./bin/check_textmining_freshness.sh
 #
+# NOTE: the three gelf options only work from hosts inside the Alliance VPC --
+# logs.alliancegenome.org is 172.31.97.52, an RFC1918 address. The FlyBase GoCD
+# agent (flysql26) has no route to it, so the packets are silently dropped: the
+# container starts fine, the job passes, and nothing reaches Graylog. Omit them
+# there and use the GoCD console. See the README, "Network requirement".
+#
 # Required env vars:
 #   SVN_REPO_URL                                   - parent URL of the
 #                                                    textmining_*.txt files
