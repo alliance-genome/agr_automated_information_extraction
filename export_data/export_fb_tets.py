@@ -67,6 +67,7 @@ def get_data(table_name: str):
                              AND cr.curie_prefix = 'PMID'
                              AND s.source_method = 'abc_document_classifier'
                              AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
+                             AND tet.validation_by_professional_biocurator != 'validated_wrong'
                              order by tet.date_created desc;"""
         print(query)
     else:
