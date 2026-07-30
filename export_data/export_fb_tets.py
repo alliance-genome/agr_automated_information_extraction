@@ -76,7 +76,7 @@ def get_data(table_name: str):
                              AND mit.reference_id = cr.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND mit.mod_id = 1
-                             AND mit.validation_by_biocurator is NULL
+                             AND mit.validation_by_biocurator != 'validated_wrong'
                              order by mit.date_created desc"""
         print(query)
 
