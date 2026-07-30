@@ -68,6 +68,7 @@ def get_data(table_name: str):
                              AND cr.curie_prefix = 'PMID'
                              AND s.source_method = 'abc_document_classifier'
                              AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
+                             AND tet.validation_by_professional_biocurator != 'validated_wrong'
                              order by tet.date_created desc;"""
         print(query)
     else:
@@ -77,7 +78,7 @@ def get_data(table_name: str):
                              AND mit.reference_id = cr.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND mit.mod_id = 1
-                             AND mit.validation_by_biocurator is NULL
+                             AND mit.validation_by_biocurator != 'validated_wrong'
                              order by mit.date_created desc"""
         print(query)
 

@@ -67,6 +67,7 @@ def get_data(table_name: str):
                              AND cr.curie_prefix = 'PMID'
                              AND s.source_method = 'abc_document_classifier'
                              AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
+                             AND tet.validation_by_professional_biocurator != 'validated_wrong'
                              order by tet.date_created desc;"""
         print(query)
     else:
@@ -76,7 +77,7 @@ def get_data(table_name: str):
                              AND mit.reference_id = cr.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND mit.mod_id = 1
-                             AND mit.validation_by_biocurator is NULL
+                             AND mit.validation_by_biocurator != 'validated_wrong'
                              order by mit.date_created desc"""
         print(query)
 
@@ -121,11 +122,11 @@ def dump_tet():
                 # taken from method get_confidence_level in classifier
                 if type(row[2]) == float:
                     ## add loop to set confidence level to neg for manual_indexing_tag results where mit.confidence_score = 0 so that they can be put in the negative pot
-                    if row[2] == 0:
+                    if row[2] < 0.5:
                         conf_level = "neg"
-                    elif row[2] < 0.667:
+                    elif row[2] < 0.75:
                         conf_level = "low"
-                    elif row[2] < 0.833:
+                    elif row[2] < 0.9:
                         conf_level = "medium"
                     else:
                         conf_level = "high"
