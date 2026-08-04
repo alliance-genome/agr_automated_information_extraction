@@ -30,9 +30,9 @@ from utils.embedding import load_embedding_model, build_feature_matrix, get_bow_
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
 
-nltk.download('stopwords')
-nltk.download('punkt')
-nltk.download('punkt_tab')
+nltk.download('stopwords', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
 
 logger = logging.getLogger(__name__)
 

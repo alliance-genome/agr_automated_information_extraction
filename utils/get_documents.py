@@ -10,9 +10,9 @@ from nltk.corpus import stopwords
 from utils.md_utils import AllianceMarkdown
 
 # Download required NLTK data
-nltk.download('stopwords')
-nltk.download('punkt')
-nltk.download('punkt_tab')
+nltk.download('stopwords', quiet=True)
+nltk.download('punkt', quiet=True)
+nltk.download('punkt_tab', quiet=True)
 
 logger = logging.getLogger(__name__)
 
