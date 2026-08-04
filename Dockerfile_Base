@@ -1,6 +1,9 @@
 FROM python:3.11-slim
 
 ENV TZ=UTC
+# Unbuffer stdout/stderr so log lines leave the process as they are emitted rather
+# than in block-buffered chunks, which are lost if the container is killed.
+ENV PYTHONUNBUFFERED=1
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /usr/src/app
 ADD ./requirements.txt .

@@ -1,6 +1,9 @@
 FROM agr_document_classifier_base
 
 ENV TZ=UTC
+# Set here as well as in Dockerfile_Base: the base image is built separately by GoCD,
+# so this file cannot assume the base it is built on already carries it.
+ENV PYTHONUNBUFFERED=1
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /usr/src/app
 ADD ./requirements.txt .
