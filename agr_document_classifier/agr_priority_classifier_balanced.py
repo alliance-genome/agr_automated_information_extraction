@@ -43,13 +43,13 @@ from utils.md_utils import AllianceMarkdown
 from agr_literature_service.lit_processing.utils.report_utils import send_report
 from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
 
-nltk.download('stopwords', quiet=True)
-nltk.download('punkt', quiet=True)
-nltk.download('punkt_tab', quiet=True)
-
 root_data_path = "/data/agr_document_classifier/"
 
 logger = logging.getLogger(__name__)
+
+for pkg in ('stopwords', 'punkt', 'punkt_tab'):
+    if not nltk.download(pkg, quiet=True):
+        logger.warning('NLTK download failed for %s; tokenization may fail later', pkg)
 
 
 def configure_logging(log_level):

@@ -9,12 +9,12 @@ from nltk.corpus import stopwords
 
 from utils.md_utils import AllianceMarkdown
 
-# Download required NLTK data
-nltk.download('stopwords', quiet=True)
-nltk.download('punkt', quiet=True)
-nltk.download('punkt_tab', quiet=True)
-
 logger = logging.getLogger(__name__)
+
+# Download required NLTK data
+for pkg in ('stopwords', 'punkt', 'punkt_tab'):
+    if not nltk.download(pkg, quiet=True):
+        logger.warning('NLTK download failed for %s; tokenization may fail later', pkg)
 
 
 def get_documents(input_docs_dir: str, include_keywords: bool = False,
