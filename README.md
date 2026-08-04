@@ -102,7 +102,8 @@ make, so the tags it applies are configured in the pipeline rather than here.
 ## Logging to Graylog
 
 Container stdout and stderr are shipped to the Alliance Graylog instance at
-`udp://logs.alliancegenome.org:12201` using Docker's built-in `gelf` log driver,
+`udp://agr-log-nlb-prod-2338fbd566b1dd01.elb.us-east-1.amazonaws.com:12201`
+using Docker's built-in `gelf` log driver,
 the same mechanism `agr_literature_service` uses. There is no Python-side GELF
 library and no application code involved — anything a pipeline writes to stdout or
 stderr is forwarded by the Docker daemon.
@@ -114,7 +115,7 @@ list):
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `GELF_ADDRESS` | `udp://logs.alliancegenome.org:12201` | Where to send GELF packets. |
+| `GELF_ADDRESS` | `udp://agr-log-nlb-prod-2338fbd566b1dd01.elb.us-east-1.amazonaws.com:12201` | Where to send GELF packets. |
 | `ENV_STATE` | `dev` | Separates dev / stage / prod streams. Set to `prod` on production hosts. |
 | `GELF_COMPONENT` | `unspecified` | Which pipeline is running. Set per invocation by the Makefile targets. |
 
@@ -135,15 +136,16 @@ itself (see the header comments in `bin/run_export_and_commit.sh` and
 ```sh
 docker run --rm \
   --log-driver gelf \
-  --log-opt gelf-address=udp://logs.alliancegenome.org:12201 \
+  --log-opt gelf-address=udp://agr-log-nlb-prod-2338fbd566b1dd01.elb.us-east-1.amazonaws.com:12201 \
   --log-opt tag=agr.aie.prod.fb_textmining_export \
   ...
 ```
 
 ### Network requirement: the host must be inside the Alliance VPC
 
-`logs.alliancegenome.org` resolves to `172.31.97.52`, an RFC1918 private address in
-the Alliance VPC. **Only hosts inside that network can deliver GELF packets.**
+`agr-log-nlb-prod-2338fbd566b1dd01.elb.us-east-1.amazonaws.com` resolves to
+`172.31.96.173`, an RFC1918 private address in the Alliance VPC (it is an
+internal NLB). **Only hosts inside that network can deliver GELF packets.**
 Public DNS resolves the name from anywhere, so resolution succeeding tells you
 nothing about reachability.
 
@@ -155,12 +157,12 @@ This fails silently and is easy to misdiagnose:
   and the messages simply never arrive in Graylog.
 
 Confirmed unreachable from the FlyBase GoCD agent `flysql26` (100% packet loss to
-`172.31.97.52`). Checks, run on the host in question:
+the Graylog input's private address). Checks, run on the host in question:
 
 ```sh
-ip route get 172.31.97.52     # default gateway means no path into the VPC
-ping -c2 172.31.97.52
-traceroute -n -U -p 12201 172.31.97.52
+ip route get 172.31.96.173     # default gateway means no path into the VPC
+ping -c2 172.31.96.173
+traceroute -n -U -p 12201 172.31.96.173
 ```
 
 For hosts outside the VPC, either point `GELF_ADDRESS` at a reachable endpoint or

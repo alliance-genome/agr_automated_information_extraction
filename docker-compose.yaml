@@ -45,5 +45,5 @@ services:
     logging:
       driver: gelf
       options:
-        gelf-address: '${GELF_ADDRESS:-udp://logs.alliancegenome.org:12201}'
+        gelf-address: '${GELF_ADDRESS:-udp://agr-log-nlb-prod-2338fbd566b1dd01.elb.us-east-1.amazonaws.com:12201}'
         tag: 'agr.aie.${ENV_STATE:-dev}.${GELF_COMPONENT:-unspecified}'

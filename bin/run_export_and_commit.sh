@@ -14,7 +14,7 @@
 #
 #   docker run --rm \
 #     --log-driver gelf \
-#     --log-opt gelf-address=udp://logs.alliancegenome.org:12201 \
+#     --log-opt gelf-address=udp://agr-log-nlb-prod-2338fbd566b1dd01.elb.us-east-1.amazonaws.com:12201 \
 #     --log-opt tag=agr.aie.prod.fb_textmining_export \
 #     -e BLUE_PASSWORD -e CRONTAB_EMAIL -e SENDER_EMAIL -e SENDER_PASSWORD \
 #     -e SVN_USERNAME -e SVN_PASSWORD \
@@ -24,7 +24,7 @@
 #     ./bin/run_export_and_commit.sh
 #
 # NOTE: the three gelf options only work from hosts inside the Alliance VPC --
-# logs.alliancegenome.org is 172.31.97.52, an RFC1918 address. The FlyBase GoCD
+# the log NLB resolves to 172.31.96.173, an RFC1918 address. The FlyBase GoCD
 # agent (flysql26) has no route to it, so the packets are silently dropped: the
 # container starts fine, the job passes, and nothing reaches Graylog. Omit them
 # there and use the GoCD console. See the README, "Network requirement".
