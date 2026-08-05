@@ -9,6 +9,9 @@ attrs==21.4.0
 beautifulsoup4==4.12.3
 cachetools==5.5.2
 certifi==2024.7.4
+# Transitive via PyShEx/PyShExC, which do not constrain it. requests only supports
+# chardet <6 and warns at import when it is newer (RequestsDependencyWarning).
+chardet<6
 charset-normalizer==3.4.1
 click==8.1.7
 cmake==3.31.6
