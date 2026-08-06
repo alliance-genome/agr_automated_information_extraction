@@ -11,7 +11,6 @@ from typing import List, Union
 
 import utils.thread_limits  # noqa: F401  (import first: pins native threads to 1)
 import joblib
-import nltk
 import numpy as np
 import scipy.sparse as sp
 from gensim.models import KeyedVectors
@@ -30,10 +29,8 @@ from utils.embedding import load_embedding_model, build_feature_matrix, get_bow_
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
 
-nltk.download('stopwords')
-nltk.download('punkt')
-nltk.download('punkt_tab')
-
+# No nltk.download here: importing utils.get_documents above already fetches
+# stopwords/punkt/punkt_tab at import time and reports any failure.
 logger = logging.getLogger(__name__)
 
 
