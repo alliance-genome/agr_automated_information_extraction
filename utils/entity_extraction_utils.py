@@ -98,9 +98,20 @@ STRAIN_NAME_PATTERN = re.compile(
 
 GENERIC_NAME_PATTERN = re.compile(
     r'(?<![A-Za-z0-9_.\-])'          # left-delimiter: not letter/digit/._-
-    r'(?=[A-Za-z0-9_.\-]*[A-Za-z])'  # must contain â‰¥1 letter
-    r'(?=[A-Za-z0-9_.\-]*\d)'        # must contain â‰¥1 digit
-    r'[A-Za-z0-9_.\-]{2,}'           # the token itself (no colon!)
+    r'(?:'
+    # ZFIN clone-based gene nomenclature: the zgc:/si:/wu: prefixes name genes
+    # (e.g. zgc:162239, si:dkey-229d11.5, wu:fd20g04), NOT constructs. Curators
+    # asked that these three (and only these three) prefixes not be split on the
+    # colon and dropped; promoter:reporter constructs stay excluded because their
+    # prefix is not in this set. Construct-embedded mentions are still filtered
+    # downstream by gene_has_standalone_mention.
+    r'(?:zgc|si|wu):[A-Za-z0-9_.\-]{2,}'
+    r'|'
+    # generic gene/transgene token: >=1 letter AND >=1 digit, no colon
+    r'(?=[A-Za-z0-9_.\-]*[A-Za-z])'  # must contain >=1 letter
+    r'(?=[A-Za-z0-9_.\-]*\d)'        # must contain >=1 digit
+    r'[A-Za-z0-9_.\-]{2,}'           # the token itself (no colon)
+    r')'
     r'(?![A-Za-z0-9_.\-])'           # right-delimiter: not letter/digit/._-
 )
 
