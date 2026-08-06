@@ -5,10 +5,10 @@ from agr_curation_api import AGRCurationAPIClient, APIConfig
 
 PAGE_LIMIT = 1000
 
-# ZFIN transgenic/insertion alleles carry a reagent-type suffix (Tg/Et/Gt/Sp) in
+# ZFIN transgenic/insertion alleles carry a reagent-type suffix (Tg/Et/Gt/Pt/Sp) in
 # their curated symbol (e.g. ca41Tg), but authors write the base designation
 # (ca41). Stripping the suffix yields an alias we can string-match in text.
-ZFIN_ALLELE_SUFFIX_RE = re.compile(r'(Tg|Et|Gt|Sp)$')
+ZFIN_ALLELE_SUFFIX_RE = re.compile(r'(Tg|Et|Gt|Pt|Sp)$')
 
 # will add XB one later
 MOD_TAXON_MAPPING = {
