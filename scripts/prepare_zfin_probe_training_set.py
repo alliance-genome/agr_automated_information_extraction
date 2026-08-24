@@ -33,9 +33,19 @@ _KNOWN_COLUMNS = {"AGRKBID", "XREF", "Classification"}
 
 
 def _note_from(row: dict) -> str:
-    """Return the row's curator annotation, joining any unnamed extra columns."""
-    extras = [(value or "").strip() for key, value in row.items()
-              if key not in _KNOWN_COLUMNS and key is not None]
+    """Return the row's curator annotation, joining any unnamed extra columns.
+
+    A row with more fields than the header -- one extra comma, which is how an
+    annotation typed past the last column arrives -- lands under
+    ``csv.DictReader``'s restkey (``None``) as a *list* rather than a string, so
+    both shapes have to be handled or that annotation is silently lost.
+    """
+    extras = []
+    for key, value in row.items():
+        if key in _KNOWN_COLUMNS:
+            continue
+        values = value if isinstance(value, list) else [value]
+        extras.extend((part or "").strip() for part in values)
     return " ".join(part for part in extras if part)
 
 

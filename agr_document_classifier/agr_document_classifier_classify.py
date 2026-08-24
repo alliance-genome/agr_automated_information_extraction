@@ -516,17 +516,23 @@ def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, specie
         logger.error(f"{reference_curie}: molecular probe topic tag failed; leaving the "
                      f"reference in the ZFIN acquisition workflow")
         return False
-    if not create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
-                               workflow_tag_atp_id=WONT_MANUALLY_INDEX_TAG,
-                               curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG):
-        logger.error(f"{reference_curie}: could not set {WONT_MANUALLY_INDEX_TAG} "
-                     f"(won't manually index)")
-    if not send_curation_status_to_abc(reference_curie=reference_curie,
-                                       mod_abbreviation=mod_abbr,
-                                       topic=WHOLE_PAPER_TOPIC,
-                                       curation_status=WONT_CURATE_STATUS,
-                                       curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG):
-        logger.error(f"{reference_curie}: could not set {WONT_CURATE_STATUS} (won't curate)")
+    wont_index_ok = create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
+                                        workflow_tag_atp_id=WONT_MANUALLY_INDEX_TAG,
+                                        curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG)
+    wont_curate_ok = send_curation_status_to_abc(reference_curie=reference_curie,
+                                                 mod_abbreviation=mod_abbr,
+                                                 topic=WHOLE_PAPER_TOPIC,
+                                                 curation_status=WONT_CURATE_STATUS,
+                                                 curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG)
+    if not (wont_index_ok and wont_curate_ok):
+        # Both helpers have already logged the specifics at the level each case deserves --
+        # an HTTP failure as an error, an already-present tag or a curation status somebody
+        # else set as a debug/warning. Re-raising every False to ERROR here would flatten
+        # that distinction and make a quiet re-run look like a broken one, so this records
+        # only the consequence.
+        logger.warning(f"{reference_curie}: probe paper not fully dropped from the ZFIN "
+                       f"acquisition workflow (won't manually index: {wont_index_ok}, "
+                       f"won't curate: {wont_curate_ok}); it stays visible to curators")
     return True
 
 

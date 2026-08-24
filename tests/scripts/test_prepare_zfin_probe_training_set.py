@@ -199,3 +199,16 @@ def test_captures_the_unnamed_curator_annotation_column(tmp_path):
     assert records[0]["note"] == 'string "probe" in abstract'
     assert records[1]["note"] == ""
     assert report["annotated_hard_negatives"] == 1
+
+
+def test_annotation_past_the_last_header_column_is_still_read():
+    """csv.DictReader collects fields beyond the header under the restkey (None)
+    as a *list*, so a row carrying one more comma than the header puts the
+    curator's annotation there. Dropping it loses a hard negative from the count.
+    """
+    rows = list(csv.DictReader([
+        "AGRKBID,XREF,Classification",
+        ',ZDB-PUB-9,Negative,string "probe" in abstract',
+    ]))
+
+    assert prep._note_from(rows[0]) == 'string "probe" in abstract'
