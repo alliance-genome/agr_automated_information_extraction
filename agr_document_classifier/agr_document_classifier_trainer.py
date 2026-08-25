@@ -21,10 +21,12 @@ from sklearn.covariance import EllipticEnvelope
 from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
-from models import POSSIBLE_CLASSIFIERS
+from agr_document_classifier.models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
-                             get_reference_embedding)
-from utils.abc_embeddings import abc_embedding_recipe
+                             get_reference_embedding, get_reference_abstract_text)
+from utils.abc_embeddings import (abc_embedding_recipe, get_profile, get_profile_by_name,
+                                  registered_profile_names, ABC_EMBEDDING_PROFILE,
+                                  ABC_EMBEDDING_VERSION, TEXT_SOURCE_REFERENCE_ABSTRACT)
 from utils.embedding import load_embedding_model, build_feature_matrix, get_bow_vectorizer
 from utils.date_utils import parse_reference_date
 from utils.get_documents import get_documents, remove_stopwords
@@ -90,32 +92,55 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     return X_clean, y_clean, outlier_mask
 
 
-def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_bow: bool = False):
-    """Build ``(X, y)`` from the ABC precomputed classifier embeddings.
+def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_bow: bool = False,
+                                  profile_name: str = ABC_EMBEDDING_PROFILE,
+                                  version: int = ABC_EMBEDDING_VERSION):
+    """Build ``(X, y)`` for the requested feature profile.
 
-    ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists.
-    Each reference's dense feature is the L2-normalized chunk-mean pool of its
-    main-PDF paragraph embeddings (:func:`utils.abc_utils.get_reference_embedding`).
-    When ``use_bow`` is set, the same stateless hashed bag-of-words block the
-    BioWordVec classifiers use is concatenated onto the embedding — hashed over the
-    references-excluded paragraph text carried in the parquet — yielding a sparse
-    matrix (SCRUM-6052 recipe). References without an available embedding are
-    dropped and counted, the same policy the BioWordVec path applies to references
-    with no downloadable MD file."""
+    ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists. The
+    profile decides the layout, and ``classify_documents_from_abc_embeddings``
+    resolves it identically so train and classify cannot drift:
+
+    * An *embedding* profile contributes the L2-normalized chunk-mean pool of its
+      parquet's chunk embeddings, plus (when ``use_bow``) the stateless hashed
+      bag-of-words block over the parquet's own text — the SCRUM-6052 recipe.
+    * A *BoW-only* profile has no parquet: the text comes from the reference record
+      (:func:`utils.abc_utils.get_reference_abstract_text`) and the row is the BoW
+      block alone. This is what the ZFIN molecular-probe model ships on (SCRUM-5764),
+      where the embedding block measured no better than BoW by itself.
+
+    References whose features are unavailable — no embedding, or no title/abstract —
+    are dropped and counted, the same policy the BioWordVec path applies to
+    references with no downloadable MD file."""
     rows = []
     y = []
     missing = 0
     bow_vectorizer = get_bow_vectorizer() if use_bow else None
+    # The profile decides the feature layout; classify resolves it the same way, so
+    # the two cannot drift. An unregistered profile keeps the fulltext behaviour.
+    profile = get_profile(profile_name, version)
+    use_embedding_block = profile.use_embedding if profile else True
+    text_from_reference = (profile is not None
+                           and profile.text_source == TEXT_SOURCE_REFERENCE_ABSTRACT)
     for label in ["positive", "negative"]:
         for reference_curie in abc_curies.get(label, []):
-            result = get_reference_embedding(reference_curie, mod_abbreviation)
+            if text_from_reference:
+                # BoW-only profile: no parquet, the reference record is the source.
+                text_only = get_reference_abstract_text(reference_curie)
+                result = None if text_only is None else (None, text_only)
+            else:
+                result = get_reference_embedding(reference_curie, mod_abbreviation,
+                                                 profile_name=profile_name, version=version)
             if result is None:
                 missing += 1
                 continue
             pooled, text = result
             if use_bow:
-                bow = bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""])
-                rows.append(sp.hstack([sp.csr_matrix(pooled.reshape(1, -1)), bow], format="csr"))
+                blocks = []
+                if use_embedding_block:
+                    blocks.append(sp.csr_matrix(pooled.reshape(1, -1)))
+                blocks.append(bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""]))
+                rows.append(sp.hstack(blocks, format="csr") if len(blocks) > 1 else blocks[0])
             else:
                 rows.append(pooled)
             y.append(int(label == "positive"))
@@ -136,7 +161,8 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                      use_lsh_features: bool = False,
                      include_keywords: bool = False, include_metadata: bool = False,
                      use_abc_embeddings: bool = False, abc_curies: dict = None,
-                     mod_abbreviation: str = None):
+                     mod_abbreviation: str = None,
+                     embedding_profile: str = ABC_EMBEDDING_PROFILE):
     if use_abc_embeddings:
         # New path (SCRUM-5781): use the ABC's precomputed OpenAI embeddings instead
         # of loading BioWordVec and pooling word vectors over downloaded Markdown.
@@ -146,7 +172,16 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         # BoW is a fixed convention for ABC-embedding models (classify hardcodes it
         # on too), so force it here regardless of use_bow_features — a model trained
         # without it would mismatch feature dims at classify time.
-        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation, use_bow=True)
+        # A profile name identifies exactly one registered version today; resolve
+        # it rather than making the operator pass a matching pair on the CLI.
+        # Refuse an unknown name outright: falling back to fulltext would train on
+        # the wrong features and stamp a profile that does not exist.
+        profile = get_profile_by_name(embedding_profile)
+        if profile is None:
+            raise ValueError(f"Unknown embedding profile: {embedding_profile}")
+        logger.info(f"Training on the '{profile.name}' embedding profile (v{profile.version}).")
+        X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation, use_bow=True,
+                                             profile_name=profile.name, version=profile.version)
         logger.info("Finished loading training set.")
         logger.info(f"Dataset size: {str(len(y))}")
         y = np.array(y)
@@ -467,6 +502,11 @@ def parse_arguments():
     parser.add_argument("-e", "--embedding_model_path", type=str, help="Path to the word embedding model")
     parser.add_argument("-u", "--sections_to_use", type=str, nargs="+", help="Parts of the articles to use",
                         required=False)
+    parser.add_argument("--embedding_profile", type=str, default=ABC_EMBEDDING_PROFILE,
+                        choices=registered_profile_names(),
+                        help="Which ABC embedding profile to train on. Default is the fulltext "
+                             "profile; the abstract profile trains on title+abstract only, for "
+                             "classification that must run before a PDF exists.")
     parser.add_argument("-w", "--weighted_average_word_embedding", action="store_true",
                         help="Whether to use a weighted word embedding based on word frequencies from the model",
                         required=False)
@@ -643,13 +683,18 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
         include_metadata=args.include_metadata,
         use_abc_embeddings=True,
         abc_curies=abc_curies,
-        mod_abbreviation=args.mod_train)
+        mod_abbreviation=args.mod_train,
+        embedding_profile=args.embedding_profile)
     logger.info(f"Best classifier stats: {str(stats)}")
     # Tag the model (via the ml_model embedding_* columns) so the classifier
     # fetches ABC embeddings for it and rebuilds the identical embedding+BoW
     # vector. Legacy BioWordVec models leave those columns NULL and keep their
     # on-the-fly path.
-    embedding_recipe = abc_embedding_recipe()
+    # Stamp the profile the model was actually trained on, so classify fetches the
+    # matching embeddings. train_classifier has already rejected an unknown name.
+    trained_profile = get_profile_by_name(args.embedding_profile)
+    embedding_recipe = abc_embedding_recipe(profile_name=trained_profile.name,
+                                            version=trained_profile.version)
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
                     production=args.production,

@@ -8,5 +8,7 @@ htmlcov
 training_sets/*
 stats.txt
 .env.test
+# Local RDS env files -- hold real dev/prod credentials, never commit
+.env.rds*
 /tmp/
 /alliance_tei_corpus/

@@ -14,7 +14,8 @@ import psycopg2
 import requests
 from agr_cognito_py import get_authentication_token, generate_headers
 from utils.abc_embeddings import (ABC_EMBEDDING_PROFILE, ABC_EMBEDDING_VERSION,
-                                  MAIN_SOURCE_FILE_CLASS, paragraph_pool_and_text)
+                                  MAIN_SOURCE_FILE_CLASS, abstract_chunk_text, get_profile,
+                                  paragraph_pool_and_text)
 from utils.ateam_utils import get_all_curated_entities as _get_all_curated_entities
 
 blue_api_base_url = os.environ.get('ABC_API_SERVER', "https://literature-rest.alliancegenome.org")
@@ -486,15 +487,22 @@ def get_current_workflow_status(reference_curie: str, mod_abbreviation: str, wor
         return None
 
 
-def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str):
+def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str,
+                        curation_tag: Optional[str] = None):
     url = f'{blue_api_base_url}/workflow_tag/'
     token = get_authentication_token()
     headers = generate_headers(token)
-    workflow_data = json.dumps({
+    payload = {
         "reference_curie": reference_curie,
         "mod_abbreviation": mod_abbreviation,
         "workflow_tag_id": workflow_tag_atp_id,
-    }).encode('utf-8')
+    }
+    # The ATP term saying *why* the tag was applied (e.g. "outside of scope",
+    # ATP:0000209). Left out of the payload entirely when absent, so callers that
+    # do not use it keep posting exactly what they posted before.
+    if curation_tag is not None:
+        payload["curation_tag"] = curation_tag
+    workflow_data = json.dumps(payload).encode('utf-8')
     request = urllib.request.Request(url=url, data=workflow_data, method='POST', headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
@@ -506,6 +514,18 @@ def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_ta
             logger.debug("Successfully created workflow tag")
             return True
         except HTTPError as e:
+            if 400 <= e.code < 500:
+                body = _read_http_error_body(e)
+                # 422 = this exact (reference, mod, tag) row already exists. The tag is present
+                # as intended, so a re-run over an already-tagged reference is a no-op rather
+                # than a failure. Every other client error is deterministic: do not retry.
+                if e.code == 422 and "already exist" in body:
+                    logger.debug(f"{reference_curie}: workflow tag {workflow_tag_atp_id} "
+                                 f"already exists; nothing to do")
+                    return True
+                logger.error(f"{reference_curie}: HTTP {e.code} creating workflow tag "
+                             f"{workflow_tag_atp_id} for {mod_abbreviation}; not retrying: {body}")
+                return False
             logger.warning(f"Error creating workflow tag for: {reference_curie}, {mod_abbreviation}, "
                            f"{workflow_tag_atp_id}: {e}")
             time.sleep(attempts)
@@ -514,6 +534,75 @@ def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_ta
                          f"{mod_abbreviation}, {workflow_tag_atp_id}: {e}")
     logger.error(f"Error creating workflow tag after 3 attempts: {reference_curie}, {mod_abbreviation}, "
                  f"{workflow_tag_atp_id}")
+    return False
+
+
+def send_curation_status_to_abc(reference_curie: str, mod_abbreviation: str, topic: str,
+                                curation_status: str, curation_tag: Optional[str] = None):
+    """Record a per-topic curation status (e.g. "won't curate", ATP:0000299) for a reference.
+
+    ``curation_tag`` is the ATP term explaining the status (e.g. "outside of scope",
+    ATP:0000209) and is omitted from the payload when not supplied.
+    """
+    url = f'{blue_api_base_url}/curation_status/'
+    token = get_authentication_token()
+    payload = {
+        "reference_curie": reference_curie,
+        "mod_abbreviation": mod_abbreviation,
+        "topic": topic,
+        "curation_status": curation_status,
+    }
+    if curation_tag is not None:
+        payload["curation_tag"] = curation_tag
+    curation_status_data = json.dumps(payload).encode('utf-8')
+    headers = generate_headers(token)
+    attempts = 0
+    while attempts < 3:
+        attempts += 1
+        try:
+            create_request = urllib.request.Request(url=url, data=curation_status_data, method='POST',
+                                                    headers=headers)
+            create_request.add_header("Content-type", "application/json")
+            create_request.add_header("Accept", "application/json")
+            with urllib.request.urlopen(create_request) as create_response:
+                # 200/201 both mean the row is present as intended.
+                if create_response.getcode() in (200, 201):
+                    logger.debug("Curation status created")
+                    return True
+                logger.error(f"Failed to create curation status (attempt {attempts}): "
+                             f"{str(curation_status_data)}")
+                return False
+        except HTTPError as exc:
+            # Client errors are deterministic, so do not retry.
+            if 400 <= exc.code < 500:
+                body = _read_http_error_body(exc)
+                # A 422 is usually the curation_status_unique constraint on
+                # (topic, reference_id, mod_id): a status for this topic already exists,
+                # either from an earlier run of this pipeline or from a curator. The
+                # response cannot tell us which, so we neither overwrite it -- that would
+                # need a PATCH against the existing row -- nor treat it as an error.
+                if exc.code == 422 and "curation_status_unique" in body:
+                    logger.warning(f"{reference_curie}: a curation status already exists for "
+                                   f"topic {topic}; leaving it untouched rather than "
+                                   f"overwriting it with {curation_status}")
+                    return False
+                logger.error(f"{reference_curie}: HTTP {exc.code} creating curation status "
+                             f"{curation_status} for topic {topic}; not retrying: {body}")
+                return False
+            # Server errors (5xx) are transient: retry, then give up without crashing.
+            if attempts >= 3:
+                logger.error(f"{reference_curie}: HTTP {exc.code} creating curation status after "
+                             f"{attempts} attempts; giving up")
+                return False
+            time.sleep(attempts)
+        except (URLError, requests.exceptions.RequestException) as exc:
+            if attempts >= 3:
+                logger.error(f"Error trying to send curation status to ABC {attempts} times: {exc}")
+                logger.error(f"curie: {reference_curie}, mod_abbreviation: {mod_abbreviation}, "
+                             f"topic: {topic}, curation_status: {curation_status}, "
+                             f"curation_tag: {curation_tag}")
+                return False
+            time.sleep(attempts)
     return False
 
 
@@ -983,6 +1072,35 @@ def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abb
             out_file.write(supp_bytes)
 
 
+def get_reference_abstract_text(reference_curie: str) -> Optional[str]:
+    """Return the title+abstract chunk text for a reference, or ``None`` when it is
+    unavailable.
+
+    This is the text source for the BoW-only abstract profile (SCRUM-5764), which
+    has no embedding parquet: the hashed bag-of-words block is built directly from
+    the reference record. The string comes from
+    :func:`utils.abc_embeddings.abstract_chunk_text`, so it is byte-identical to the
+    ``content`` column the embedding profiles hash -- BoW hashing is exact-token, so
+    train and classify must agree on the format exactly.
+
+    ``None`` is returned (never raised) for every "not available" case -- a failed
+    lookup, or a reference with neither title nor abstract -- so callers can treat it
+    exactly like a missing embedding or a missing MD file. Note
+    :func:`get_reference_title_and_abstract` *raises* on a non-200, which is why this
+    wrapper exists.
+    """
+    try:
+        title, abstract = get_reference_title_and_abstract(reference_curie)
+    except Exception as e:  # noqa: BLE001 - any transport/HTTP failure
+        logger.error("Failed to fetch title/abstract for %s: %s", reference_curie, e)
+        return None
+    text = abstract_chunk_text(title, abstract)
+    if not text:
+        logger.debug("No title or abstract available for %s", reference_curie)
+        return None
+    return text
+
+
 def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
                             profile_name: str = ABC_EMBEDDING_PROFILE,
                             version: int = ABC_EMBEDDING_VERSION) -> Optional[Tuple[np.ndarray, str]]:
@@ -993,9 +1111,12 @@ def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
     embeddings and ``paragraph_text`` is the concatenated paragraph content (for
     the hashed BoW block) — both from
     :func:`utils.abc_embeddings.paragraph_pool_and_text`, read out of the embedding
-    parquet whose profile is ``profile_name``/``version`` and whose source Markdown
-    is the ``converted_merged_main`` (SCRUM-6142). Supplement embeddings and other
-    profiles are ignored.
+    parquet whose profile is ``profile_name``/``version`` and whose source satisfies
+    that profile's ``required_source_file_class`` — ``converted_merged_main`` for the
+    fulltext profile (SCRUM-6142), and no source at all for the abstract profile,
+    whose embedding is derived from the reference record (SCRUM-5764). Supplement
+    embeddings and other profiles are ignored. An *unregistered* profile name falls
+    back to the strict fulltext source constraint, so a typo cannot match anything.
 
     Discovery uses the existing ``show_all`` metadata (which annotates every
     ``embedding`` row with its ``profile_name``/``version`` and a ``source``
@@ -1010,6 +1131,14 @@ def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
     if resp_obj is None:
         return None
 
+    # Which source file_class this profile's parquet must be derived from. An
+    # unregistered profile falls back to the strict fulltext constraint rather
+    # than "no constraint", so a typo in a model's embedding_profile cannot
+    # silently match an unrelated embedding row.
+    profile = get_profile(profile_name, version)
+    required_source_file_class = (profile.required_source_file_class if profile
+                                  else MAIN_SOURCE_FILE_CLASS)
+
     embedding_ref_file = None
     for ref_file in resp_obj:
         if ref_file.get("file_class") != "embedding":
@@ -1018,9 +1147,10 @@ def get_reference_embedding(reference_curie: str, mod_abbreviation: str,
             continue
         if ref_file.get("version") != version:
             continue
-        source = ref_file.get("source") or {}
-        if source.get("file_class") != MAIN_SOURCE_FILE_CLASS:
-            continue
+        if required_source_file_class is not None:
+            source = ref_file.get("source") or {}
+            if source.get("file_class") != required_source_file_class:
+                continue
         embedding_ref_file = ref_file
         break
     if embedding_ref_file is None:

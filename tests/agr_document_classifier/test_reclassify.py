@@ -101,4 +101,6 @@ def test_embedding_cache_fetches_each_reference_once(mock_get_emb, mock_predict)
     cls.classify_documents_from_abc_embeddings(["AGRKB:1"], "FB", object(), embedding_cache=cache)
 
     assert mock_get_emb.call_count == 1
-    assert "AGRKB:1" in cache
+    # Keyed on (curie, profile, version) since SCRUM-5764 — a curie-only key would
+    # serve one profile's vectors to another model of the same dimension.
+    assert (("AGRKB:1", cls.ABC_EMBEDDING_PROFILE, cls.ABC_EMBEDDING_VERSION)) in cache
