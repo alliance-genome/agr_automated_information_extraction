@@ -1,4 +1,5 @@
 import logging
+from typing import Optional
 
 import fasttext
 import numpy as np
@@ -54,6 +55,35 @@ def load_embedding_model(model_path):
         model = fasttext.load_model(model_path)
     logger.info("Finished loading embeddings.")
     return model
+
+
+class LazyEmbeddingModel:
+    """Load the word embedding model on first use, at most once per process.
+
+    Only legacy classifiers need it: a model with ``ml_model.embedding_profile``
+    set rebuilds its features from that profile (ABC precomputed vectors, or the
+    reference abstract for a BoW-only profile) and never pools word vectors. The
+    trainer has emitted only profile-carrying models since SCRUM-5781, so the
+    common case now loads nothing -- BioWordVec is ~13 GB and takes minutes.
+
+    ``get()`` is what triggers the load, so call it inside the legacy branch
+    rather than where the classifier is constructed. It raises if no path was
+    given, which turns "``--embedding_model_path`` omitted" into a sentence that
+    names the problem instead of an AttributeError on None deep in the stack.
+    """
+
+    def __init__(self, model_path: Optional[str] = None):
+        self._model_path = model_path
+        self._model = None
+
+    def get(self):
+        if self._model is None:
+            if not self._model_path:
+                raise ValueError(
+                    "A legacy classifier (no embedding_profile) needs a word embedding "
+                    "model, but --embedding_model_path was not provided.")
+            self._model = load_embedding_model(self._model_path)
+        return self._model
 
 
 def get_bow_vectorizer():

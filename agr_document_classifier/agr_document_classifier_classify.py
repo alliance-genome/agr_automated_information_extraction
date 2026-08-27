@@ -26,7 +26,8 @@ from utils.abc_embeddings import (is_abc_embedding_model, get_profile, profile_p
                                   ABC_EMBEDDING_DIM, ABC_EMBEDDING_PROFILE, ABC_EMBEDDING_VERSION,
                                   TEXT_SOURCE_REFERENCE_ABSTRACT)
 from utils.get_documents import get_documents, remove_stopwords
-from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
+from utils.embedding import (load_embedding_model, build_document_features, get_bow_vectorizer,
+                             LazyEmbeddingModel)
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
 from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
@@ -280,7 +281,7 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False,
+def process_classification_jobs(mod_id, topic, jobs, embedding_model_loader, test_mode=False,
                                 use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
                                 include_keywords=False, include_metadata=False):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
@@ -339,14 +340,16 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model_loader, classifier_model,
+                          model_meta_data,
                           test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling,
                           use_lsh_features=use_lsh_features,
                           include_keywords=include_keywords, include_metadata=include_metadata,
                           use_abc_embeddings=use_abc_embeddings, abc_use_bow=abc_use_bow)
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model_loader, classifier_model,
+                      model_meta_data,
                       test_mode, use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
                       include_keywords=False, include_metadata=False, use_abc_embeddings=False,
                       abc_use_bow=False):
@@ -384,7 +387,9 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
                     set_job_started(job)
                     set_job_failure(job)
         files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
-            embedding_model=embedding_model,
+            # Only here is the word embedding model actually needed, so this is
+            # where the ~13 GB load is triggered -- see LazyEmbeddingModel.
+            embedding_model=embedding_model_loader.get(),
             classifier_model=classifier_model,
             input_docs_dir="/data/agr_document_classifier/to_classify",
             use_bow_features=use_bow_features,
@@ -551,12 +556,15 @@ def classify_mode(args: Namespace):
     logger.info("Classification started.")
 
     mod_topic_jobs = load_all_jobs("classification_job", args)
-    embedding_model = load_embedding_model(args.embedding_model_path)
+    # Deferred: only a legacy model (no embedding_profile) pools word vectors, and
+    # the trainer has emitted only profile-carrying models since SCRUM-5781. A run
+    # covering only those now loads nothing instead of ~13 GB it cannot use.
+    embedding_model_loader = LazyEmbeddingModel(args.embedding_model_path)
     failed_processes = []
     skipped_jobs = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model,
+            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model_loader,
                                                use_bow_features=args.use_bow_features,
                                                use_max_pooling=args.use_max_pooling,
                                                use_lsh_features=args.use_lsh_features,
@@ -615,14 +623,14 @@ def direct_classify_mode(args: Namespace):
     # Build fake jobs in the same shape as load_all_jobs would return
     jobs = [{"reference_curie": ref} for ref in reference_curies]
 
-    embedding_model = load_embedding_model(args.embedding_model_path)
+    embedding_model_loader = LazyEmbeddingModel(args.embedding_model_path)
 
     try:
         process_classification_jobs(
             mod_id=get_cached_mod_id_from_abbreviation(args.mod_abbreviation),
             topic=args.topic,
             jobs=jobs,
-            embedding_model=embedding_model,
+            embedding_model_loader=embedding_model_loader,
             test_mode=True,
             use_bow_features=args.use_bow_features,
             use_max_pooling=args.use_max_pooling,
