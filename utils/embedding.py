@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Optional
 
 import fasttext
@@ -75,14 +76,34 @@ class LazyEmbeddingModel:
     def __init__(self, model_path: Optional[str] = None):
         self._model_path = model_path
         self._model = None
+        self._error: Optional[BaseException] = None
+        # Warn rather than raise on a missing path. The load is deferred to deep
+        # inside a batch -- after the MD download and after missing-curie jobs
+        # have been failed -- so a typo would otherwise surface only after those
+        # side effects. Raising here instead would defeat the point of the
+        # deferral: a run covering only profile-carrying models must succeed with
+        # a stale or absent path, because it never reads the file.
+        if model_path and not os.path.exists(model_path):
+            logger.warning("Word embedding model not found at %s. This is only fatal if a "
+                           "legacy classifier (one with no embedding_profile) is reached.",
+                           model_path)
 
     def get(self):
+        # Remember a failure instead of retrying it. Several legacy topics in one
+        # run would otherwise each re-attempt a multi-GB load and record its own
+        # separate failure.
+        if self._error is not None:
+            raise self._error
         if self._model is None:
-            if not self._model_path:
-                raise ValueError(
-                    "A legacy classifier (no embedding_profile) needs a word embedding "
-                    "model, but --embedding_model_path was not provided.")
-            self._model = load_embedding_model(self._model_path)
+            try:
+                if not self._model_path:
+                    raise ValueError(
+                        "A legacy classifier (no embedding_profile) needs a word embedding "
+                        "model, but --embedding_model_path was not provided.")
+                self._model = load_embedding_model(self._model_path)
+            except BaseException as err:
+                self._error = err
+                raise
         return self._model
 
 

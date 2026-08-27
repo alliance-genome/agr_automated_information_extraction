@@ -6,6 +6,7 @@ since SCRUM-5781 carries a profile and rebuilds its features from that instead,
 so the common case must load nothing at all.
 """
 
+import logging
 from unittest.mock import patch
 
 import numpy as np
@@ -43,6 +44,25 @@ def test_get_without_a_path_raises_a_named_error():
     loader = LazyEmbeddingModel(None)
     with pytest.raises(ValueError, match="embedding_model_path"):
         loader.get()
+
+
+def test_a_missing_path_warns_but_does_not_raise(caplog):
+    """A run covering only profile-carrying models never reads the file, so an
+    absent path must not be fatal -- raising here would defeat the deferral."""
+    with caplog.at_level(logging.WARNING, logger="utils.embedding"):
+        LazyEmbeddingModel("/nonexistent/BioWordVec.vec.bin")
+    assert "not found" in caplog.text
+
+
+def test_a_failed_load_is_not_retried():
+    """Several legacy topics in one run must not each re-attempt a multi-GB load."""
+    with patch("utils.embedding.load_embedding_model",
+               side_effect=OSError("boom")) as mock_load:
+        loader = LazyEmbeddingModel(__file__)  # a path that exists, so no warning
+        for _ in range(3):
+            with pytest.raises(OSError, match="boom"):
+                loader.get()
+    assert mock_load.call_count == 1
 
 
 @patch("agr_document_classifier.agr_document_classifier_classify.classify_documents_from_abc_embeddings")
