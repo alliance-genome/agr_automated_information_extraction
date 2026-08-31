@@ -61,6 +61,7 @@ def test_positive_paper_emits_tet_with_sorted_note(patched_pipeline):
     assert kwargs["species"] == "NCBITaxon:6239"
     assert kwargs["negated"] is False
     assert kwargs["data_novelty"] == "ATP:0000335"
+    assert kwargs["data_context"] == "ATP:0000325"
     assert kwargs["confidence_score"] is None
     assert kwargs["confidence_level"] is None
     assert kwargs["note"] == "anti-PDR-1, raised antibody"

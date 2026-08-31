@@ -50,6 +50,9 @@ SOURCE_DESCRIPTION = (
 JOB_LABEL = "antibody_string_matching_job"
 WB_SPECIES = "NCBITaxon:6239"
 DATA_NOVELTY = "ATP:0000335"  # parent term, per design spec D2
+# SCRUM-5697. A string match on an antibody name is a mention the paper actually
+# used, so these tags are experimentally studied data.
+DATA_CONTEXT = "ATP:0000325"  # experimentally studied data
 
 DATA_DIR = "/data/agr_document_classifier"
 TO_CLASSIFY_DIR = f"{DATA_DIR}/to_classify_antibody"
@@ -178,6 +181,7 @@ def _process_batch(batch: list, rules, tet_source_id: int, topic: str,
             topic=topic,
             negated=negated,
             data_novelty=DATA_NOVELTY,
+            data_context=DATA_CONTEXT,
             confidence_score=None,
             confidence_level=None,
             tet_source_id=tet_source_id,

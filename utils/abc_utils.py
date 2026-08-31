@@ -251,7 +251,8 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
                                    data_novelty: str, confidence_score: Optional[float],
                                    confidence_level: Optional[str], tet_source_id,
                                    ml_model_id: Optional[int] = None,
-                                   note: Optional[str] = None):
+                                   note: Optional[str] = None,
+                                   data_context: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     token = get_authentication_token()
     payload = {
@@ -268,6 +269,8 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "ml_model_id": ml_model_id,
         "force_insertion": True,
     }
+    if data_context is not None:
+        payload["data_context"] = data_context
     if note is not None:
         payload["note"] = note
     tet_data = json.dumps(payload).encode('utf-8')
@@ -308,7 +311,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None):
+def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None, data_context: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     try:
         token = get_authentication_token()
@@ -316,7 +319,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
         logger.exception(f"{reference_curie}: token fetch failed; cannot send entity tag")
         return False
     try:
-        tet_data = json.dumps({
+        payload = {
             "created_by": "default_user",
             "updated_by": "default_user",
             "topic": topic,
@@ -332,7 +335,13 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
             "reference_curie": reference_curie,
             "force_insertion": True,
             "ml_model_id": ml_model_id
-        }).encode('utf-8')
+        }
+        # Omitted rather than sent as null when the model carries no data_context:
+        # the ABC defaults it, and an explicit null fails the schema's min_length
+        # constraint (SCRUM-5697).
+        if data_context is not None:
+            payload["data_context"] = data_context
+        tet_data = json.dumps(payload).encode('utf-8')
     except Exception:
         logger.exception(f"{reference_curie}: json.dumps failed; cannot send entity tag")
         return False
@@ -1087,7 +1096,8 @@ def download_abc_model(mod_abbreviation: str, task_type: str, output_path: str, 
 def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: dict, dataset_id: int = None,
                     topic: str = None, file_extension: str = "", production: Union[bool, None] = False,
                     no_data: Union[bool, None] = True, species: Union[str, None] = None,
-                    data_novelty: Union[str, None] = None, embedding_recipe: Union[dict, None] = None,):
+                    data_novelty: Union[str, None] = None, embedding_recipe: Union[dict, None] = None,
+                    data_context: Union[str, None] = None):
     # The model normally uploads to the same ABC as everything else
     # (``blue_api_base_url``). ``ABC_UPLOAD_API_SERVER`` overrides only the upload
     # target, so a run can read training data / embeddings from one environment
@@ -1122,6 +1132,7 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
         "production": production,
         "negated": no_data,
         "data_novelty": data_novelty,
+        "data_context": data_context,
         "species": species
     }
     # ABC-embedding recipe (SCRUM-5781): dedicated ml_model columns so the model

@@ -422,7 +422,8 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
                     data_novelty: Union[str, None],
                     production: Union[bool, None], no_data: Union[bool, None],
                     species: Union[str, None], stats: dict, dataset_id: int, test_mode: bool = False,
-                    training_data_dir: str = None, embedding_recipe: Union[dict, None] = None):
+                    training_data_dir: str = None, embedding_recipe: Union[dict, None] = None,
+                    data_context: Union[str, None] = None):
     if training_data_dir is None:
         training_data_dir = os.getenv("TRAINING_DIR", "/data/agr_document_classifier/training")
     topic_formatted = topic.replace(':', '_')
@@ -435,7 +436,8 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
         logger.info(f"Saved model to {model_path}, skipping upload because in test mode.")
     else:
         upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
-                        data_novelty=data_novelty, production=production,
+                        data_novelty=data_novelty, data_context=data_context,
+                        production=production,
                         no_data=no_data, species=species,
                         model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib",
                         embedding_recipe=embedding_recipe)
@@ -515,6 +517,14 @@ def parse_arguments():
                         required=False)
     parser.add_argument("-Q", "--data_novelty", type=str, required=False, default='ATP:0000335',
                         help="Qualifier to be used for novelty. Default 'ATP:0000335'")
+    # SCRUM-5697. Stamped onto every tag the classifier creates from this model, so
+    # the data-context policy lives on the ml_model row rather than in pipeline code.
+    # One of the four disjoint terms: ATP:0000325 experimentally studied data,
+    # ATP:0000360 background information, ATP:0000328 expression marker,
+    # ATP:0000327 genetic marker.
+    parser.add_argument("-C", "--data_context", type=str, required=False, default='ATP:0000325',
+                        help="Data context term for the tags this model creates. "
+                             "Default 'ATP:0000325' (experimentally studied data)")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)
@@ -612,6 +622,7 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
     upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
                     data_novelty=args.data_novelty,
+                    data_context=args.data_context,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     model_path=os.path.join(training_data_dir,
@@ -652,6 +663,7 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
     embedding_recipe = abc_embedding_recipe()
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train, topic=args.datatype_train,
                     data_novelty=args.data_novelty,
+                    data_context=args.data_context,
                     production=args.production,
                     no_data=not args.do_not_flag_no_data, species=args.alternative_species,
                     stats=stats, dataset_id=training_set["dataset_id"], test_mode=args.test_mode,

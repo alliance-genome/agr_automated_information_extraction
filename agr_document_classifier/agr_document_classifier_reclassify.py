@@ -176,6 +176,7 @@ def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
             continue
         ok_sent = send_classification_tag_to_abc(
             curie, species, topic, negated=bool(cls == 0), data_novelty=meta["data_novelty"],
+            data_context=meta.get("data_context"),
             confidence_score=conf, confidence_level=get_confidence_level(cls, conf),
             tet_source_id=tet_source_id, ml_model_id=meta["ml_model_id"])
         sent += 1 if ok_sent else 0

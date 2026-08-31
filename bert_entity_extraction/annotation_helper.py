@@ -316,6 +316,7 @@ def main():  # noqa C901
                             reference_curie=str(ref_id),
                             species=species,
                             data_novelty='ATP:0000334',
+                            data_context='ATP:0000325',
                             topic=job['topic_id'],
                             tet_source_id=tet_source_id,
                             entity_type=job['topic_id'],
@@ -349,6 +350,7 @@ def main():  # noqa C901
                         reference_curie=str(ref_id),
                         species=species,
                         data_novelty='ATP:0000335',
+                        data_context='ATP:0000325',
                         topic=job['topic_id'],
                         tet_source_id=tet_source_id,
                         negated=True)
