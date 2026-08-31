@@ -32,7 +32,10 @@ ADD utils ./bert_entity_extraction/utils
 ADD Makefile .
 ADD utils/ ./utils
 ADD agr_dataset_manager/ ./agr_dataset_manager
-ADD agr_document_classifier/models.py .
+# POSSIBLE_CLASSIFIERS is imported as `agr_document_classifier.models` by the trainer and
+# by scripts/evaluate_probe_classifiers.py, so it has to land inside the package here --
+# the image otherwise has an importable agr_document_classifier/ with no models.py in it.
+ADD agr_document_classifier/models.py ./agr_document_classifier/models.py
 ADD export_data/export_fb_tets.py .
 ADD export_data/export_fb_tets_using_score.py .
 ADD bin/ ./bin/

@@ -20,10 +20,14 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
     set_blue_api_base_url, \
     get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag, \
-    get_current_workflow_status, get_reference_embedding
-from utils.abc_embeddings import is_abc_embedding_model, ABC_EMBEDDING_DIM
+    get_current_workflow_status, get_reference_embedding, get_reference_abstract_text, \
+    send_curation_status_to_abc
+from utils.abc_embeddings import (is_abc_embedding_model, get_profile, profile_pair_from_model,
+                                  ABC_EMBEDDING_DIM, ABC_EMBEDDING_PROFILE, ABC_EMBEDDING_VERSION,
+                                  TEXT_SOURCE_REFERENCE_ABSTRACT)
 from utils.get_documents import get_documents, remove_stopwords
-from utils.embedding import load_embedding_model, build_document_features, get_bow_vectorizer
+from utils.embedding import (load_embedding_model, build_document_features, get_bow_vectorizer,
+                             LazyEmbeddingModel)
 
 from agr_literature_service.lit_processing.utils.report_utils import send_report
 from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
@@ -39,6 +43,21 @@ logger = logging.getLogger(__name__)
 # papers no longer need surfacing. The manual_indexing_tag row itself is still written for every
 # paper regardless of confidence (the export consumes all of them).
 FB_NO_GENETIC_DATA_TBD_THRESHOLD = 0.5
+
+# SCRUM-5764: ZFIN "molecular probe" papers -- references that only discuss the synthesis and
+# characterization of a probe -- are dropped from the ZFIN reference acquisition workflow. A
+# paper the abstract classifier calls positive with at least this confidence gets the molecular
+# probe topic tag, the "won't manually index" workflow tag and a "won't curate" curation status
+# on the whole paper, the last two carrying "outside of scope" as their curation tag.
+# Below the threshold nothing is written at all: Ceri chose to let borderline papers reach a
+# curator untouched, because wrongly dropping a curatable paper is the expensive mistake -- it
+# is never seen again -- whereas a probe paper that slips through costs a few seconds of triage.
+ZFIN_MOLECULAR_PROBE_TOPIC = "ATP:0000370"
+ZFIN_MOLECULAR_PROBE_THRESHOLD = 0.87
+WONT_MANUALLY_INDEX_TAG = "ATP:0000343"
+WONT_CURATE_STATUS = "ATP:0000299"
+OUTSIDE_OF_SCOPE_CURATION_TAG = "ATP:0000209"
+WHOLE_PAPER_TOPIC = "ATP:0000002"
 
 
 def configure_logging(log_level):
@@ -105,47 +124,91 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
 
 
 def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model, use_bow=False,
-                                           embedding_cache=None):
-    """Classify references using the ABC precomputed embeddings (SCRUM-5781).
+                                           embedding_cache=None,
+                                           profile_name=ABC_EMBEDDING_PROFILE,
+                                           version=ABC_EMBEDDING_VERSION):
+    """Classify references from their profile's features (SCRUM-5781, SCRUM-5764).
 
-    The per-reference dense feature is the L2-normalized chunk-mean pool of the
-    main-PDF paragraph embeddings (:func:`utils.abc_utils.get_reference_embedding`);
-    when ``use_bow`` is set the hashed BoW block over the parquet's paragraph text
-    is concatenated, exactly as at train time (the model's metadata marker says
-    which). Returns the same 4-tuple shape as :func:`classify_documents` —
+    The profile decides the feature layout, so train and classify cannot disagree:
+
+    * An *embedding* profile (``use_embedding=True``) contributes the L2-normalized
+      chunk-mean pool of its parquet's chunk embeddings
+      (:func:`utils.abc_utils.get_reference_embedding`), and when ``use_bow`` is set
+      the hashed BoW block over that same parquet's text is concatenated.
+    * A *BoW-only* profile (``use_embedding=False``, e.g. the ZFIN molecular-probe
+      profile) has no parquet at all: the text comes from the reference record via
+      :func:`utils.abc_utils.get_reference_abstract_text` and the row is the BoW
+      block alone. No embedding is fetched, so no OpenAI key and no abstract
+      embedding pipeline are involved.
+
+    Returns the same 4-tuple shape as :func:`classify_documents` —
     ``(ids_loaded, classifications, confidence_scores, valid_embeddings)`` — but
     ``ids_loaded`` holds reference curies rather than file paths (downstream
     recovers the curie from either).
 
-    A reference with no available embedding is kept as a zero row flagged invalid,
-    so the caller fails that job just like a missing MD in the BioWordVec path.
+    A reference whose features are unavailable — no embedding, or no title/abstract
+    for a BoW-only profile — is kept as an empty row flagged invalid, so the caller
+    fails that job just like a missing MD in the BioWordVec path.
 
-    ``embedding_cache`` is an optional ``{curie: (pooled, text) | None}`` dict; when
-    provided the ABC embedding is fetched at most once per reference across calls,
-    which matters when several models are applied to the same references (the
-    re-classification pipeline shares one cache over all topics).
+    ``profile_name``/``version`` select which ABC embedding profile to fetch, and
+    must be the pair the model was trained against (its ``ml_model`` embedding_*
+    columns). It defaults to the fulltext profile, which is what every model
+    trained before SCRUM-5764 used.
+
+    ``embedding_cache`` is an optional ``{(curie, profile, version): (pooled, text)
+    | None}`` dict; when provided the ABC embedding is fetched at most once per
+    reference *per profile* across calls, which matters when several models are
+    applied to the same references (the re-classification pipeline shares one cache
+    over all topics). The profile is part of the key because two profiles can share
+    a dimension, so a curie-only key would silently serve the wrong vectors.
     """
     bow_vectorizer = get_bow_vectorizer() if use_bow else None
+    # The profile dictates the feature layout. An unregistered profile falls back to
+    # the fulltext behaviour (dense embedding block, text from the parquet) rather
+    # than guessing something narrower.
+    profile = get_profile(profile_name, version)
+    embedding_dim = profile.dim if profile else ABC_EMBEDDING_DIM
+    use_embedding_block = profile.use_embedding if profile else True
+    text_from_reference = (profile is not None
+                           and profile.text_source == TEXT_SOURCE_REFERENCE_ABSTRACT)
+    if not (use_embedding_block or use_bow):
+        raise ValueError(f"Profile {profile_name} v{version} has no embedding block, so "
+                         f"use_bow must be set — otherwise there are no features at all.")
     rows = []
     ids_loaded = []
     valid_embeddings = []
     for reference_curie in reference_curies:
-        if embedding_cache is not None and reference_curie in embedding_cache:
-            result = embedding_cache[reference_curie]
+        # Keyed on the profile too: the reclassify pipeline shares one cache
+        # across models, and two profiles can share a dimension, so a
+        # curie-only key would silently serve the wrong profile's vectors.
+        cache_key = (reference_curie, profile_name, version)
+        if embedding_cache is not None and cache_key in embedding_cache:
+            result = embedding_cache[cache_key]
         else:
-            result = get_reference_embedding(reference_curie, mod_abbr)
+            if text_from_reference:
+                # BoW-only profile: the text is the feature source, and there is
+                # nothing to pool. None means "no abstract", handled as invalid.
+                text_only = get_reference_abstract_text(reference_curie)
+                result = None if text_only is None else (None, text_only)
+            else:
+                result = get_reference_embedding(reference_curie, mod_abbr,
+                                                 profile_name=profile_name, version=version)
             if embedding_cache is not None:
-                embedding_cache[reference_curie] = result
+                embedding_cache[cache_key] = result
         ids_loaded.append(reference_curie)
         if result is None:
-            pooled, text = np.zeros(ABC_EMBEDDING_DIM, dtype=np.float32), ""
+            pooled = np.zeros(embedding_dim, dtype=np.float32) if use_embedding_block else None
+            text = ""
             valid_embeddings.append(False)
         else:
             pooled, text = result
             valid_embeddings.append(True)
         if use_bow:
-            bow = bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""])
-            rows.append(sp.hstack([sp.csr_matrix(pooled.reshape(1, -1)), bow], format="csr"))
+            blocks = []
+            if use_embedding_block:
+                blocks.append(sp.csr_matrix(pooled.reshape(1, -1)))
+            blocks.append(bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""]))
+            rows.append(sp.hstack(blocks, format="csr") if len(blocks) > 1 else blocks[0])
         else:
             rows.append(pooled)
     if not ids_loaded:
@@ -218,7 +281,7 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=False,
+def process_classification_jobs(mod_id, topic, jobs, embedding_model_loader, test_mode=False,
                                 use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
                                 include_keywords=False, include_metadata=False):
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
@@ -277,14 +340,16 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model, test_mode=
         jobs_to_process = jobs_to_process[classification_batch_size:]
         logger.info(f"Processing a batch of {str(len(job_batch))} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
+        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model_loader, classifier_model,
+                          model_meta_data,
                           test_mode, use_bow_features=use_bow_features, use_max_pooling=use_max_pooling,
                           use_lsh_features=use_lsh_features,
                           include_keywords=include_keywords, include_metadata=include_metadata,
                           use_abc_embeddings=use_abc_embeddings, abc_use_bow=abc_use_bow)
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, model_meta_data,
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model_loader, classifier_model,
+                      model_meta_data,
                       test_mode, use_bow_features=False, use_max_pooling=False, use_lsh_features=False,
                       include_keywords=False, include_metadata=False, use_abc_embeddings=False,
                       abc_use_bow=False):
@@ -295,8 +360,10 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         # was trained with it, per its marker) is hashed from the parquet's own
         # paragraph text. References without an embedding come back flagged invalid
         # and are failed in the sender below, matching the missing-MD policy.
+        embedding_profile_name, embedding_version = profile_pair_from_model(model_meta_data)
         files_loaded, classifications, conf_scores, valid_embeddings = classify_documents_from_abc_embeddings(
-            list(reference_curie_job_map.keys()), mod_abbr, classifier_model, use_bow=abc_use_bow)
+            list(reference_curie_job_map.keys()), mod_abbr, classifier_model, use_bow=abc_use_bow,
+            profile_name=embedding_profile_name, version=embedding_version)
     else:
         prepare_classification_directory()
         download_md_files_for_references(list(reference_curie_job_map.keys()),
@@ -320,7 +387,9 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
                     set_job_started(job)
                     set_job_failure(job)
         files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
-            embedding_model=embedding_model,
+            # Only here is the word embedding model actually needed, so this is
+            # where the ~13 GB load is triggered -- see LazyEmbeddingModel.
+            embedding_model=embedding_model_loader.get(),
             classifier_model=classifier_model,
             input_docs_dir="/data/agr_document_classifier/to_classify",
             use_bow_features=use_bow_features,
@@ -364,6 +433,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
     send_to_manual_indexing = False
     if topic == 'ATP:0000207' and mod_abbr == 'FB':
         send_to_manual_indexing = True
+    drop_probe_papers = topic == ZFIN_MOLECULAR_PROBE_TOPIC and mod_abbr == 'ZFIN'
 
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
@@ -376,7 +446,13 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         confidence_level = get_confidence_level(classification, conf_score)
 
         result = True
-        if classification > 0 or model_meta_data['negated']:
+        if drop_probe_papers:
+            result = drop_probe_paper_from_acquisition_workflow(
+                reference_curie=reference_curie, mod_abbr=mod_abbr, species=species,
+                classification=classification, conf_score=conf_score,
+                confidence_level=confidence_level, tet_source_id=tet_source_id,
+                model_meta_data=model_meta_data)
+        elif classification > 0 or model_meta_data['negated']:
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' data_novelty: '{model_meta_data['data_novelty']}' data_context: '{model_meta_data.get('data_context')}'")
             if send_to_manual_indexing:
                 result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
@@ -416,6 +492,58 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
 
 
+def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, species, classification,
+                                               conf_score, confidence_level, tet_source_id,
+                                               model_meta_data):
+    """Report a ZFIN molecular probe classification (SCRUM-5764).
+
+    A confident positive gets three writes: the molecular probe topic tag, the "won't manually
+    index" workflow tag, and a "won't curate" curation status on the whole paper -- the last two
+    tagged "outside of scope". Anything else (a negative, or a positive below the threshold) is
+    reported nowhere: no negated tags are wanted for this topic, and a borderline paper is left
+    in the workflow for a curator to see.
+
+    Returns whether the classification job can be marked done. Only a failed topic tag write
+    blocks that: the topic tag is idempotent so it can be retried safely, whereas re-POSTing the
+    workflow tag would hit a permanent 422 duplicate and the job would never complete. A failed
+    drop write is logged and leaves the paper in the ZFIN workflow, which is the safe direction.
+    """
+    if classification <= 0 or conf_score is None or conf_score < ZFIN_MOLECULAR_PROBE_THRESHOLD:
+        logger.debug(f"{reference_curie}: not dropped from the ZFIN acquisition workflow "
+                     f"(classification: {classification}, confidence_score: {conf_score})")
+        return True
+    if not send_classification_tag_to_abc(
+            reference_curie, species, ZFIN_MOLECULAR_PROBE_TOPIC,
+            negated=False,
+            data_novelty=model_meta_data['data_novelty'],
+            data_context=model_meta_data.get('data_context'),
+            confidence_score=conf_score,
+            confidence_level=confidence_level,
+            tet_source_id=tet_source_id,
+            ml_model_id=model_meta_data['ml_model_id']):
+        logger.error(f"{reference_curie}: molecular probe topic tag failed; leaving the "
+                     f"reference in the ZFIN acquisition workflow")
+        return False
+    wont_index_ok = create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
+                                        workflow_tag_atp_id=WONT_MANUALLY_INDEX_TAG,
+                                        curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG)
+    wont_curate_ok = send_curation_status_to_abc(reference_curie=reference_curie,
+                                                 mod_abbreviation=mod_abbr,
+                                                 topic=WHOLE_PAPER_TOPIC,
+                                                 curation_status=WONT_CURATE_STATUS,
+                                                 curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG)
+    if not (wont_index_ok and wont_curate_ok):
+        # Both helpers have already logged the specifics at the level each case deserves --
+        # an HTTP failure as an error, an already-present tag or a curation status somebody
+        # else set as a debug/warning. Re-raising every False to ERROR here would flatten
+        # that distinction and make a quiet re-run look like a broken one, so this records
+        # only the consequence.
+        logger.warning(f"{reference_curie}: probe paper not fully dropped from the ZFIN "
+                       f"acquisition workflow (won't manually index: {wont_index_ok}, "
+                       f"won't curate: {wont_curate_ok}); it stays visible to curators")
+    return True
+
+
 def get_confidence_level(classification, conf_score):
     if classification == 0:
         return "NEG"
@@ -431,12 +559,15 @@ def classify_mode(args: Namespace):
     logger.info("Classification started.")
 
     mod_topic_jobs = load_all_jobs("classification_job", args)
-    embedding_model = load_embedding_model(args.embedding_model_path)
+    # Deferred: only a legacy model (no embedding_profile) pools word vectors, and
+    # the trainer has emitted only profile-carrying models since SCRUM-5781. A run
+    # covering only those now loads nothing instead of ~13 GB it cannot use.
+    embedding_model_loader = LazyEmbeddingModel(args.embedding_model_path)
     failed_processes = []
     skipped_jobs = []
     for (mod_id, topic), jobs in mod_topic_jobs.items():
         try:
-            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model,
+            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model_loader,
                                                use_bow_features=args.use_bow_features,
                                                use_max_pooling=args.use_max_pooling,
                                                use_lsh_features=args.use_lsh_features,
@@ -495,14 +626,14 @@ def direct_classify_mode(args: Namespace):
     # Build fake jobs in the same shape as load_all_jobs would return
     jobs = [{"reference_curie": ref} for ref in reference_curies]
 
-    embedding_model = load_embedding_model(args.embedding_model_path)
+    embedding_model_loader = LazyEmbeddingModel(args.embedding_model_path)
 
     try:
         process_classification_jobs(
             mod_id=get_cached_mod_id_from_abbreviation(args.mod_abbreviation),
             topic=args.topic,
             jobs=jobs,
-            embedding_model=embedding_model,
+            embedding_model_loader=embedding_model_loader,
             test_mode=True,
             use_bow_features=args.use_bow_features,
             use_max_pooling=args.use_max_pooling,
