@@ -14,7 +14,7 @@ import csv
 from types import SimpleNamespace
 
 from pathlib import Path
-from typing import Tuple, List
+from typing import Optional, Tuple, List
 import traceback
 
 import joblib
@@ -254,11 +254,13 @@ def train_classifier(
     return best_pipe, stats
 
 
-def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
+def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int,
+                    data_novelty: Optional[str] = None, species: Optional[str] = None):
     model_path = f"{root_data_path}training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
-    upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
-                    model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
+    upload_ml_model("biocuration_pretriage_priority_classification", mod_abbreviation=mod_abbreviation, topic=topic,
+                    model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib",
+                    data_novelty=data_novelty, species=species)
 
 
 def remove_stopwords(text):
@@ -610,6 +612,11 @@ def parse_arguments():
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
     parser.add_argument("--csv_file", type=str, required=False, help="Path to CSV file for flat classification input")
+    parser.add_argument("-Q", "--data_novelty", type=str, required=False, default='ATP:0000335',
+                        help="Qualifier to be used for novelty. Default 'ATP:0000335'")
+    parser.add_argument("-a", "--alternative_species", type=str,
+                        help="Use a non standard mod species taxon. Must include 'taxon:'",
+                        required=False)
 
     return parser.parse_args()
 
@@ -771,7 +778,8 @@ def upload_pre_existing_model(args, training_set):
                     topic=args.datatype_train,
                     model_path=f"{root_data_path}training/{args.mod_train}_"
                                f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
-                    stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
+                    stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib",
+                    data_novelty=args.data_novelty, species=args.alternative_species)
 
 
 def train_and_save_model(args, training_data_dir, training_set):
@@ -785,7 +793,8 @@ def train_and_save_model(args, training_data_dir, training_set):
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
-                    stats=stats, dataset_id=training_set["dataset_id"])
+                    stats=stats, dataset_id=training_set["dataset_id"],
+                    data_novelty=args.data_novelty, species=args.alternative_species)
 
 
 def train_mode(args):
