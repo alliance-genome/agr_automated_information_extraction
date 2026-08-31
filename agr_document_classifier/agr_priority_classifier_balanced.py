@@ -654,10 +654,12 @@ def process_classification_jobs(mod_id, topic, jobs, embedding_model):
         logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
                     f"Jobs remaining to process: {str(len(jobs_to_process))}")
         process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model,
-                          classifier_model, model_meta_data['ml_model_id'])
+                          classifier_model, model_meta_data['ml_model_id'],
+                          model_meta_data.get('data_context'))
 
 
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id):
+def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id,
+                      data_context=None):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
     prepare_classification_directory()
     download_md_files_for_references(list(reference_curie_job_map.keys()),
@@ -667,7 +669,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         classifier_model=classifier_model,
         input_docs_dir=f"{root_data_path}to_classify")
     send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id, ml_model_id)
+                                mod_abbr, topic, tet_source_id, ml_model_id, data_context)
 
 
 def prepare_classification_directory():
@@ -678,7 +680,7 @@ def prepare_classification_directory():
 
 
 def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id, ml_model_id):
+                                mod_abbr, topic, tet_source_id, ml_model_id, data_context=None):
     logger.info("Sending classification tags to ABC.")
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                       valid_embeddings):
@@ -694,7 +696,8 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                                                 confidence_score=conf_score,
                                                 confidence_level=confidence_level,
                                                 tet_source_id=tet_source_id,
-                                                ml_model_id=ml_model_id)
+                                                ml_model_id=ml_model_id,
+                                                data_context=data_context)
         if result:
             set_job_started(reference_curie_job_map[reference_curie])
             set_job_success(reference_curie_job_map[reference_curie])
