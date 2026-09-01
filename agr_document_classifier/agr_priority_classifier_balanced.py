@@ -8,13 +8,14 @@ import json
 import logging
 import os
 import os.path
+import re
 import shutil
 import sys
 import csv
 from types import SimpleNamespace
 
 from pathlib import Path
-from typing import Tuple, List
+from typing import Optional, Tuple, List
 import traceback
 
 import joblib
@@ -33,11 +34,10 @@ from sklearn.ensemble import RandomForestClassifier
 from imblearn.under_sampling import RandomUnderSampler
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
-from utils.abc_utils import download_md_files_for_references, send_classification_tag_to_abc, \
-    get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
-    download_bib_data_for_need_prioritization_references, set_job_success, get_tet_source_id, \
-    set_job_started, get_training_set_from_abc, upload_ml_model, download_abc_model, \
-    set_job_failure, load_all_jobs, set_indexing_priority, get_model_data
+from utils.abc_utils import get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
+    download_bib_data_for_need_prioritization_references, set_job_success, \
+    get_training_set_from_abc, upload_ml_model, download_abc_model, \
+    set_job_failure, load_all_jobs, set_indexing_priority
 from utils.embedding import load_embedding_model, get_document_embedding
 from utils.md_utils import AllianceMarkdown
 from agr_literature_service.lit_processing.utils.report_utils import send_report
@@ -254,11 +254,13 @@ def train_classifier(
     return best_pipe, stats
 
 
-def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int):
+def save_classifier(classifier, mod_abbreviation: str, topic: str, stats: dict, dataset_id: int,
+                    data_novelty: Optional[str] = None, species: Optional[str] = None):
     model_path = f"{root_data_path}training/{mod_abbreviation}_{topic.replace(':', '_')}_classifier.joblib"
     joblib.dump(classifier, model_path)
-    upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
-                    model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib")
+    upload_ml_model("biocuration_pretriage_priority_classification", mod_abbreviation=mod_abbreviation, topic=topic,
+                    model_path=model_path, stats=stats, dataset_id=dataset_id, file_extension="joblib",
+                    data_novelty=data_novelty, species=species)
 
 
 def remove_stopwords(text):
@@ -610,111 +612,13 @@ def parse_arguments():
                         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
                         default='INFO', help="Set the logging level")
     parser.add_argument("--csv_file", type=str, required=False, help="Path to CSV file for flat classification input")
+    parser.add_argument("-Q", "--data_novelty", type=str, required=False, default='ATP:0000335',
+                        help="Qualifier to be used for novelty. Default 'ATP:0000335'")
+    parser.add_argument("-a", "--alternative_species", type=str,
+                        help="Use a non standard mod species taxon. Must include 'taxon:'",
+                        required=False)
 
     return parser.parse_args()
-
-
-def process_classification_jobs(mod_id, topic, jobs, embedding_model):
-    mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
-    tet_source_id = get_tet_source_id(
-        mod_abbreviation=mod_abbr,
-        source_method="abc_document_classifier",
-        source_description="Alliance document classification pipeline using machine "
-                           "learning to identify papers of interest for curation data types")
-    classifier_file_path = (
-        f"{root_data_path}biocuration_pretriage_priority_classification_{mod_abbr}_"
-        f"{topic.replace(':', '_')}_classifier.joblib")
-    try:
-        download_abc_model(mod_abbreviation=mod_abbr, topic=topic, output_path=classifier_file_path,
-                           task_type="biocuration_pretriage_priority_classification")
-        logger.info(f"Priority classifier model downloaded for mod: {mod_abbr}, topic: {topic}.")
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.warning(f"Priority classifier model not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
-                    "reason": "priority classifier model not found"}
-        raise
-    try:
-        # Get model meta data too
-        model_meta_data = get_model_data(mod_abbreviation=mod_abbr,
-                                         task_type="biocuration_pretriage_priority_classification",
-                                         topic=topic)
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 404:
-            logger.warning(f"ml_model data not found for mod: {mod_abbr}, topic: {topic}. Skipping.")
-            return {"mod_abbreviation": mod_abbr, "topic": topic, "jobs": len(jobs),
-                    "reason": "ml_model data not found"}
-        raise
-    classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
-    jobs_to_process = copy.deepcopy(jobs)
-    classifier_model = joblib.load(classifier_file_path)
-    while jobs_to_process:
-        job_batch = jobs_to_process[:classification_batch_size]
-        jobs_to_process = jobs_to_process[classification_batch_size:]
-        logger.info(f"Processing a batch of {str(classification_batch_size)} jobs. "
-                    f"Jobs remaining to process: {str(len(jobs_to_process))}")
-        process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model,
-                          classifier_model, model_meta_data['ml_model_id'])
-
-
-def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model, classifier_model, ml_model_id):
-    reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
-    prepare_classification_directory()
-    download_md_files_for_references(list(reference_curie_job_map.keys()),
-                                     f"{root_data_path}to_classify", mod_abbr)
-    files_loaded, classifications, conf_scores, valid_embeddings = classify_documents(
-        embedding_model=embedding_model,
-        classifier_model=classifier_model,
-        input_docs_dir=f"{root_data_path}to_classify")
-    send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id, ml_model_id)
-
-
-def prepare_classification_directory():
-    os.makedirs(f"{root_data_path}to_classify", exist_ok=True)
-    logger.info("Cleaning up existing files in the to_classify directory")
-    for file in os.listdir(f"{root_data_path}to_classify"):
-        os.remove(os.path.join(f"{root_data_path}to_classify", file))
-
-
-def send_classification_results(files_loaded, classifications, conf_scores, valid_embeddings, reference_curie_job_map,
-                                mod_abbr, topic, tet_source_id, ml_model_id):
-    logger.info("Sending classification tags to ABC.")
-    for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
-                                                                      valid_embeddings):
-        reference_curie = os.path.splitext(file_path.split("/")[-1])[0].replace("_", ":")
-        if not valid_embedding:
-            logger.warning(f"Invalid embedding for file: {file_path}. Setting job to failed.")
-            set_job_started(reference_curie_job_map[reference_curie])
-            set_job_failure(reference_curie_job_map[reference_curie])
-            continue
-        confidence_level = get_confidence_level(classification, conf_score)
-        result = send_classification_tag_to_abc(reference_curie, mod_abbr, topic,
-                                                negated=bool(classification == 0),
-                                                confidence_score=conf_score,
-                                                confidence_level=confidence_level,
-                                                tet_source_id=tet_source_id,
-                                                ml_model_id=ml_model_id)
-        if result:
-            set_job_started(reference_curie_job_map[reference_curie])
-            set_job_success(reference_curie_job_map[reference_curie])
-        os.remove(file_path)
-    logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
-
-
-def get_confidence_level(classification, conf_score):
-    """
-    This function now produces a label that indicates both the priority level and
-    the confidence (e.g., "priority_2-High").
-    """
-    mapping = {0: "priority_1", 1: "priority_2", 2: "priority_3"}
-    base_label = mapping.get(classification, "unknown")
-    if conf_score < 0.5:
-        return f"{base_label}-LOW"
-    elif conf_score < 0.75:
-        return f"{base_label}-MEDIUM"
-    else:
-        return f"{base_label}-HIGH"
 
 
 def download_training_set(args, training_data_dir):
@@ -767,7 +671,8 @@ def upload_pre_existing_model(args, training_set):
                     topic=args.datatype_train,
                     model_path=f"{root_data_path}training/{args.mod_train}_"
                                f"{args.datatype_train.replace(':', '_')}_classifier.joblib",
-                    stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
+                    stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib",
+                    data_novelty=args.data_novelty, species=args.alternative_species)
 
 
 def train_and_save_model(args, training_data_dir, training_set):
@@ -781,7 +686,8 @@ def train_and_save_model(args, training_data_dir, training_set):
     logger.info(f"Best classifier stats: {str(stats)}")
     save_classifier(classifier=classifier, mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
-                    stats=stats, dataset_id=training_set["dataset_id"])
+                    stats=stats, dataset_id=training_set["dataset_id"],
+                    data_novelty=args.data_novelty, species=args.alternative_species)
 
 
 def train_mode(args):
@@ -799,50 +705,12 @@ def train_mode(args):
         train_and_save_model(args, training_data_dir, training_set)
 
 
-def classify_mode(args):
-    mod_topic_jobs = load_all_jobs("classification_job")
-    embedding_model = load_embedding_model(args.embedding_model_path)
-    failed_processes = []
-    skipped_jobs = []
-    for (mod_id, topic), jobs in mod_topic_jobs.items():
-        try:
-            skip = process_classification_jobs(mod_id, topic, jobs, embedding_model)
-            if skip:
-                skipped_jobs.append(skip)
-        except Exception as e:
-            logger.error(f"Error processing a batch of '{topic}' jobs for {mod_id}.")
-            failed = {'topic': topic,
-                      'mod_abbreviation': mod_id,
-                      'exception': str(e)}
-            formatted_traceback = traceback.format_tb(e.__traceback__)
-            failed['trace'] = ""
-            for line in formatted_traceback:
-                failed['trace'] += f"{line}<br>"
-            failed_processes.append(failed)
-
-    if failed_processes or skipped_jobs:
-        if failed_processes and skipped_jobs:
-            subject = "Failed and skipped classification jobs"
-        elif skipped_jobs:
-            subject = "Skipped classification jobs (missing model)"
-        else:
-            subject = "Failed processing of classification jobs"
-        message = ""
-        if failed_processes:
-            message += "<h>The following jobs failed to process:</h><br><br>\n\n"
-            for fp in failed_processes:
-                message += f"Topic: {fp['topic']}  mod_id:{fp['mod_abbreviation']}<br>\n"
-                message += f"Exception: {fp['exception']}<br>\n"
-                message += f"Stacktrace: {fp['trace']}<br><br>\n\n"
-        message += format_skipped_jobs_html(skipped_jobs)
-        send_report(subject, message)
-        send_slack_notification(subject, message)
-        if failed_processes:
-            exit(-1)
-
-
 def main():
     args = parse_arguments()
+    if args.alternative_species:
+        if not re.search(r'^NCBITaxon:\d+$', args.alternative_species):
+            print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
+            sys.exit(1)
     configure_logging(args.log_level)
 
     # logger = logging.getLogger(__name__)
