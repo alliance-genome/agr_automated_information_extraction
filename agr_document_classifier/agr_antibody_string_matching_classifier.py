@@ -50,9 +50,13 @@ SOURCE_DESCRIPTION = (
 JOB_LABEL = "antibody_string_matching_job"
 WB_SPECIES = "NCBITaxon:6239"
 DATA_NOVELTY = "ATP:0000335"  # parent term, per design spec D2
-# SCRUM-5697. A string match on an antibody name is a mention the paper actually
-# used, so these tags are experimentally studied data.
-DATA_CONTEXT = "ATP:0000325"  # experimentally studied data
+# SCRUM-5697. This is a classifier: it decides whether a paper is about antibody
+# production/use and emits a topic tag with no entity. Per Ceri Van Slyke on
+# SCRUM-5697 (2026-09-01), WB topic tags take the root term -- a string match on
+# an antibody name establishes that the name appears, not that the antibody was
+# the subject of an experiment. The backfill gives this source's existing tags
+# the same value, so the two agree and check_for_duplicate_tags keeps working.
+DATA_CONTEXT = "ATP:0000323"  # data context (root)
 
 DATA_DIR = "/data/agr_document_classifier"
 TO_CLASSIFY_DIR = f"{DATA_DIR}/to_classify_antibody"

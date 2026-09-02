@@ -559,12 +559,22 @@ def parse_arguments():
                         help="Qualifier to be used for novelty. Default 'ATP:0000335'")
     # SCRUM-5697. Stamped onto every tag the classifier creates from this model, so
     # the data-context policy lives on the ml_model row rather than in pipeline code.
-    # One of the four disjoint terms: ATP:0000325 experimentally studied data,
-    # ATP:0000360 background information, ATP:0000328 expression marker,
-    # ATP:0000327 genetic marker.
-    parser.add_argument("-C", "--data_context", type=str, required=False, default='ATP:0000325',
+    # The terms are a hierarchy, not four disjoint options:
+    #     ATP:0000323 data context
+    #     |-- ATP:0000324 mentioned data
+    #     |   |-- ATP:0000360 background information
+    #     |   +-- ATP:0000325 experimentally studied data
+    #     +-- ATP:0000326 marker data
+    #         |-- ATP:0000328 expression marker
+    #         +-- ATP:0000327 genetic marker
+    # Every model this trainer uploads is a biocuration_topic_classification one,
+    # so every tag it will produce is a topic tag with no entity. Per Ceri Van
+    # Slyke on SCRUM-5697 (2026-09-01) those take the root term: the paper was
+    # classified for the topic, with no claim about what kind of data that is.
+    # Pass -C to override for a MOD that has decided otherwise.
+    parser.add_argument("-C", "--data_context", type=str, required=False, default='ATP:0000323',
                         help="Data context term for the tags this model creates. "
-                             "Default 'ATP:0000325' (experimentally studied data)")
+                             "Default 'ATP:0000323' (data context, the root term)")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)
