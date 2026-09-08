@@ -45,8 +45,12 @@ parser.add_argument("-f", "--reference_curie", type=str,
                     help="Only run for this reference.", required=False)
 parser.add_argument("-t", "--topic", type=str, default='ATP:0000005',
                     help="Only run for this topic.", required=False)
+# FB only, and enforced rather than merely defaulted: the taxon below is
+# hardcoded to Drosophila and the entities are FBgn identifiers, so another MOD
+# was never runnable here. It also matters for data_context (SCRUM-5697) --
+# the constants below encode FlyBase's rule, and WB's rule differs.
 parser.add_argument("-m", "--mod_abbreviation", type=str,
-                    default="FB", help="Only run for FB.")
+                    default="FB", choices=["FB"], help="Only run for FB.")
 parser.add_argument("-c", "---config_file", type=str,
                     default="/usr/src/app/bert_entity_extraction/config.ini",
                     help="Config file for FlyBert")
@@ -68,6 +72,26 @@ logger.debug(args)
 #    pmid_to_pmcid_dict = pickle.load(f)
 
 EXCEPTIONS_PATH = config_parser.get('PATHS', 'exceptions')
+
+# SCRUM-5697. data_context on the tags this pipeline creates. Both values are
+# ATP:0000325 "experimentally studied data" because this is a FlyBase pipeline
+# and FB's rule is uniform: per FlyBase's note on SCRUM-5697, every FB tag is
+# experimentally studied, so the backfill gives all 173,585 of them ATP:0000325
+# regardless of shape -- entity tags and topic-only negatives alike.
+#
+# The two are named separately anyway because the distinction is real and the
+# values only coincide for FB. WB splits on it (Ceri Van Slyke, 2026-09-01:
+# entity tags ATP:0000325, topic tags the ATP:0000323 root), which is why
+# agr_antibody_string_matching_classifier.DATA_CONTEXT is ATP:0000323 -- that
+# is a WB source, not a different reading of the same rule. If this pipeline
+# ever serves another MOD, these must be looked up per MOD, not reused.
+#
+# Keeping them in step with the backfill is load-bearing:
+# check_for_duplicate_tags filters on every payload field, so a value here that
+# disagrees with the stored one turns every re-sent tag into a new row
+# instead of a 409.
+DATA_CONTEXT_ENTITY_TAG = 'ATP:0000325'
+DATA_CONTEXT_TOPIC_TAG = 'ATP:0000325'
 
 
 def create_postgres_engine(db):
@@ -316,6 +340,7 @@ def main():  # noqa C901
                             reference_curie=str(ref_id),
                             species=species,
                             data_novelty='ATP:0000334',
+                            data_context=DATA_CONTEXT_ENTITY_TAG,
                             topic=job['topic_id'],
                             tet_source_id=tet_source_id,
                             entity_type=job['topic_id'],
@@ -349,6 +374,7 @@ def main():  # noqa C901
                         reference_curie=str(ref_id),
                         species=species,
                         data_novelty='ATP:0000335',
+                        data_context=DATA_CONTEXT_TOPIC_TAG,
                         topic=job['topic_id'],
                         tet_source_id=tet_source_id,
                         negated=True)

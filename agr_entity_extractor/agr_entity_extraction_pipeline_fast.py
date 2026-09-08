@@ -337,6 +337,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                               topic=topic)
         species = meta["species"]
         data_novelty = meta['data_novelty']
+        data_context = meta.get('data_context')
         ml_model_id = meta['ml_model_id']
         download_abc_model(mod_abbreviation=mod_abbr,
                            topic=topic,
@@ -396,6 +397,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         negated=True,
                         tet_source_id=tet_source_id,
                         data_novelty=data_novelty,
+                        data_context=data_context,
                         ml_model_id=ml_model_id
                     )
                 else:
@@ -439,6 +441,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             data_novelty=data_novelty,
+                            data_context=data_context,
                             ml_model_id=ml_model_id
                         )
 
@@ -537,6 +540,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                         negated=True,
                         tet_source_id=tet_source_id,
                         data_novelty=data_novelty,
+                        data_context=data_context,
                         ml_model_id=ml_model_id
                     )
                 else:
@@ -580,6 +584,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                             entity=ent_curie,
                             tet_source_id=tet_source_id,
                             data_novelty=data_novelty,
+                            data_context=data_context,
                             ml_model_id=ml_model_id
                         )
 
