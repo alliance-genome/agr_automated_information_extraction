@@ -23,7 +23,8 @@ from sklearn.neighbors import LocalOutlierFactor
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from agr_document_classifier.models import POSSIBLE_CLASSIFIERS
 from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
-                             get_reference_embedding, get_reference_abstract_text)
+                             get_reference_embedding, get_reference_abstract_text,
+                             default_data_context_for_mod)
 from utils.abc_embeddings import (abc_embedding_recipe, get_profile, get_profile_by_name,
                                   registered_profile_names, ABC_EMBEDDING_PROFILE,
                                   ABC_EMBEDDING_VERSION, TEXT_SOURCE_REFERENCE_ABSTRACT)
@@ -567,14 +568,16 @@ def parse_arguments():
     #     +-- ATP:0000326 marker data
     #         |-- ATP:0000328 expression marker
     #         +-- ATP:0000327 genetic marker
-    # Every model this trainer uploads is a biocuration_topic_classification one,
-    # so every tag it will produce is a topic tag with no entity. Per Ceri Van
-    # Slyke on SCRUM-5697 (2026-09-01) those take the root term: the paper was
-    # classified for the topic, with no claim about what kind of data that is.
-    # Pass -C to override for a MOD that has decided otherwise.
-    parser.add_argument("-C", "--data_context", type=str, required=False, default='ATP:0000323',
+    # Left as None here and resolved per MOD after parsing: the rule is not
+    # universal. Every model this trainer uploads is a topic classifier, and WB's
+    # topic tags take the root term (Ceri Van Slyke, SCRUM-5697, 2026-09-01) --
+    # but FlyBase asked for ATP:0000325 on all of theirs and the other MODs take
+    # the same blanket default, so a fixed ATP:0000323 would have stamped WB's
+    # rule onto every MOD. An explicit -C still wins over the per-MOD default.
+    parser.add_argument("-C", "--data_context", type=str, required=False, default=None,
                         help="Data context term for the tags this model creates. "
-                             "Default 'ATP:0000323' (data context, the root term)")
+                             "Defaults per MOD: 'ATP:0000323' for WB topic "
+                             "classifiers, 'ATP:0000325' otherwise")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)
@@ -593,7 +596,12 @@ def parse_arguments():
                         help="Outlier detection method (default: isolation_forest)")
     parser.add_argument("--outlier_contamination", type=float, default=0.1,
                         help="Expected proportion of outliers (default: 0.1)")
-    return parser.parse_args()
+    args = parser.parse_args()
+    # SCRUM-5697. Resolve the per-MOD default only when the caller stated
+    # nothing, so -C remains an override rather than a suggestion.
+    if args.data_context is None:
+        args.data_context = default_data_context_for_mod(args.mod_train)
+    return args
 
 
 def get_filtered_training_curies(args, training_set):
