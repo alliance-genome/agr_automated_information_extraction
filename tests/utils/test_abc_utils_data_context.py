@@ -152,3 +152,33 @@ def test_upload_ml_model_data_context_defaults_to_none(tmp_path):
         )
 
     assert mock_post.call_args.kwargs["data"]["data_context"] is None
+
+
+class TestDefaultDataContextForMod:
+    """SCRUM-5697. The default a model's data_context should take when nobody
+    states one is per-MOD, not universal: Ceri Van Slyke's 2026-09-01 answer
+    ("For WB ... topic tags should get the ATP:0000323 data context value") is
+    scoped to WormBase, while FlyBase asked for ATP:0000325 on all of theirs and
+    every other MOD takes the same blanket default.
+    """
+
+    def test_wb_takes_the_root_term(self):
+        assert abc_utils.default_data_context_for_mod("WB") == "ATP:0000323"
+
+    def test_fb_takes_experimentally_studied(self):
+        assert abc_utils.default_data_context_for_mod("FB") == "ATP:0000325"
+
+    def test_zfin_takes_experimentally_studied(self):
+        """The case a WB-vs-everyone-else rule gets right and a WB-vs-FB rule
+        gets wrong: ZFIN is backfill rule 5, so all its tags are ATP:0000325."""
+        assert abc_utils.default_data_context_for_mod("ZFIN") == "ATP:0000325"
+
+    def test_other_mods_take_experimentally_studied(self):
+        for mod in ("MGI", "SGD", "RGD", "XB"):
+            assert abc_utils.default_data_context_for_mod(mod) == "ATP:0000325"
+
+    def test_an_unresolved_mod_takes_the_server_default(self):
+        """--mod_train is not required, so it can be absent. ATP:0000325 is what
+        the ABC would have stored anyway; assuming WB's term would be a guess."""
+        assert abc_utils.default_data_context_for_mod(None) == "ATP:0000325"
+        assert abc_utils.default_data_context_for_mod("") == "ATP:0000325"

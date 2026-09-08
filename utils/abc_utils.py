@@ -248,6 +248,41 @@ def send_manual_indexing_to_abc(reference_curie: str, mod_abbr: str, topic: str,
     return False
 
 
+# SCRUM-5697. data_context terms. The hierarchy is
+#     ATP:0000323 data context
+#     |-- ATP:0000324 mentioned data -> ATP:0000360 background information
+#     |                                ATP:0000325 experimentally studied data
+#     +-- ATP:0000326 marker data    -> ATP:0000328 expression marker
+#                                       ATP:0000327 genetic marker
+DATA_CONTEXT_ROOT = "ATP:0000323"
+DATA_CONTEXT_EXPERIMENTALLY_STUDIED = "ATP:0000325"
+
+# MODs whose topic tags take the root term. WormBase only: Ceri Van Slyke on
+# SCRUM-5697 (2026-09-01) split WB by what the tag is -- "For WB entities are
+# always experimentally studied ATP:0000325 ... Topic tags should get the
+# 'ATP:0000323 data context' value". FlyBase asked for ATP:0000325 on all of
+# theirs and the remaining MODs take the same blanket default, so WB is the only
+# exception rather than the rule.
+TOPIC_TAG_ROOT_TERM_MODS = frozenset({"WB"})
+
+
+def default_data_context_for_mod(mod_abbreviation):
+    """The data_context a topic-tag-producing model should carry for this MOD.
+
+    Getting it wrong is not cosmetic: check_for_duplicate_tags on the ABC filters
+    on every field of the payload, so a model whose data_context disagrees with
+    what the backfill wrote for that MOD turns every re-sent tag into a new row
+    instead of a benign 409.
+
+    An unresolved MOD falls back to the experimentally-studied term, which is
+    what the ABC stores when a client sends nothing -- assuming WB's term would
+    be a guess.
+    """
+    if mod_abbreviation in TOPIC_TAG_ROOT_TERM_MODS:
+        return DATA_CONTEXT_ROOT
+    return DATA_CONTEXT_EXPERIMENTALLY_STUDIED
+
+
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
                                    data_novelty: str, confidence_score: Optional[float],
                                    confidence_level: Optional[str], tet_source_id,
