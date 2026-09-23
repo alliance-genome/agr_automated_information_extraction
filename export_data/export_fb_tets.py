@@ -60,9 +60,9 @@ def get_data(table_name: str):
     if table_name == 'tet':
 
         query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
-                      FROM topic_entity_tag tet, cross_reference cr, topic_entity_tag_source s
+                      FROM topic_entity_tag tet, cross_reference cr, tag_source s
                         WHERE tet.date_created >= '{sql_date}'
-                             AND s.topic_entity_tag_source_id = tet.topic_entity_tag_source_id
+                             AND s.tag_source_id = tet.tag_source_id
                              AND cr.reference_id = tet.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND s.source_method = 'abc_document_classifier'

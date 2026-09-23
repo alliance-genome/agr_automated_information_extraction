@@ -141,7 +141,10 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
     eco_code = eco_map.get(source_method)
     if eco_code is None:
         raise ValueError(f"Unknown source_method '{source_method}' — ECO code not defined")
-    url = (f'{blue_api_base_url}/topic_entity_tag/source/{eco_code}/{source_method}/{mod_abbreviation}'
+    # SCRUM-6518: the ABC renamed topic_entity_tag_source to tag_source. The
+    # lookup/create endpoint is /tag_source and the id field is tag_source_id;
+    # the old /topic_entity_tag/source path 404s.
+    url = (f'{blue_api_base_url}/tag_source/{eco_code}/{source_method}/{mod_abbreviation}'
            f'/{mod_abbreviation}')
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -152,11 +155,11 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
         with urllib.request.urlopen(request) as response:
             resp = response.read().decode("utf8")
             resp_obj = json.loads(resp)
-            return int(resp_obj["topic_entity_tag_source_id"])
+            return int(resp_obj["tag_source_id"])
     except HTTPError as e:
         if e.code == 404:
             # Create a new source if not exists
-            create_url = f'{blue_api_base_url}/topic_entity_tag/source'
+            create_url = f'{blue_api_base_url}/tag_source'
             token = get_authentication_token()
             headers = generate_headers(token)
             create_data = json.dumps({
@@ -172,11 +175,11 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
             create_request.add_header("Accept", "application/json")
             try:
                 with urllib.request.urlopen(create_request) as create_response:
-                    # POST /topic_entity_tag/source now returns the full
-                    # TopicEntityTagSourceSchemaShow object (SCRUM-5716), not a
-                    # bare integer id, so parse the JSON and pull the id field.
+                    # POST /tag_source returns the full TagSourceSchemaShow
+                    # object (SCRUM-5716), not a bare integer id, so parse the
+                    # JSON and pull the id field.
                     create_resp = json.loads(create_response.read().decode("utf8"))
-                    return int(create_resp["topic_entity_tag_source_id"])
+                    return int(create_resp["tag_source_id"])
             except HTTPError as create_e:
                 logger.error(f"Failed to create source: {create_e}")
         else:
@@ -296,7 +299,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
         "updated_by": "default_user",
         "topic": topic,
         "species": species,
-        "topic_entity_tag_source_id": tet_source_id,
+        "tag_source_id": tet_source_id,
         "negated": negated,
         "data_novelty": data_novelty,
         "confidence_score": float(confidence_score) if confidence_score is not None else None,
@@ -363,7 +366,7 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
             "entity_id_validation": "alliance" if entity else None,
             "entity": entity,
             "species": species,
-            "topic_entity_tag_source_id": tet_source_id,
+            "tag_source_id": tet_source_id,
             "negated": negated,
             "data_novelty": data_novelty,
             "confidence_score": confidence_score,
