@@ -50,11 +50,20 @@ _ENTITY_CACHE: Dict[Tuple[str, str], Tuple[List[str], Dict[str, str], Dict[str, 
 # and the entity_type, to match the WB allele data import convention.
 ALLELE_EXTRACTION_TOPICS = frozenset({"ATP:0000006", "ATP:0000285"})
 ABC_ALLELE_TOPIC = "ATP:0000285"
+# The allele extraction and TF-IDF models are registered in ABC under the
+# generic "allele" topic only, so model lookup/download must use ATP:0000006
+# even when the extraction job is keyed on the classical allele topic.
+MODEL_ALLELE_TOPIC = "ATP:0000006"
 
 
 def is_allele_topic(topic: Optional[str]) -> bool:
     """True if ``topic`` drives allele extraction (generic or classical allele)."""
     return topic in ALLELE_EXTRACTION_TOPICS
+
+
+def normalize_allele_topic(topic: Optional[str]) -> Optional[str]:
+    """Map any allele extraction topic to the topic the models are registered under."""
+    return MODEL_ALLELE_TOPIC if is_allele_topic(topic) else topic
 
 
 STRAIN_NAME_PATTERN = re.compile(

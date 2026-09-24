@@ -59,6 +59,7 @@ from utils.entity_extraction_utils import (
     rescue_short_alleles_from_fulltext,
     filter_false_positive_alleles,
     is_allele_topic,
+    normalize_allele_topic,
     ABC_ALLELE_TOPIC,
     SUSPICIOUS_PREFIX_RE,
     ALLELE_NAME_PATTERN,
@@ -650,7 +651,7 @@ def main():
 
     mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
 
-    wanted_topics = set(args.topic) if args.topic else None
+    wanted_topics = {normalize_allele_topic(t) for t in args.topic} if args.topic else None
     wanted_mods = {m.upper() for m in (args.mod or [])} if args.mod else None
     _mod_cache = {}
 
@@ -661,11 +662,17 @@ def main():
 
     filtered = {}
     for (mod_id, topic), jobs in mod_topic_jobs.items():
+        # ABC keys WB allele jobs on the classical allele topic (ATP:0000285),
+        # but the extraction model is registered under the generic allele topic
+        # (ATP:0000006). Normalize so those jobs pass the topic filter and the
+        # model is looked up under the topic it is registered with; the tags
+        # reported to ABC still use ATP:0000285 (see ABC_ALLELE_TOPIC).
+        topic = normalize_allele_topic(topic)
         if wanted_topics and topic not in wanted_topics:
             continue
         if wanted_mods and mod_id_to_abbr(mod_id) not in wanted_mods:
             continue
-        filtered[(mod_id, topic)] = jobs
+        filtered.setdefault((mod_id, topic), []).extend(jobs)
     mod_topic_jobs = filtered
 
     if not mod_topic_jobs:
