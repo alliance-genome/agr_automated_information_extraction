@@ -71,6 +71,35 @@ def test_topic_flag_accepts_classical_allele_curie():
     assert calls == [(WB_MOD_ID, "ATP:0000006", allele_jobs)]
 
 
+def test_reference_with_jobs_under_both_allele_topics_is_grouped_not_dropped():
+    """A reference with a job under each allele topic must be extracted once with
+    BOTH jobs attached, so both get their workflow status updated (neither is
+    silently dropped to stay pending and be re-extracted on the next run)."""
+    generic_job = {"reference_curie": "AGRKB:101", "reference_workflow_tag_id": 1}
+    classical_job = {"reference_curie": "AGRKB:101", "reference_workflow_tag_id": 2}
+    calls = run_main({
+        (WB_MOD_ID, "ATP:0000006"): [generic_job],
+        (WB_MOD_ID, "ATP:0000285"): [classical_job],
+    })
+    assert len(calls) == 1
+    _, _, jobs = calls[0]
+    grouped = pipeline_fast.group_jobs_by_reference(jobs)
+    assert list(grouped) == ["AGRKB:101"]
+    assert sorted(j["reference_workflow_tag_id"] for j in grouped["AGRKB:101"]) == [1, 2]
+
+
+def test_group_jobs_by_reference_keeps_distinct_references_separate():
+    jobs = [
+        {"reference_curie": "AGRKB:101", "reference_workflow_tag_id": 1},
+        {"reference_curie": "AGRKB:102", "reference_workflow_tag_id": 2},
+        {"reference_curie": "AGRKB:101", "reference_workflow_tag_id": 3},
+    ]
+    grouped = pipeline_fast.group_jobs_by_reference(jobs)
+    assert sorted(grouped) == ["AGRKB:101", "AGRKB:102"]
+    assert [j["reference_workflow_tag_id"] for j in grouped["AGRKB:101"]] == [1, 3]
+    assert [j["reference_workflow_tag_id"] for j in grouped["AGRKB:102"]] == [2]
+
+
 def test_non_allele_topics_and_mod_filter_are_unchanged():
     gene_jobs = [{"reference_curie": "AGRKB:102"}]
     calls = run_main({

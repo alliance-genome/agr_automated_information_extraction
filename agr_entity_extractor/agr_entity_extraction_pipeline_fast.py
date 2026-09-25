@@ -311,6 +311,21 @@ def find_best_tfidf_threshold(mod_id, topic, jobs, target_entities):
 # --------------------------------------------------------------------- #
 # Core processing                                                       #
 # --------------------------------------------------------------------- #
+def group_jobs_by_reference(jobs: List[dict]) -> "dict[str, List[dict]]":
+    """Group job dicts by reference curie.
+
+    load_all_jobs dedupes per (mod, topic, reference), so a reference can still
+    appear twice in a merged topic group (e.g. an allele job keyed on
+    ATP:0000006 next to one keyed on ATP:0000285). Grouping ensures the
+    reference is extracted once while every attached job gets its workflow
+    status updated.
+    """
+    grouped: dict[str, List[dict]] = {}
+    for job in jobs:
+        grouped.setdefault(job["reference_curie"], []).append(job)
+    return grouped
+
+
 def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False, test_fh=None, ner_batch_size: int = 16, prefilter: bool = True, log_every: int = 10, combined_md_dir: bool = False):  # noqa: C901
     mod_abbr = get_cached_mod_abbreviation_from_id(mod_id)
 
@@ -454,14 +469,19 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
     failed_count = 0
     md_skipped = 0
     classification_batch_size = int(os.environ.get("CLASSIFICATION_BATCH_SIZE", 1000))
-    jobs_to_process = copy.deepcopy(jobs)
+    # A reference can carry more than one pending job for this topic group
+    # (e.g. an allele job keyed on ATP:0000006 next to one keyed on
+    # ATP:0000285, merged by main()): extract each reference once and mark
+    # every job attached to it, so none is left pending to be re-extracted
+    # (and re-tagged) on the next run.
+    refs_to_process = list(group_jobs_by_reference(copy.deepcopy(jobs)).items())
 
-    while jobs_to_process:
-        job_batch = jobs_to_process[:classification_batch_size]
-        jobs_to_process = jobs_to_process[classification_batch_size:]
+    while refs_to_process:
+        ref_batch = refs_to_process[:classification_batch_size]
+        refs_to_process = refs_to_process[classification_batch_size:]
 
-        ref_map = {j["reference_curie"]: j for j in job_batch}
-        logger.info("Processing batch of %d jobs. Remaining: %d", len(job_batch), len(jobs_to_process))
+        ref_map = dict(ref_batch)
+        logger.info("Processing batch of %d references. Remaining: %d", len(ref_batch), len(refs_to_process))
 
         out_dir = "/data/agr_entity_extraction/to_extract"
         os.makedirs(out_dir, exist_ok=True)
@@ -470,14 +490,14 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
 
         download_md_files_for_references(list(ref_map.keys()), out_dir, mod_abbr)
 
-        metas: List[tuple[str, dict, str, str, str]] = []  # (curie, job, title, abstract, fulltext)
+        metas: List[tuple[str, List[dict], str, str, str]] = []  # (curie, jobs, title, abstract, fulltext)
         texts_for_ner: List[str] = []
 
         # ---- Prepare MDs ----
         for fname in os.listdir(out_dir):
             curie = fname.split(".")[0].replace("_", ":")
-            job = ref_map.get(curie)
-            if job is None:
+            ref_jobs = ref_map.get(curie)
+            if ref_jobs is None:
                 continue
             try:
                 md = AllianceMarkdown()
@@ -495,8 +515,9 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
                 ) or ""
             except Exception as e:
                 logger.error("Fulltext error for %s: %s. Marking failure.", curie, e)
-                set_job_started(job)
-                set_job_failure(job)
+                for job in ref_jobs:
+                    set_job_started(job)
+                    set_job_failure(job)
                 failed_count += 1
                 continue
 
@@ -513,7 +534,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
 
             text_for_ner = prefilter_text(fulltext, model) if prefilter else fulltext
             texts_for_ner.append(text_for_ner)
-            metas.append((curie, job, title, abstract, fulltext))
+            metas.append((curie, ref_jobs, title, abstract, fulltext))
 
         if not texts_for_ner:
             logger.info("No valid MDs in this batch.")
@@ -526,7 +547,7 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
         logger.info("NER on %d docs took %.1fs (%.2fs/doc)", len(texts_for_ner), total_time, total_time / len(texts_for_ner))
 
         # ---- Post-process ----
-        for idx, ((curie, job, title, abstract, fulltext), results) in enumerate(zip(metas, results_list), 1):
+        for idx, ((curie, ref_jobs, title, abstract, fulltext), results) in enumerate(zip(metas, results_list), 1):
             all_entities = build_entities_from_results(results, title, abstract, fulltext, model)
 
             if test_mode:
@@ -592,11 +613,12 @@ def process_entity_extraction_jobs(mod_id, topic, jobs, test_mode: bool = False,
             if idx % log_every == 0:
                 logger.info("Processed %d/%d in this batch", idx, len(metas))
 
-            set_job_started(job)
-            set_job_success(job)
+            for job in ref_jobs:
+                set_job_started(job)
+                set_job_success(job)
             logger.info("%s = %s", curie, all_entities)
 
-        logger.info("Finished processing batch of %d jobs.", len(job_batch))
+        logger.info("Finished processing batch of %d references.", len(ref_batch))
     return {"failed": failed_count, "md_skipped": md_skipped, "skipped": []}
 
 
