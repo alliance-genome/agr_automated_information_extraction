@@ -631,8 +631,10 @@ def main():
 
     # ---------- NEW DEFAULTS WHEN no --mod or no -- topic provided ----------
     DEFAULT_MODS = ['WB']
-    # strain, gene, transgene, allele
-    DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110', 'ATP:0000006']
+    # strain, gene, transgene, classical allele (SCRUM-6596: WB allele jobs and
+    # models moved to ATP:0000285; ATP:0000006 is reserved for future ZFIN
+    # allele extraction and no WB job or model uses it any more)
+    DEFAULT_TOPICS = ['ATP:0000027', 'ATP:0000005', 'ATP:0000110', 'ATP:0000285']
     if not args.mod:
         args.mod = DEFAULT_MODS
         logging.getLogger(__name__).info("No --mod provided; defaulting to %s", ", ".join(DEFAULT_MODS))
