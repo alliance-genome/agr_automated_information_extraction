@@ -1685,53 +1685,59 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
         # standalone gene-symbol typography.
         if len(span) > 200 or re.search(r"[:()<>]", span):
             continue
-        # A parenthesized italic word such as ``(*top*)`` is normally a figure
-        # orientation/label, not a gene mention.
-        if (
-            span_match.start() > 0
-            and span_match.end() < len(article_body)
-            and article_body[span_match.start() - 1] == "("
-            and article_body[span_match.end()] == ")"
-        ):
-            continue
         prev_c = article_body[span_match.start() - 1] if span_match.start() > 0 else ""
         next_c = article_body[span_match.end()] if span_match.end() < len(article_body) else ""
         next2_c = article_body[span_match.end() + 1] if span_match.end() + 1 < len(article_body) else ""
-        # Partial emphasis - ``*cat*RAPID`` - is a substring of a longer word.
-        # Pandoc often puts the separating space INSIDE the italics
-        # (``*th *expression``, ``and* rho*``); a span that already ends in
-        # whitespace on that side is a whole word, not a partial one.
-        if (prev_c and prev_c.isalnum() and not span[0].isspace()) or \
-           (next_c and next_c.isalnum() and not span[-1].isspace()):
-            continue
+        # The rules below look at what flanks the italic span, so in a list span
+        # (``*sod1, cat, gpx1a*``) they can only ever disqualify the FIRST item
+        # (left flank) or the LAST item (right flank); the inner items stand.
+        #
+        # Partial emphasis - ``*cat*RAPID``, ``c*myb``, ``*il-*6`` - is a substring
+        # of a longer word. Pandoc often puts the separating space INSIDE the
+        # italics (``*th *expression``, ``and* rho*``); a span that already ends
+        # in whitespace on that side is a whole word, not a partial one.
+        left_partial = bool(prev_c) and prev_c.isalnum() and not span[0].isspace()
+        right_partial = bool(next_c) and next_c.isalnum() and not span[-1].isspace()
         # A dotted identifier typeset segment by segment, such as the URL
         # ``*singlecell*.*broadinstitute*.*org*``, is not gene typography.
-        if prev_c == "." or (next_c == "." and next2_c and (next2_c.isalnum() or next2_c == "*")):
-            continue
-        # Construct / promoter-fusion notation - ``Tg(*kdrl*:GFP)``, ``*Tg*
-        # (*top*: dGFP)`` - is the same case the construct filter handles for
-        # the regex path: curators tag constructs separately, so the italic
-        # span only counts if the gene ALSO has a standalone mention somewhere
-        # in the (emphasis-free) body.
-        if prev_c == ":" or next_c == ":":
-            if plain_body is None:
-                plain_body = article_body.replace("*", "")
-            if not gene_has_standalone_mention(plain_body, span.strip()):
-                continue
-        # Likewise a panel label inside any parenthetical: ``(Fig. 5A, *top*)``,
-        # ``(*top*, *right arrowheads* and *bottom*, ...)``.
-        if (
+        left_dotted = prev_c == "."
+        right_dotted = next_c == "." and bool(next2_c) and (next2_c.isalnum() or next2_c == "*")
+        # Construct / promoter-fusion notation - ``Tg(*kdrl*:GFP)``, ``*cldnb*:*gfp*``,
+        # ``*Tg* (*top*: dGFP)`` - is the same case the construct filter handles
+        # for the regex path: curators tag constructs separately, so the italic
+        # span only counts if the gene ALSO has a standalone mention somewhere in
+        # the (emphasis-free) body. A colon followed by whitespace is a label
+        # (``*gpia*: forward-GCGTAT...`` in a primer table), not a construct,
+        # unless the span itself directly follows the construct's ``(``.
+        left_colon = prev_c == ":"
+        right_colon = next_c == ":" and ((bool(next2_c) and not next2_c.isspace()) or prev_c == "(")
+        # A parenthesized or parenthetical italic ORIENTATION word - ``(*top*)``,
+        # ``(Fig. 5A, *top*)``, ``(*top*, *right arrowheads* and *bottom*, ...)`` -
+        # is a figure-panel label. Only label words are affected: ``catalase
+        # (*cat*)`` and ``(*kdrl, flt1*)`` are gene typography.
+        panel_label = (
             span.strip().lower() in FIGURE_PANEL_LABEL_WORDS
-            and _inside_open_parenthetical(article_body, span_match.start())
-        ):
+            and (prev_c == "(" or _inside_open_parenthetical(article_body, span_match.start()))
+        )
+        if panel_label:
             continue
         # Accept complete italic symbols and complete comma/semicolon list
         # items. Do not mine substrings from constructs such as ``*5’del*`` or
         # partially emphasized symbols such as ``*spi1b*``.
-        for item in re.split(r"[,;]", span):
+        items = re.split(r"[,;]", span)
+        last_idx = len(items) - 1
+        for idx, item in enumerate(items):
             token = item.strip().rstrip(".")
             if not MARKDOWN_GENE_LIST_ITEM_RE.fullmatch(token):
                 continue
+            first, last = idx == 0, idx == last_idx
+            if (first and (left_partial or left_dotted)) or (last and (right_partial or right_dotted)):
+                continue
+            if (first and left_colon) or (last and right_colon):
+                if plain_body is None:
+                    plain_body = article_body.replace("*", "")
+                if not gene_has_standalone_mention(plain_body, token):
+                    continue
             curated = upper_to_original.get(token.upper())
             # ZFIN gene symbols are lower-case. Exact case avoids treating
             # upper-case human proteins/antibodies as zebrafish genes.

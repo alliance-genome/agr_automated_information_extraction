@@ -401,6 +401,30 @@ def test_italic_rescue_construct_only_dropped_but_mixed_kept():
     assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
 
 
+def test_italic_rescue_edge_rules_only_hit_list_edges():
+    model = _ZfinGeneModel("myb", "mpx", "wasb", "aclya", "gmds", "zgc", "tnfa", "gpia")
+    # fused prefix on the first item only drops that item
+    md = "## Results\n\nEnhanced expression of c*myb, mpx*, and *l-plastin*"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["mpx"]
+    md = "## Results\n\nchemotaxis (c*xcl8a, cxcl20, wasb, lta4h*), inflammatory"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["wasb"]
+    # a construct colon after the last item only drops that item
+    md = "## Results\n\n19/84 examined; *aclya, gmds, zgc*:*85975* (ckap4 homolog)"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["aclya", "gmds"]
+    # partial emphasis on the last item only drops that item
+    md = "## Results\n\nhigher levels of *ptgs-2, tnfa, c3b, il-1b, il-*6, and *il-*8"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["tnfa"]
+    # a colon followed by a space is a label (primer table), not a construct
+    md = "## Methods\n\nreverse-AGCTTGAGC), *gpia*: forward-GCGTATTTCCAACAGGGGGA"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["gpia"]
+
+
+def test_italic_rescue_parenthesized_gene_kept_but_label_skipped():
+    model = _ZfinGeneModel("cat", "kdrl", "flt", "top")
+    md = "## Results\n\nantioxidants-catalase (*cat*), endothelial cells (*kdrl, flt*), and (*top*)"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["cat", "flt", "kdrl"]
+
+
 def test_italic_rescue_skips_segmented_italic_url():
     model = _ZfinGeneModel("org")
     md = "## Results\n\ndata from the *singlecell*.*broadinstitute*.*org* portal"
