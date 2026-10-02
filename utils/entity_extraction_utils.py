@@ -1625,23 +1625,33 @@ MARKDOWN_REFERENCES_RE = re.compile(
     r"^#{1,3}\s+(?:references|bibliography|literature cited)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
-# An italic word inside a figure-reference parenthetical - ``(Fig. 5A, *top*)``,
-# ``(Figure 2, *right*)``, ``(Supplementary Fig. S3, *inset*)`` - is a panel
-# label, not a gene mention. The lookback stops at the nearest unclosed ``(``.
-MARKDOWN_FIGURE_REF_OPEN_RE = re.compile(
-    r"\(\s*(?:Supplementary\s+|Suppl(?:ementary)?\.?\s*|Extended\s+Data\s+|S)?"
-    r"Fig(?:ure|\.|s\.?)?\b[^()]*$",
-    re.IGNORECASE,
-)
+# An italic ORIENTATION word inside a parenthetical - ``(Fig. 5A, *top*)``,
+# ``([Fig. 1](#fig-1) *c*, *top*)``, ``(*top*, *right arrowheads* and
+# *bottom*, ...)`` - is a figure-panel label, not a gene mention. Only these
+# label words are skipped: a figure reference also lists the genes shown in the
+# panel (``(Fig. 6b, *flnca*, *ptgs2b*)``) and those must stay. The lookback
+# stops at the nearest unclosed ``(``.
+FIGURE_PANEL_LABEL_WORDS = frozenset({
+    "top", "bottom", "left", "right", "middle", "upper", "lower", "inset",
+    "center", "centre", "front", "back", "side", "above", "below",
+})
 
 
-def _inside_figure_reference(text: str, start: int, lookback: int = 120) -> bool:
-    """True when ``text[start]`` sits inside an unclosed ``(Fig...`` parenthetical."""
-    window = text[max(0, start - lookback):start]
-    open_idx = window.rfind("(")
-    if open_idx == -1 or ")" in window[open_idx:]:
-        return False
-    return MARKDOWN_FIGURE_REF_OPEN_RE.match(window[open_idx:]) is not None
+def _inside_open_parenthetical(text: str, start: int, lookback: int = 160) -> bool:
+    """True when ``text[start]`` sits inside a ``(`` that has not been closed yet.
+
+    Nested, already-closed groups inside the window - the markdown link target in
+    ``([Fig. 1](#fig-1) *c*, *top*)`` - are skipped over by depth counting.
+    """
+    depth = 0
+    for ch in reversed(text[max(0, start - lookback):start]):
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            if depth == 0:
+                return True
+            depth -= 1
+    return False
 
 
 def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str]:
@@ -1682,8 +1692,26 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
             and article_body[span_match.end()] == ")"
         ):
             continue
-        # Likewise a panel label inside a figure reference: ``(Fig. 5A, *top*)``.
-        if _inside_figure_reference(article_body, span_match.start()):
+        prev_c = article_body[span_match.start() - 1] if span_match.start() > 0 else ""
+        next_c = article_body[span_match.end()] if span_match.end() < len(article_body) else ""
+        next2_c = article_body[span_match.end() + 1] if span_match.end() + 1 < len(article_body) else ""
+        # Partial emphasis - ``*cat*RAPID`` - is a substring of a longer word.
+        if (prev_c and prev_c.isalnum()) or (next_c and next_c.isalnum()):
+            continue
+        # A dotted identifier typeset segment by segment, such as the URL
+        # ``*singlecell*.*broadinstitute*.*org*``, is not gene typography.
+        if prev_c == "." or (next_c == "." and next2_c and (next2_c.isalnum() or next2_c == "*")):
+            continue
+        # Construct / promoter-fusion notation ``*Tg* (*top*: dGFP)``: the colon
+        # marks a promoter, not a gene mention (curators tag constructs separately).
+        if prev_c == ":" or next_c == ":":
+            continue
+        # Likewise a panel label inside any parenthetical: ``(Fig. 5A, *top*)``,
+        # ``(*top*, *right arrowheads* and *bottom*, ...)``.
+        if (
+            span.strip().lower() in FIGURE_PANEL_LABEL_WORDS
+            and _inside_open_parenthetical(article_body, span_match.start())
+        ):
             continue
         # Accept complete italic symbols and complete comma/semicolon list
         # items. Do not mine substrings from constructs such as ``*5’del*`` or
@@ -1846,8 +1874,16 @@ def restrict_markdown_to_results_methods(raw_md: str) -> Optional[str]:
 # match is a whole token: a match flanked by an alphanumeric is a substring of a
 # longer identifier (``fn1a`` inside ``fn1ab``) and does not count. Punctuation
 # such as a trailing sentence period (``slc26a4.``) is a clean edge, NOT a
-# continuation - this keeps genes at sentence end from being missed.
+# continuation - this keeps genes at sentence end from being missed. The check
+# is Unicode-aware on purpose: the trie tokenizer only knows ASCII boundaries, so
+# it emits ``sel`` out of the author name ``Rösel`` (ö is a letter here).
 _GENE_IDENT_CHAR_RE = re.compile(r'[A-Za-z0-9]')
+
+
+def _is_ident_char(ch: str) -> bool:
+    return bool(ch) and (ch.isalnum() or _GENE_IDENT_CHAR_RE.match(ch) is not None)
+
+
 _GENE_CONSTRUCT_LEFT_CHARS = "(:"
 _GENE_CONSTRUCT_RIGHT_CHARS = "):"
 # A trailing '+' (ASCII) or superscript '⁺' (U+207A) marks ion / charge notation
@@ -1879,6 +1915,10 @@ _GENE_CATALOG_NUMBER_RE = re.compile(r"\.?\s*(?:#|no\.|number\b)", re.IGNORECASE
 # separate word: ``k cat`` / ``K cat`` (``kcat``). A lone k/K word directly before
 # the match marks that notation.
 _GENE_KINETIC_PREFIX_RE = re.compile(r"(?:^|[^A-Za-z0-9])[kK]\s$")
+# ...or recognised from what follows: ``cat \\K m``, ``cat /K m``, ``cat K m``
+# (the k_cat / K_m ratio) - covers OCR text that glued the k onto the previous
+# word (``Proteasek cat /K m``).
+_GENE_KINETIC_SUFFIX_RE = re.compile(r"\s*[\\/]?\s*K\s?m\b")
 
 
 def strip_non_gene_spans(text: str) -> str:
@@ -1922,7 +1962,9 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
       blanked out beforehand by :func:`strip_non_gene_spans`; a match that
       directly follows an unclosed ``<sub>`` tag (``k<sub>cat``) is rejected too;
     - a flattened kinetic constant ``k cat`` and a supplier catalogue number
-      ``cat. #C10640`` / ``cat. no. 12`` are not mentions of the gene ``cat``.
+      ``cat. #C10640`` / ``cat. no. 12`` are not mentions of the gene ``cat``;
+    - a single-letter hyphen prefix (``β-cat`` for beta-catenin, ``N-cad``)
+      marks an abbreviation compound, not the gene.
     """
     if not text or not gene:
         return False
@@ -1932,19 +1974,24 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
         next_c = text[m.end()] if m.end() < len(text) else ""
         prev2_c = text[m.start() - 2] if m.start() > 1 else ""
         next2_c = text[m.end() + 1] if m.end() + 1 < len(text) else ""
-        if prev_c and _GENE_IDENT_CHAR_RE.match(prev_c):
+        if _is_ident_char(prev_c):
             continue                            # substring of a longer identifier
-        if next_c and _GENE_IDENT_CHAR_RE.match(next_c):
+        if _is_ident_char(next_c):
             continue
         if next_c == "-" and next2_c.isdigit():
             continue                            # hyphenated gene name (sel-12)
-        if (prev_c == "." and prev2_c and _GENE_IDENT_CHAR_RE.match(prev2_c)) or \
-           (next_c == "." and next2_c and _GENE_IDENT_CHAR_RE.match(next2_c)):
+        if prev_c == "-" and prev2_c.isalpha() and \
+           (m.start() < 3 or not text[m.start() - 3].isalnum()):
+            continue                            # single-letter prefix compound (β-cat)
+        if (prev_c == "." and _is_ident_char(prev2_c)) or \
+           (next_c == "." and _is_ident_char(next2_c)):
             continue                            # domain / filename (zfin.org)
         if text[max(0, m.start() - 5):m.start()].lower() == "<sub>":
             continue                            # unclosed subscript (k<sub>cat)
         if _GENE_KINETIC_PREFIX_RE.search(text[max(0, m.start() - 3):m.start()]):
             continue                            # flattened kinetic constant (k cat)
+        if _GENE_KINETIC_SUFFIX_RE.match(text, m.end()):
+            continue                            # k_cat / K_m ratio (cat \K m)
         if _GENE_CATALOG_NUMBER_RE.match(text, m.end()):
             continue                            # catalogue number (cat. #C10640)
         # Truthiness guards matter: an empty boundary (start/end of text) is a

@@ -19,7 +19,7 @@ from utils.entity_extraction_utils import (
     strip_non_gene_spans,
     is_false_positive_allele,
     rescue_zfin_all_letter_genes_from_markdown,
-    _inside_figure_reference,
+    _inside_open_parenthetical,
 )
 
 
@@ -202,6 +202,9 @@ def test_standalone_zgc_id_with_internal_colon_kept():
 def test_standalone_substring_of_longer_identifier_rejected():
     assert not gene_has_standalone_mention("fn1ab is different", "fn1a")
     assert not gene_has_standalone_mention("nkx2.1a cells", "nkx2.1")
+    # non-ASCII letters are identifier characters too (author name Rösel)
+    assert not gene_has_standalone_mention("Rösel et al. 2011; Rösel TD, Hung L-H", "sel")
+    assert not gene_has_standalone_mention("the Müller glia", "ller")
 
 
 def test_standalone_at_text_edges_kept():
@@ -284,6 +287,18 @@ def test_standalone_flattened_kinetic_constant_rejected():
     assert not gene_has_standalone_mention("the K cat of the enzyme", "cat")
     # an ordinary word ending in k before the gene is fine
     assert gene_has_standalone_mention("we knock cat down", "cat")
+    # OCR glued the k onto the previous word; the trailing K m still marks kinetics
+    assert not gene_has_standalone_mention("shown.Proteasek cat /K m (M -1", "cat")
+    assert not gene_has_standalone_mention("Estimated k cat \\K m values", "cat")
+    assert not gene_has_standalone_mention("E F k cat K m : [E]t", "cat")
+
+
+def test_standalone_single_letter_hyphen_prefix_rejected():
+    # beta-catenin abbreviated as β-cat is not the catalase gene.
+    assert not gene_has_standalone_mention("the mechanosensitive β-cat pathway", "cat")
+    assert not gene_has_standalone_mention("Y667-β-cat site", "cat")
+    # a hyphen after a full word is ordinary prose
+    assert gene_has_standalone_mention("the anti-cat antibody", "cat")
 
 
 def test_standalone_catalog_number_rejected():
@@ -333,24 +348,50 @@ class _ZfinGeneModel:
         self.upper_to_original_mapping = {s.upper(): s for s in symbols}
 
 
-def test_inside_figure_reference():
+def test_inside_open_parenthetical():
     text = "kinase A (PKA), (Fig. 5A, *top*) [11]"
-    assert _inside_figure_reference(text, text.index("*top*"))
-    text = "(Supplementary Fig. S3, *inset*) and (Figure 2B, *right*)"
-    assert _inside_figure_reference(text, text.index("*inset*"))
-    assert _inside_figure_reference(text, text.index("*right*"))
+    assert _inside_open_parenthetical(text, text.index("*top*"))
+    text = "rows (*top*, *right arrowheads* and *bottom*, arrows)"
+    assert _inside_open_parenthetical(text, text.index("*bottom*"))
     # closed parenthetical before the span -> not inside
     text = "(Fig. 1) shows *top* expression"
-    assert not _inside_figure_reference(text, text.index("*top*"))
-    # ordinary parenthetical -> not a figure reference
-    text = "the gene (*sox10*) was"
-    assert not _inside_figure_reference(text, text.index("*sox10*"))
+    assert not _inside_open_parenthetical(text, text.index("*top*"))
+    # a closed nested group (markdown link target) does not end the outer one
+    text = "stomach ([Fig. 1](#fig-1) *c*, *top*). At"
+    assert _inside_open_parenthetical(text, text.index("*top*"))
 
 
 def test_italic_rescue_skips_figure_panel_label():
     model = _ZfinGeneModel("top", "nor")
     md = "## Results\n\nPKA phosphorylation (Fig. 5A, *top*) [11] and (Fig. 6A, *top*) [11]."
     assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+    md = "## Results\n\nspots in bilateral rows (*top*, *right arrowheads* and *bottom*, arrows)."
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+    md = "## Results\n\nstomach ([Fig. 1](#fig-1) *c*, *top*). At 490 nm"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+
+
+def test_italic_rescue_skips_construct_colon_and_partial_emphasis():
+    model = _ZfinGeneModel("top", "cat", "org")
+    md = "## Results\n\nin the *Tg* (*top*: dGFP) embryos; predicted with the *cat*RAPID server"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+
+
+def test_italic_rescue_skips_segmented_italic_url():
+    model = _ZfinGeneModel("org")
+    md = "## Results\n\ndata from the *singlecell*.*broadinstitute*.*org* portal"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+    md = "## Results\n\novarian markers (*zp2*, *org*, *sycp3*) confirmed"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["org"]
+
+
+def test_italic_rescue_keeps_gene_list_inside_figure_reference():
+    # A figure reference that names the genes shown in the panel is real typography.
+    # (digit-bearing symbols such as ptgs2b come from the body regex, not this rescue)
+    model = _ZfinGeneModel("flnca", "ptgs2b", "th", "top")
+    md = ("## Results\n\ngenes involved in regeneration (Fig. 6b, *flnca*, *ptgs2b*) "
+          "and DA neurons (Supplementary Fig. 2d, *th*<sup>+</sup>, *top*).")
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["flnca", "th"]
 
 
 def test_italic_rescue_keeps_italic_gene_outside_figure_reference():
