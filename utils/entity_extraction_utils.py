@@ -1889,7 +1889,8 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
       sentence punctuation, so ``org`` inside ``zfin.org`` does not count,
       while ``slc26a4.`` at a sentence end still does;
     - URLs, e-mail addresses and subscript spans (``k<sub>cat</sub>``) are
-      blanked out beforehand by :func:`strip_non_gene_spans`.
+      blanked out beforehand by :func:`strip_non_gene_spans`; a match that
+      directly follows an unclosed ``<sub>`` tag (``k<sub>cat``) is rejected too.
     """
     if not text or not gene:
         return False
@@ -1908,6 +1909,8 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
         if (prev_c == "." and prev2_c and _GENE_IDENT_CHAR_RE.match(prev2_c)) or \
            (next_c == "." and next2_c and _GENE_IDENT_CHAR_RE.match(next2_c)):
             continue                            # domain / filename (zfin.org)
+        if text[max(0, m.start() - 5):m.start()].lower() == "<sub>":
+            continue                            # unclosed subscript (k<sub>cat)
         # Truthiness guards matter: an empty boundary (start/end of text) is a
         # clean edge, but "" in "(:" is True in Python, so it must be excluded.
         if (prev_c and prev_c in _GENE_CONSTRUCT_LEFT_CHARS) or \

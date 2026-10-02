@@ -271,6 +271,9 @@ def test_standalone_subscript_rejected():
     assert not gene_has_standalone_mention("k<SUB>cat</SUB> for caspase", "cat")
     # pandoc-style subscript
     assert not gene_has_standalone_mention("the k~cat~ values", "cat")
+    # unclosed tag, as the curator quoted it ("k<sub>cat")
+    assert not gene_has_standalone_mention("using k<sub>cat", "cat")
+    assert not gene_has_standalone_mention("k<sub>cat /K<sub>m values", "cat")
 
 
 def test_standalone_subscript_and_alone_kept():
