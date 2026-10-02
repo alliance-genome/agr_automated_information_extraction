@@ -61,6 +61,7 @@ from utils.entity_extraction_utils import (
     rescue_superscript_alleles_from_markdown,
     restrict_markdown_to_results_methods,
     filter_construct_embedded_genes,
+    filter_english_word_gene_symbols,
     filter_false_positive_alleles,
     is_allele_topic,
     ZFIN_GENE_TOPIC,
@@ -259,6 +260,18 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
             len(italic_gene_rescues), ", ".join(italic_gene_rescues),
         )
         entities = sorted(set(entities) | set(italic_gene_rescues))
+
+    # ZFIN genes: symbols that double as English words (nor, top) are credited
+    # only when the italic rescue saw them typeset as a gene; a plain-prose
+    # token match in the title/abstract is the conjunction or position word.
+    if gene_mode:
+        entities, prose_word_dropped = filter_english_word_gene_symbols(entities, italic_gene_rescues)
+        if prose_word_dropped:
+            logger.info(
+                "ZFIN-GENE-ENGLISH-WORD: dropping %d English-word symbols without "
+                "gene typography: %s",
+                len(prose_word_dropped), ", ".join(sorted(prose_word_dropped)),
+            )
 
     # Alleles written as a gene superscript (gene<sup>allele</sup>) fuse onto the
     # gene when the markup is flattened, so recover them from the raw markdown.

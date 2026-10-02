@@ -3,7 +3,11 @@ utils.entity_extraction_utils:
 
 - restrict_markdown_to_results_methods: keep Results + Materials/Methods only.
 - gene_has_standalone_mention / filter_construct_embedded_genes: drop genes that
-  only ever appear inside constructs such as Tg(gene:reporter).
+  only ever appear inside constructs such as Tg(gene:reporter), hyphenated
+  foreign gene names (sel-12), URLs / domains (zfin.org) or subscripts
+  (k<sub>cat</sub>).
+- filter_english_word_gene_symbols: English-word symbols (nor, top) need
+  italic gene typography before a paper is credited with them.
 """
 
 from utils.entity_extraction_utils import (
@@ -11,6 +15,8 @@ from utils.entity_extraction_utils import (
     restrict_markdown_to_results_methods,
     gene_has_standalone_mention,
     filter_construct_embedded_genes,
+    filter_english_word_gene_symbols,
+    strip_non_gene_spans,
     is_false_positive_allele,
 )
 
@@ -216,3 +222,80 @@ def test_filter_construct_empty_text_keeps_all():
     kept, dropped = filter_construct_embedded_genes(["sox10", "fn1a"], "")
     assert kept == ["sox10", "fn1a"]
     assert dropped == []
+
+
+# --------------------------------------------------------------------- #
+# Curator round 2: sel-12, URLs, subscripts, English-word symbols       #
+# --------------------------------------------------------------------- #
+def test_standalone_hyphen_digit_gene_name_rejected():
+    # C. elegans sel-12 must not count as a mention of the ZFIN gene sel.
+    assert not gene_has_standalone_mention("the presenilin sel-12 mutant", "sel")
+    assert not gene_has_standalone_mention("let-7 miRNA", "let")
+
+
+def test_standalone_hyphen_then_letter_still_kept():
+    # Only hyphen+digit is a continuation; "sox10-positive" is a real mention.
+    assert gene_has_standalone_mention("sox10-positive cells", "sox10")
+
+
+def test_standalone_gene_hyphenated_and_alone_kept():
+    assert gene_has_standalone_mention("sel-12 in worms; zebrafish sel was cloned", "sel")
+
+
+def test_standalone_bare_domain_rejected():
+    # ".org" in zfin.org is not the ZFIN gene org.
+    assert not gene_has_standalone_mention("see zfin.org for details", "org")
+    assert not gene_has_standalone_mention("the top.png file", "top")
+
+
+def test_standalone_sentence_end_dot_still_kept():
+    # A sentence-final dot followed by whitespace is punctuation, not a domain.
+    assert gene_has_standalone_mention("we studied org. Next we", "org")
+    assert gene_has_standalone_mention("we saw slc26a4.", "slc26a4")
+
+
+def test_standalone_scheme_url_rejected():
+    # Path segments of a URL are not gene mentions either.
+    assert not gene_has_standalone_mention("https://zfin.org/action/top/view", "top")
+    assert not gene_has_standalone_mention("at http://example.org/cat here", "cat")
+    assert not gene_has_standalone_mention("mail cat@zfin.org now", "cat")
+
+
+def test_standalone_url_and_alone_kept():
+    assert gene_has_standalone_mention("https://zfin.org/org ; the org gene", "org")
+
+
+def test_standalone_subscript_rejected():
+    # k<sub>cat</sub>/K<sub>m</sub> is enzyme kinetics, not the catalase gene cat.
+    assert not gene_has_standalone_mention("the k<sub>cat</sub>/K<sub>m</sub> values", "cat")
+    assert not gene_has_standalone_mention("k<SUB>cat</SUB> for caspase", "cat")
+    # pandoc-style subscript
+    assert not gene_has_standalone_mention("the k~cat~ values", "cat")
+
+
+def test_standalone_subscript_and_alone_kept():
+    assert gene_has_standalone_mention("k<sub>cat</sub> values; cat expression rose", "cat")
+
+
+def test_standalone_superscript_gene_untouched():
+    # Superscripts carry alleles; the gene outside the tag is still a mention.
+    assert gene_has_standalone_mention("nkx3.1<sup>ca116</sup> larvae", "nkx3.1")
+
+
+def test_strip_non_gene_spans():
+    assert strip_non_gene_spans("") == ""
+    out = strip_non_gene_spans("go to https://zfin.org/a and k<sub>cat</sub> x")
+    assert "zfin.org" not in out and "<sub>" not in out
+    assert out.split() == ["go", "to", "and", "k", "x"]
+
+
+def test_english_word_symbols_dropped_without_typography():
+    kept, dropped = filter_english_word_gene_symbols(["nor", "top", "sox10"], [])
+    assert kept == ["sox10"]
+    assert dropped == ["nor", "top"]
+
+
+def test_english_word_symbols_kept_with_italic_rescue():
+    kept, dropped = filter_english_word_gene_symbols(["nor", "top", "sox10"], ["nor"])
+    assert kept == ["nor", "sox10"]
+    assert dropped == ["top"]

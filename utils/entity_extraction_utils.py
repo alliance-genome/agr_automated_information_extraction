@@ -1833,6 +1833,35 @@ _GENE_CONSTRUCT_RIGHT_CHARS = "):"
 # after the carbonic-anhydrase gene ``ca2`` was matched inside the calcium ion
 # ``Ca2+``.
 _GENE_ION_RIGHT_CHARS = "+⁺"
+# URLs and e-mail addresses are never gene mentions, but their dot/slash
+# delimited pieces look like standalone words to the tokenizer (``zfin.org``
+# matched the ZFIN gene ``org``), so they are blanked out before the standalone
+# scan. Bare domains without a scheme are caught by the dotted-identifier rule
+# in gene_has_standalone_mention instead. Requested by ZFIN curators.
+_GENE_URL_RE = re.compile(
+    r"""(?:https?://|ftp://|www\.)[^\s<>()\[\]"']+"""   # scheme / www URLs
+    r"""|[\w.+-]+@[\w-]+(?:\.[\w-]+)+""",               # e-mail addresses
+    re.IGNORECASE,
+)
+# Subscript spans hold kinetic / physical notation (``k<sub>cat</sub>``,
+# pandoc-style ``k~cat~``), never a gene symbol: ZFIN curators saw the catalase
+# gene ``cat`` matched inside k_cat. Their contents are blanked out as well.
+# Superscripts are left alone - genotype nomenclature puts the ALLELE there and
+# the gene is matched outside the tag.
+_GENE_SUBSCRIPT_RE = re.compile(r"<sub>.*?</sub>|(?<!~)~[^~\s]+~(?!~)", re.IGNORECASE | re.DOTALL)
+
+
+def strip_non_gene_spans(text: str) -> str:
+    """Blank out URLs, e-mail addresses and subscript spans from ``text``.
+
+    Each span is replaced by a single space so the surrounding tokens stay
+    separated. Used by the ZFIN gene standalone-mention scan; the output is only
+    ever matched for presence, never for offsets.
+    """
+    if not text:
+        return text
+    text = _GENE_URL_RE.sub(" ", text)
+    return _GENE_SUBSCRIPT_RE.sub(" ", text)
 
 
 def gene_has_standalone_mention(text: str, gene: str) -> bool:
@@ -1849,16 +1878,36 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
     while keeping the same gene when it is also mentioned on its own. The
     ``zgc:NNNNN`` nomenclature is unaffected because its colon is INTERNAL to the
     matched name; only the characters flanking the name are inspected.
+
+    Further curator-reported collisions that are NOT standalone mentions:
+
+    - a hyphen followed by a digit continues a hyphenated gene name from
+      another organism (C. elegans ``sel-12``, ``let-7``), so ``sel`` inside
+      ``sel-12`` does not count;
+    - a dot glued to an alphanumeric on its far side makes a domain, filename or
+      dotted identifier (``zfin.org``, ``org.uk``, ``top.png``) rather than
+      sentence punctuation, so ``org`` inside ``zfin.org`` does not count,
+      while ``slc26a4.`` at a sentence end still does;
+    - URLs, e-mail addresses and subscript spans (``k<sub>cat</sub>``) are
+      blanked out beforehand by :func:`strip_non_gene_spans`.
     """
     if not text or not gene:
         return False
+    text = strip_non_gene_spans(text)
     for m in re.finditer(re.escape(gene), text):
         prev_c = text[m.start() - 1] if m.start() > 0 else ""
         next_c = text[m.end()] if m.end() < len(text) else ""
+        prev2_c = text[m.start() - 2] if m.start() > 1 else ""
+        next2_c = text[m.end() + 1] if m.end() + 1 < len(text) else ""
         if prev_c and _GENE_IDENT_CHAR_RE.match(prev_c):
             continue                            # substring of a longer identifier
         if next_c and _GENE_IDENT_CHAR_RE.match(next_c):
             continue
+        if next_c == "-" and next2_c.isdigit():
+            continue                            # hyphenated gene name (sel-12)
+        if (prev_c == "." and prev2_c and _GENE_IDENT_CHAR_RE.match(prev2_c)) or \
+           (next_c == "." and next2_c and _GENE_IDENT_CHAR_RE.match(next2_c)):
+            continue                            # domain / filename (zfin.org)
         # Truthiness guards matter: an empty boundary (start/end of text) is a
         # clean edge, but "" in "(:" is True in Python, so it must be excluded.
         if (prev_c and prev_c in _GENE_CONSTRUCT_LEFT_CHARS) or \
@@ -1889,4 +1938,35 @@ def filter_construct_embedded_genes(
             kept.append(ent)
         else:
             dropped.append(ent)
+    return kept, dropped
+
+
+# Curated ZFIN gene symbols that are also everyday English words. Unlike the
+# ZFIN_GENE_ALLELE_FALSE_POSITIVE_WORDS stopwords these ARE curated targets
+# (curators have tagged ``nor`` 7 times and ``top`` 6 times), so they are not
+# dropped outright. Instead a paper is only credited with the gene when the
+# article typography marks it as a gene symbol - i.e. the italic markdown rescue
+# found it - because a plain-prose token match is almost always the conjunction
+# or the position word (145 "nor" and 40 "top" hits in the ZFIN extraction set
+# versus 13 curated papers). Requested by ZFIN curators.
+ZFIN_GENE_SYMBOLS_REQUIRING_TYPOGRAPHY = frozenset({"nor", "top"})
+
+
+def filter_english_word_gene_symbols(
+    entities: List[str], typographic_hits: Iterable[str]
+) -> Tuple[List[str], List[str]]:
+    """Partition ZFIN gene candidates so English-word symbols need typography.
+
+    A candidate listed in ZFIN_GENE_SYMBOLS_REQUIRING_TYPOGRAPHY is kept only
+    when it also appears in ``typographic_hits`` (the italic-markdown rescues);
+    every other candidate is kept unchanged. Returns ``(kept, dropped)``.
+    """
+    allowed = set(typographic_hits or ())
+    kept: List[str] = []
+    dropped: List[str] = []
+    for ent in entities:
+        if ent.lower() in ZFIN_GENE_SYMBOLS_REQUIRING_TYPOGRAPHY and ent not in allowed:
+            dropped.append(ent)
+        else:
+            kept.append(ent)
     return kept, dropped
