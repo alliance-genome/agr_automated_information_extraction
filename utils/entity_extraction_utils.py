@@ -1676,6 +1676,8 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
     # Subscripts and URLs are never gene typography even when italicised
     # (``*k*<sub>*cat*</sub>`` is the kinetic constant, not catalase).
     article_body = strip_non_gene_spans(article_body)
+    # Emphasis-free copy for the construct check below (lazily built).
+    plain_body: Optional[str] = None
     for span_match in MARKDOWN_ITALIC_SPAN_RE.finditer(article_body):
         span = span_match.group(1)
         # Long spans usually come from unmatched markdown asterisks. Colons,
@@ -1696,16 +1698,26 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
         next_c = article_body[span_match.end()] if span_match.end() < len(article_body) else ""
         next2_c = article_body[span_match.end() + 1] if span_match.end() + 1 < len(article_body) else ""
         # Partial emphasis - ``*cat*RAPID`` - is a substring of a longer word.
-        if (prev_c and prev_c.isalnum()) or (next_c and next_c.isalnum()):
+        # Pandoc often puts the separating space INSIDE the italics
+        # (``*th *expression``, ``and* rho*``); a span that already ends in
+        # whitespace on that side is a whole word, not a partial one.
+        if (prev_c and prev_c.isalnum() and not span[0].isspace()) or \
+           (next_c and next_c.isalnum() and not span[-1].isspace()):
             continue
         # A dotted identifier typeset segment by segment, such as the URL
         # ``*singlecell*.*broadinstitute*.*org*``, is not gene typography.
         if prev_c == "." or (next_c == "." and next2_c and (next2_c.isalnum() or next2_c == "*")):
             continue
-        # Construct / promoter-fusion notation ``*Tg* (*top*: dGFP)``: the colon
-        # marks a promoter, not a gene mention (curators tag constructs separately).
+        # Construct / promoter-fusion notation - ``Tg(*kdrl*:GFP)``, ``*Tg*
+        # (*top*: dGFP)`` - is the same case the construct filter handles for
+        # the regex path: curators tag constructs separately, so the italic
+        # span only counts if the gene ALSO has a standalone mention somewhere
+        # in the (emphasis-free) body.
         if prev_c == ":" or next_c == ":":
-            continue
+            if plain_body is None:
+                plain_body = article_body.replace("*", "")
+            if not gene_has_standalone_mention(plain_body, span.strip()):
+                continue
         # Likewise a panel label inside any parenthetical: ``(Fig. 5A, *top*)``,
         # ``(*top*, *right arrowheads* and *bottom*, ...)``.
         if (
@@ -1884,6 +1896,13 @@ def _is_ident_char(ch: str) -> bool:
     return bool(ch) and (ch.isalnum() or _GENE_IDENT_CHAR_RE.match(ch) is not None)
 
 
+def _is_greek_letter(ch: str) -> bool:
+    """Greek letters mark abbreviation compounds such as ``β-cat`` (beta-catenin)
+    or ``α-tubulin``. A Latin single-letter prefix is NOT treated this way:
+    ``c-myb``, ``c-fos``, ``c-kit`` and ``n-myc`` are the genes themselves."""
+    return bool(ch) and "\u0370" <= ch <= "\u03ff"
+
+
 _GENE_CONSTRUCT_LEFT_CHARS = "(:"
 _GENE_CONSTRUCT_RIGHT_CHARS = "):"
 # A trailing '+' (ASCII) or superscript '⁺' (U+207A) marks ion / charge notation
@@ -1963,8 +1982,9 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
       directly follows an unclosed ``<sub>`` tag (``k<sub>cat``) is rejected too;
     - a flattened kinetic constant ``k cat`` and a supplier catalogue number
       ``cat. #C10640`` / ``cat. no. 12`` are not mentions of the gene ``cat``;
-    - a single-letter hyphen prefix (``β-cat`` for beta-catenin, ``N-cad``)
-      marks an abbreviation compound, not the gene.
+    - a Greek-letter hyphen prefix (``β-cat`` for beta-catenin, ``α-cat``)
+      marks an abbreviation compound, not the gene; Latin prefixes such as
+      ``c-myb`` are left alone because they ARE gene names.
     """
     if not text or not gene:
         return False
@@ -1980,9 +2000,9 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
             continue
         if next_c == "-" and next2_c.isdigit():
             continue                            # hyphenated gene name (sel-12)
-        if prev_c == "-" and prev2_c.isalpha() and \
+        if prev_c == "-" and _is_greek_letter(prev2_c) and \
            (m.start() < 3 or not text[m.start() - 3].isalnum()):
-            continue                            # single-letter prefix compound (β-cat)
+            continue                            # Greek-letter prefix compound (β-cat)
         if (prev_c == "." and _is_ident_char(prev2_c)) or \
            (next_c == "." and _is_ident_char(next2_c)):
             continue                            # domain / filename (zfin.org)

@@ -293,12 +293,15 @@ def test_standalone_flattened_kinetic_constant_rejected():
     assert not gene_has_standalone_mention("E F k cat K m : [E]t", "cat")
 
 
-def test_standalone_single_letter_hyphen_prefix_rejected():
+def test_standalone_greek_letter_hyphen_prefix_rejected():
     # beta-catenin abbreviated as β-cat is not the catalase gene.
     assert not gene_has_standalone_mention("the mechanosensitive β-cat pathway", "cat")
     assert not gene_has_standalone_mention("Y667-β-cat site", "cat")
     # a hyphen after a full word is ordinary prose
     assert gene_has_standalone_mention("the anti-cat antibody", "cat")
+    # Latin single-letter prefixes are real gene names and must be kept
+    assert gene_has_standalone_mention("the proto-oncogene c-myb during", "myb")
+    assert gene_has_standalone_mention("c-fos induction", "fos")
 
 
 def test_standalone_catalog_number_rejected():
@@ -374,6 +377,27 @@ def test_italic_rescue_skips_figure_panel_label():
 def test_italic_rescue_skips_construct_colon_and_partial_emphasis():
     model = _ZfinGeneModel("top", "cat", "org")
     md = "## Results\n\nin the *Tg* (*top*: dGFP) embryos; predicted with the *cat*RAPID server"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+
+
+def test_italic_rescue_keeps_space_inside_italics():
+    # pandoc puts the separating space inside the asterisks; still a whole word.
+    model = _ZfinGeneModel("th", "gsc", "rho", "tnfa")
+    md = ("## Results\n\nWe analyzed the *th *expression levels; the dorsal marker *gsc *and "
+          "*eve1*; markers *il1b*, *mmp9 *and *tnfa *were chosen; and* rho* (NM_131084.1)")
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["gsc", "rho", "th", "tnfa"]
+
+
+def test_italic_rescue_construct_only_dropped_but_mixed_kept():
+    model = _ZfinGeneModel("kdrl", "mpx", "lck")
+    # only ever inside Tg(gene:reporter) -> dropped, like the regex-path construct filter
+    md = "## Results\n\nTG(*kdrl*:G-RCFP) fish were used; Tg(*kdrl*:G-RCFP) line was imaged."
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+    # construct plus a plain standalone mention elsewhere -> kept
+    md = "## Results\n\nwe used Tg(*mpx*:GFP) fish; mpx-positive neutrophils were counted."
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["mpx"]
+    # double-colon variant
+    md = "## Results\n\nembryos from *lck*::GFP zebrafish were injected"
     assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
 
 
