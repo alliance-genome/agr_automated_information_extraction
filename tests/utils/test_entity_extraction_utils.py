@@ -18,6 +18,8 @@ from utils.entity_extraction_utils import (
     filter_english_word_gene_symbols,
     strip_non_gene_spans,
     is_false_positive_allele,
+    rescue_zfin_all_letter_genes_from_markdown,
+    _inside_figure_reference,
 )
 
 
@@ -276,6 +278,22 @@ def test_standalone_subscript_rejected():
     assert not gene_has_standalone_mention("k<sub>cat /K<sub>m values", "cat")
 
 
+def test_standalone_flattened_kinetic_constant_rejected():
+    # OCR/PDF extraction flattens k<sub>cat</sub> into "k cat".
+    assert not gene_has_standalone_mention("values for k cat \\K m were estimated", "cat")
+    assert not gene_has_standalone_mention("the K cat of the enzyme", "cat")
+    # an ordinary word ending in k before the gene is fine
+    assert gene_has_standalone_mention("we knock cat down", "cat")
+
+
+def test_standalone_catalog_number_rejected():
+    assert not gene_has_standalone_mention("Invitrogen (cat. #C10640, lot #19)", "cat")
+    assert not gene_has_standalone_mention("Sigma, cat. no. A1234", "cat")
+    assert not gene_has_standalone_mention("Abcam cat# ab1234", "cat")
+    # sentence-final "cat." followed by a new sentence is still a mention
+    assert gene_has_standalone_mention("we measured cat. Next, sod rose", "cat")
+
+
 def test_standalone_subscript_and_alone_kept():
     assert gene_has_standalone_mention("k<sub>cat</sub> values; cat expression rose", "cat")
 
@@ -302,3 +320,52 @@ def test_english_word_symbols_kept_with_italic_rescue():
     kept, dropped = filter_english_word_gene_symbols(["nor", "top", "sox10"], ["nor"])
     assert kept == ["nor", "sox10"]
     assert dropped == ["top"]
+
+
+# --------------------------------------------------------------------- #
+# Italic rescue: figure-panel labels and italicised subscripts          #
+# --------------------------------------------------------------------- #
+class _ZfinGeneModel:
+    mod_abbr = "ZFIN"
+    topic = "ATP:0000005"
+
+    def __init__(self, *symbols):
+        self.upper_to_original_mapping = {s.upper(): s for s in symbols}
+
+
+def test_inside_figure_reference():
+    text = "kinase A (PKA), (Fig. 5A, *top*) [11]"
+    assert _inside_figure_reference(text, text.index("*top*"))
+    text = "(Supplementary Fig. S3, *inset*) and (Figure 2B, *right*)"
+    assert _inside_figure_reference(text, text.index("*inset*"))
+    assert _inside_figure_reference(text, text.index("*right*"))
+    # closed parenthetical before the span -> not inside
+    text = "(Fig. 1) shows *top* expression"
+    assert not _inside_figure_reference(text, text.index("*top*"))
+    # ordinary parenthetical -> not a figure reference
+    text = "the gene (*sox10*) was"
+    assert not _inside_figure_reference(text, text.index("*sox10*"))
+
+
+def test_italic_rescue_skips_figure_panel_label():
+    model = _ZfinGeneModel("top", "nor")
+    md = "## Results\n\nPKA phosphorylation (Fig. 5A, *top*) [11] and (Fig. 6A, *top*) [11]."
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+
+
+def test_italic_rescue_keeps_italic_gene_outside_figure_reference():
+    model = _ZfinGeneModel("top", "nor")
+    md = "## Results\n\nExpression of *nor* was reduced (Fig. 2A)."
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["nor"]
+
+
+def test_italic_rescue_skips_italic_subscript():
+    model = _ZfinGeneModel("cat")
+    md = "## Results\n\nthe *k*<sub>*cat*</sub> value and *k* <sub>*cat*</sub>/K<sub>m</sub> ratio"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+
+
+def test_italic_rescue_keeps_italic_gene_next_to_subscript():
+    model = _ZfinGeneModel("cat")
+    md = "## Results\n\n*cat* mRNA rose; the *k*<sub>*cat*</sub> value was unchanged"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["cat"]

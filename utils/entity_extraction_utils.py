@@ -1625,6 +1625,23 @@ MARKDOWN_REFERENCES_RE = re.compile(
     r"^#{1,3}\s+(?:references|bibliography|literature cited)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
+# An italic word inside a figure-reference parenthetical - ``(Fig. 5A, *top*)``,
+# ``(Figure 2, *right*)``, ``(Supplementary Fig. S3, *inset*)`` - is a panel
+# label, not a gene mention. The lookback stops at the nearest unclosed ``(``.
+MARKDOWN_FIGURE_REF_OPEN_RE = re.compile(
+    r"\(\s*(?:Supplementary\s+|Suppl(?:ementary)?\.?\s*|Extended\s+Data\s+|S)?"
+    r"Fig(?:ure|\.|s\.?)?\b[^()]*$",
+    re.IGNORECASE,
+)
+
+
+def _inside_figure_reference(text: str, start: int, lookback: int = 120) -> bool:
+    """True when ``text[start]`` sits inside an unclosed ``(Fig...`` parenthetical."""
+    window = text[max(0, start - lookback):start]
+    open_idx = window.rfind("(")
+    if open_idx == -1 or ")" in window[open_idx:]:
+        return False
+    return MARKDOWN_FIGURE_REF_OPEN_RE.match(window[open_idx:]) is not None
 
 
 def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str]:
@@ -1646,6 +1663,9 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
     rescued: set[str] = set()
     references = MARKDOWN_REFERENCES_RE.search(fulltext)
     article_body = fulltext[:references.start()] if references else fulltext
+    # Subscripts and URLs are never gene typography even when italicised
+    # (``*k*<sub>*cat*</sub>`` is the kinetic constant, not catalase).
+    article_body = strip_non_gene_spans(article_body)
     for span_match in MARKDOWN_ITALIC_SPAN_RE.finditer(article_body):
         span = span_match.group(1)
         # Long spans usually come from unmatched markdown asterisks. Colons,
@@ -1661,6 +1681,9 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
             and article_body[span_match.start() - 1] == "("
             and article_body[span_match.end()] == ")"
         ):
+            continue
+        # Likewise a panel label inside a figure reference: ``(Fig. 5A, *top*)``.
+        if _inside_figure_reference(article_body, span_match.start()):
             continue
         # Accept complete italic symbols and complete comma/semicolon list
         # items. Do not mine substrings from constructs such as ``*5’del*`` or
@@ -1849,6 +1872,13 @@ _GENE_URL_RE = re.compile(
 # Superscripts are left alone - genotype nomenclature puts the ALLELE there and
 # the gene is matched outside the tag.
 _GENE_SUBSCRIPT_RE = re.compile(r"<sub>.*?</sub>|(?<!~)~[^~\s]+~(?!~)", re.IGNORECASE | re.DOTALL)
+# Supplier catalogue numbers - ``(cat. #C10640)``, ``cat. no. 1234``, ``cat#`` -
+# abbreviate "catalogue"; the ZFIN catalase gene ``cat`` is never followed by one.
+_GENE_CATALOG_NUMBER_RE = re.compile(r"\.?\s*(?:#|no\.|number\b)", re.IGNORECASE)
+# A kinetic constant whose subscript was flattened by OCR/PDF extraction into a
+# separate word: ``k cat`` / ``K cat`` (``kcat``). A lone k/K word directly before
+# the match marks that notation.
+_GENE_KINETIC_PREFIX_RE = re.compile(r"(?:^|[^A-Za-z0-9])[kK]\s$")
 
 
 def strip_non_gene_spans(text: str) -> str:
@@ -1890,7 +1920,9 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
       while ``slc26a4.`` at a sentence end still does;
     - URLs, e-mail addresses and subscript spans (``k<sub>cat</sub>``) are
       blanked out beforehand by :func:`strip_non_gene_spans`; a match that
-      directly follows an unclosed ``<sub>`` tag (``k<sub>cat``) is rejected too.
+      directly follows an unclosed ``<sub>`` tag (``k<sub>cat``) is rejected too;
+    - a flattened kinetic constant ``k cat`` and a supplier catalogue number
+      ``cat. #C10640`` / ``cat. no. 12`` are not mentions of the gene ``cat``.
     """
     if not text or not gene:
         return False
@@ -1911,6 +1943,10 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
             continue                            # domain / filename (zfin.org)
         if text[max(0, m.start() - 5):m.start()].lower() == "<sub>":
             continue                            # unclosed subscript (k<sub>cat)
+        if _GENE_KINETIC_PREFIX_RE.search(text[max(0, m.start() - 3):m.start()]):
+            continue                            # flattened kinetic constant (k cat)
+        if _GENE_CATALOG_NUMBER_RE.match(text, m.end()):
+            continue                            # catalogue number (cat. #C10640)
         # Truthiness guards matter: an empty boundary (start/end of text) is a
         # clean edge, but "" in "(:" is True in Python, so it must be excluded.
         if (prev_c and prev_c in _GENE_CONSTRUCT_LEFT_CHARS) or \
