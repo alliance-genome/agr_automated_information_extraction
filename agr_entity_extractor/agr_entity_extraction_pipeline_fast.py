@@ -62,6 +62,8 @@ from utils.entity_extraction_utils import (
     restrict_markdown_to_results_methods,
     filter_construct_embedded_genes,
     filter_english_word_gene_symbols,
+    find_zfin_gene_name_aliases,
+    normalize_zfin_clone_name_dashes,
     filter_false_positive_alleles,
     is_allele_topic,
     ZFIN_GENE_TOPIC,
@@ -213,6 +215,12 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     # the token regex and is required by the italic rescue); otherwise the plain
     # fulltext unchanged.
     body_text = gene_raw_markdown if gene_mode else fulltext
+    # Clone-based names typeset with an en-dash (``si:rp71–45k5.2``) must match
+    # the curated hyphenated name.
+    if gene_mode:
+        title = normalize_zfin_clone_name_dashes(title)
+        abstract = normalize_zfin_clone_name_dashes(abstract)
+        body_text = gene_raw_markdown = normalize_zfin_clone_name_dashes(gene_raw_markdown)
 
     entities = build_entities_from_results_generic(
         results=results,
@@ -239,8 +247,11 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     # such as Tg(gene:reporter) or a promoter fusion gene:EGFP - curators extract
     # those constructs separately. A gene mentioned standalone anywhere in the
     # title, abstract or Results/Methods body is kept.
+    construct_text = ""
     if gene_mode:
-        construct_text = "\n".join(t for t in (title, abstract, body_text) if t)
+        # Markdown emphasis is removed first: in ``*hsp70l*:Dkk1-GFP`` the closing
+        # asterisk would otherwise hide the construct colon from the check.
+        construct_text = "\n".join(t for t in (title, abstract, body_text) if t).replace("*", "")
         before_construct = len(entities)
         entities, construct_dropped = filter_construct_embedded_genes(entities, construct_text)
         if construct_dropped:
@@ -272,6 +283,16 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
                 "gene typography: %s",
                 len(prose_word_dropped), ", ".join(sorted(prose_word_dropped)),
             )
+
+    # ZFIN genes: gene NAMES authors use instead of the symbol (deltaC -> dlc).
+    # High-confidence like the italic rescues: re-added after the tf-idf gate.
+    gene_name_alias_hits = find_zfin_gene_name_aliases(construct_text, model) if gene_mode else []
+    if gene_name_alias_hits:
+        logger.info(
+            "ZFIN-GENE-ALIAS: adding %d genes mentioned by name: %s",
+            len(gene_name_alias_hits), ", ".join(gene_name_alias_hits),
+        )
+        entities = sorted(set(entities) | set(gene_name_alias_hits))
 
     # Alleles written as a gene superscript (gene<sup>allele</sup>) fuse onto the
     # gene when the markup is flattened, so recover them from the raw markdown.
@@ -364,8 +385,8 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     # Italic-typography rescues are high-confidence: re-add any the tf-idf/count
     # gate dropped (e.g. single-mention curated genes) so a strong typographic
     # signal is not overridden by a frequency threshold.
-    if italic_gene_rescues:
-        entities = sorted(set(entities) | set(italic_gene_rescues))
+    if italic_gene_rescues or gene_name_alias_hits:
+        entities = sorted(set(entities) | set(italic_gene_rescues) | set(gene_name_alias_hits))
     if superscript_allele_rescues:
         logger.info(
             "ALLELE-SUPERSCRIPT-RESCUE: adding %d curated superscript alleles: %s",

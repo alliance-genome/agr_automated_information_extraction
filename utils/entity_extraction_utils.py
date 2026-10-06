@@ -1249,6 +1249,11 @@ ZFIN_GENE_ALLELE_FALSE_POSITIVE_WORDS = {
     # hg..Tg alleles) that appear in prose but are never the allele; cm2/cm3
     # likewise. None are curated genes or alleles in the ZFIN test set.
     "hg19", "hg38", "cm2", "cm3",
+    # ``luc`` is the firefly luciferase reporter (``*per3-luc*``, ``pGL3``,
+    # ``::luc``) - curators map it to the engineered foreign gene
+    # ZDB-EFG-090804-1, not the zebrafish gene ``luc``. None of its 19
+    # extractions in the 9,417-paper ZFIN dry run was a curated gene.
+    "luc",
 }
 
 
@@ -1701,6 +1706,12 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
         # A dotted identifier typeset segment by segment, such as the URL
         # ``*singlecell*.*broadinstitute*.*org*``, is not gene typography.
         left_dotted = prev_c == "."
+        # ``VE-*cad*`` (protein-family abbreviation) and ``5 *th*`` (ordinal)
+        # are not gene typography either.
+        left_compound = prev_c == "-" and bool(
+            _GENE_UPPER_HYPHEN_PREFIX_RE.search(article_body[max(0, span_match.start() - 4):span_match.start()])
+        )
+        left_number = bool(_GENE_ORDINAL_PREFIX_RE.search(article_body[max(0, span_match.start() - 2):span_match.start()]))
         right_dotted = next_c == "." and bool(next2_c) and (next2_c.isalnum() or next2_c == "*")
         # Construct / promoter-fusion notation - ``Tg(*kdrl*:GFP)``, ``*cldnb*:*gfp*``,
         # ``*Tg* (*top*: dGFP)`` - is the same case the construct filter handles
@@ -1732,6 +1743,8 @@ def rescue_zfin_all_letter_genes_from_markdown(fulltext: str, model) -> List[str
                 continue
             first, last = idx == 0, idx == last_idx
             if (first and (left_partial or left_dotted)) or (last and (right_partial or right_dotted)):
+                continue
+            if first and (left_compound or (left_number and token.lower() in _GENE_ORDINAL_SUFFIXES)):
                 continue
             if (first and left_colon) or (last and right_colon):
                 if plain_body is None:
@@ -1944,10 +1957,24 @@ _GENE_KINETIC_PREFIX_RE = re.compile(r"(?:^|[^A-Za-z0-9])[kK]\s$")
 # (the k_cat / K_m ratio) - covers OCR text that glued the k onto the previous
 # word (``Proteasek cat /K m``).
 _GENE_KINETIC_SUFFIX_RE = re.compile(r"\s*[\\/]?\s*K\s?m\b")
+# English ordinal suffixes. ``th`` is the tyrosine hydroxylase gene, but after a
+# number - ``4<sup>th</sup>``, ``0^th^``, OCR-flattened ``5 th percentile`` - it
+# is the ordinal. Requested by ZFIN curators.
+_GENE_ORDINAL_SUFFIXES = frozenset({"st", "nd", "rd", "th"})
+_GENE_ORDINAL_PREFIX_RE = re.compile(r"\d\s?$")
+_GENE_ORDINAL_SUPERSCRIPT_RE = re.compile(
+    r"(?<=\d)\s*(?:<sup>[\s*_]*(?:st|nd|rd|th)[\s*_]*</sup>|\^[\s*_]*(?:st|nd|rd|th)[\s*_]*\^)",
+    re.IGNORECASE,
+)
+# A one- or two-letter UPPER-case prefix joined by a hyphen abbreviates a
+# protein family member: ``E-cad``, ``N-cad``, ``VE-cad`` are cadherins, not the
+# ZFIN gene ``cad``. Lower-case prefixes (``c-myb``, ``c-fos``) are gene names.
+_GENE_UPPER_HYPHEN_PREFIX_RE = re.compile(r"(?:^|[^A-Za-z0-9])[A-Z]{1,2}-$")
 
 
 def strip_non_gene_spans(text: str) -> str:
-    """Blank out URLs, e-mail addresses and subscript spans from ``text``.
+    """Blank out URLs, e-mail addresses, subscript spans and ordinal
+    superscripts (``4<sup>th</sup>``) from ``text``.
 
     Each span is replaced by a single space so the surrounding tokens stay
     separated. Used by the ZFIN gene standalone-mention scan; the output is only
@@ -1956,6 +1983,7 @@ def strip_non_gene_spans(text: str) -> str:
     if not text:
         return text
     text = _GENE_URL_RE.sub(" ", text)
+    text = _GENE_ORDINAL_SUPERSCRIPT_RE.sub(" ", text)
     return _GENE_SUBSCRIPT_RE.sub(" ", text)
 
 
@@ -1990,7 +2018,11 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
       ``cat. #C10640`` / ``cat. no. 12`` are not mentions of the gene ``cat``;
     - a Greek-letter hyphen prefix (``β-cat`` for beta-catenin, ``α-cat``)
       marks an abbreviation compound, not the gene; Latin prefixes such as
-      ``c-myb`` are left alone because they ARE gene names.
+      ``c-myb`` are left alone because they ARE gene names;
+    - a one- or two-letter upper-case hyphen prefix (``E-cad``, ``VE-cad``)
+      abbreviates a protein family member, not the gene;
+    - an ordinal suffix after a number (``5 th``, ``4<sup>th</sup>``) is not the
+      gene ``th``.
     """
     if not text or not gene:
         return False
@@ -2009,6 +2041,11 @@ def gene_has_standalone_mention(text: str, gene: str) -> bool:
         if prev_c == "-" and _is_greek_letter(prev2_c) and \
            (m.start() < 3 or not text[m.start() - 3].isalnum()):
             continue                            # Greek-letter prefix compound (β-cat)
+        if prev_c == "-" and _GENE_UPPER_HYPHEN_PREFIX_RE.search(text[max(0, m.start() - 4):m.start()]):
+            continue                            # protein family abbreviation (VE-cad)
+        if gene.lower() in _GENE_ORDINAL_SUFFIXES and \
+           _GENE_ORDINAL_PREFIX_RE.search(text[max(0, m.start() - 2):m.start()]):
+            continue                            # ordinal after a number (5 th)
         if (prev_c == "." and _is_ident_char(prev2_c)) or \
            (next_c == "." and _is_ident_char(next2_c)):
             continue                            # domain / filename (zfin.org)
@@ -2060,8 +2097,14 @@ def filter_construct_embedded_genes(
 # article typography marks it as a gene symbol - i.e. the italic markdown rescue
 # found it - because a plain-prose token match is almost always the conjunction
 # or the position word (145 "nor" and 40 "top" hits in the ZFIN extraction set
-# versus 13 curated papers). Requested by ZFIN curators.
-ZFIN_GENE_SYMBOLS_REQUIRING_TYPOGRAPHY = frozenset({"nor", "top"})
+# versus 13 curated papers). Requested by ZFIN curators. The second group came
+# from the Oct 2026 curator review of the 9,417-paper dry run: ``rod`` is mostly
+# the photoreceptor cell type, ``sub``/``pro`` are word prefixes (sub-cloned,
+# pro-inflammatory) or the proline abbreviation, and the rest are English words.
+ZFIN_GENE_SYMBOLS_REQUIRING_TYPOGRAPHY = frozenset({
+    "nor", "top",
+    "rod", "tip", "beat", "jaw", "bias", "sub", "pro",
+})
 
 
 def filter_english_word_gene_symbols(
@@ -2082,3 +2125,44 @@ def filter_english_word_gene_symbols(
         else:
             kept.append(ent)
     return kept, dropped
+
+
+# Gene NAMES that authors use in place of the symbol. The delta genes have
+# names short enough that many papers never abbreviate them to dla/dlb/dlc/dld
+# (``deltaC`` alone appears in 84 of the 9,417 dry-run papers). Requested by
+# ZFIN curators; each maps to the curated symbol (dla ZDB-GENE-980526-29, dlb
+# ZDB-GENE-980526-114, dlc ZDB-GENE-000125-4, dld ZDB-GENE-990415-47).
+ZFIN_GENE_NAME_ALIASES = {
+    "deltaA": "dla",
+    "deltaB": "dlb",
+    "deltaC": "dlc",
+    "deltaD": "dld",
+}
+
+
+def find_zfin_gene_name_aliases(text: str, model) -> List[str]:
+    """Return curated symbols whose ZFIN_GENE_NAME_ALIASES name has a
+    standalone mention in ``text`` (construct notation such as
+    ``Tg(deltaD:GFP)`` does not count)."""
+    if not text:
+        return []
+    upper_to_original = getattr(model, "upper_to_original_mapping", {}) or {}
+    found: set[str] = set()
+    for alias, symbol in ZFIN_GENE_NAME_ALIASES.items():
+        if upper_to_original.get(symbol.upper()) == symbol and gene_has_standalone_mention(text, alias):
+            found.add(symbol)
+    return sorted(found)
+
+
+# Clone-based gene names (``si:rp71-45k5.2``) are often typeset with an en-dash
+# or a non-breaking hyphen in place of the hyphen, which the gene regex does not
+# accept as a name character. Only the dashes INSIDE such a name are normalized.
+_ZFIN_CLONE_NAME_RE = re.compile(r"(?<![A-Za-z0-9_.\-])(?:zgc|si|wu):[A-Za-z0-9_.\-\u2010\u2011\u2013]+")
+_ZFIN_CLONE_NAME_DASHES = str.maketrans({"\u2010": "-", "\u2011": "-", "\u2013": "-"})
+
+
+def normalize_zfin_clone_name_dashes(text: str) -> str:
+    """Replace en-dashes / Unicode hyphens inside zgc:/si:/wu: gene names."""
+    if not text:
+        return text
+    return _ZFIN_CLONE_NAME_RE.sub(lambda m: m.group(0).translate(_ZFIN_CLONE_NAME_DASHES), text)

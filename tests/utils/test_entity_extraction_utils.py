@@ -6,8 +6,10 @@ utils.entity_extraction_utils:
   only ever appear inside constructs such as Tg(gene:reporter), hyphenated
   foreign gene names (sel-12), URLs / domains (zfin.org) or subscripts
   (k<sub>cat</sub>).
-- filter_english_word_gene_symbols: English-word symbols (nor, top) need
-  italic gene typography before a paper is credited with them.
+- filter_english_word_gene_symbols: English-word symbols (nor, top, rod, sub,
+  pro, ...) need italic gene typography before a paper is credited with them.
+- find_zfin_gene_name_aliases / normalize_zfin_clone_name_dashes: gene names
+  used instead of symbols (deltaC) and en-dashes inside si: names.
 """
 
 from utils.entity_extraction_utils import (
@@ -20,6 +22,8 @@ from utils.entity_extraction_utils import (
     is_false_positive_allele,
     rescue_zfin_all_letter_genes_from_markdown,
     _inside_open_parenthetical,
+    find_zfin_gene_name_aliases,
+    normalize_zfin_clone_name_dashes,
 )
 
 
@@ -304,6 +308,32 @@ def test_standalone_greek_letter_hyphen_prefix_rejected():
     assert gene_has_standalone_mention("c-fos induction", "fos")
 
 
+def test_standalone_upper_case_hyphen_prefix_rejected():
+    # cadherin abbreviations are not the ZFIN gene cad
+    assert not gene_has_standalone_mention("VE-cad knockdown embryos", "cad")
+    assert not gene_has_standalone_mention("that N-cad restricts", "cad")
+    assert not gene_has_standalone_mention("E-cad/F-actin", "cad")
+    # the gene itself in a list is kept
+    assert gene_has_standalone_mention("mcm7, cad and hmgb2b", "cad")
+
+
+def test_standalone_ordinal_after_number_rejected():
+    assert not gene_has_standalone_mention("the 5 th to 95 th percentile", "th")
+    assert not gene_has_standalone_mention("the 4<sup>th</sup> day", "th")
+    assert not gene_has_standalone_mention("trained 0<sup>th </sup>order model", "th")
+    assert not gene_has_standalone_mention("the 4^th^ day", "th")
+    # tyrosine hydroxylase itself is kept, including as a th+ marker
+    assert gene_has_standalone_mention("tyrosine hydroxylase th expression", "th")
+    assert gene_has_standalone_mention("the th TALEN pair", "th")
+
+
+def test_standalone_promoter_fusion_with_emphasis_removed_rejected():
+    # the pipeline strips emphasis first so *hsp70l*:Dkk1 is seen as hsp70l:Dkk1
+    text = "transgenic *hsp70l*:Dkk1-GFP fish; *fli1:*EGFP Tg".replace("*", "")
+    assert not gene_has_standalone_mention(text, "hsp70l")
+    assert not gene_has_standalone_mention(text, "fli1")
+
+
 def test_standalone_catalog_number_rejected():
     assert not gene_has_standalone_mention("Invitrogen (cat. #C10640, lot #19)", "cat")
     assert not gene_has_standalone_mention("Sigma, cat. no. A1234", "cat")
@@ -332,6 +362,13 @@ def test_english_word_symbols_dropped_without_typography():
     kept, dropped = filter_english_word_gene_symbols(["nor", "top", "sox10"], [])
     assert kept == ["sox10"]
     assert dropped == ["nor", "top"]
+
+
+def test_english_word_symbols_from_second_curator_round_dropped():
+    words = ["rod", "tip", "beat", "jaw", "bias", "sub", "pro"]
+    kept, dropped = filter_english_word_gene_symbols(words + ["sox10"], ["rod"])
+    assert kept == ["rod", "sox10"]
+    assert dropped == ["tip", "beat", "jaw", "bias", "sub", "pro"]
 
 
 def test_english_word_symbols_kept_with_italic_rescue():
@@ -458,3 +495,38 @@ def test_italic_rescue_keeps_italic_gene_next_to_subscript():
     model = _ZfinGeneModel("cat")
     md = "## Results\n\n*cat* mRNA rose; the *k*<sub>*cat*</sub> value was unchanged"
     assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["cat"]
+
+
+def test_italic_rescue_skips_ordinal_and_upper_case_prefix():
+    model = _ZfinGeneModel("th", "cad")
+    md = "## Results\n\ntrained 0<sup>*th *</sup>order model; the 5 *th* percentile; VE-*cad* levels"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == []
+    md = "## Results\n\n*tyrosine hydroxylase* (*th*) and *cad* expression"
+    assert rescue_zfin_all_letter_genes_from_markdown(md, model) == ["cad", "th"]
+
+
+# --------------------------------------------------------------------- #
+# Gene names used instead of symbols; en-dashes in clone names          #
+# --------------------------------------------------------------------- #
+def test_gene_name_aliases_map_to_symbols():
+    model = _ZfinGeneModel("dla", "dlb", "dlc", "dld")
+    text = "deltaC and deltaD oscillate; deltaA expression"
+    assert find_zfin_gene_name_aliases(text, model) == ["dla", "dlc", "dld"]
+
+
+def test_gene_name_alias_in_construct_or_uncurated_skipped():
+    assert find_zfin_gene_name_aliases("Tg(deltaD:GFP) fish", _ZfinGeneModel("dld")) == []
+    # symbol not in the curated list -> nothing to credit
+    assert find_zfin_gene_name_aliases("deltaC expression", _ZfinGeneModel("dld")) == []
+    # longer identifiers are not the name
+    assert find_zfin_gene_name_aliases("deltaCa expression", _ZfinGeneModel("dlc")) == []
+
+
+def test_normalize_clone_name_dashes():
+    text = "*si:rp71–45k5.2* (novel), si:ch211–254e15.1, fli1–GFP"
+    out = normalize_zfin_clone_name_dashes(text)
+    assert "si:rp71-45k5.2" in out
+    assert "si:ch211-254e15.1" in out
+    # dashes outside clone names are untouched
+    assert "fli1–GFP" in out
+    assert normalize_zfin_clone_name_dashes("") == ""
