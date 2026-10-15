@@ -58,8 +58,11 @@ from utils.entity_extraction_utils import (
     has_allele_like_context,
     rescue_short_alleles_from_fulltext,
     rescue_zfin_all_letter_genes_from_markdown,
+    join_intra_word_emphasis,
+    normalize_zfin_interleukin_names,
     rescue_superscript_alleles_from_markdown,
     restrict_markdown_to_results_methods,
+    strip_markdown_back_matter,
     filter_construct_embedded_genes,
     filter_english_word_gene_symbols,
     find_zfin_gene_name_aliases,
@@ -206,9 +209,13 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
                 "(%d -> %d chars)", len(raw_markdown), len(restricted),
             )
         else:
+            # Still skip the reference list (and other back matter), whose cited
+            # titles name genes the paper itself never studies.
+            gene_raw_markdown = strip_markdown_back_matter(raw_markdown)
             logger.info(
                 "ZFIN-GENE-SECTIONS: no Results/Methods headers detected; "
-                "scanning whole body"
+                "scanning whole body except References/back matter "
+                "(%d -> %d chars)", len(raw_markdown), len(gene_raw_markdown),
             )
     # The text the gene regex / count gate / construct filter operate on. For
     # ZFIN genes this is the section-restricted markdown (formatting is inert to
@@ -216,11 +223,15 @@ def build_entities_from_results(results, title: str, abstract: str, fulltext: st
     # fulltext unchanged.
     body_text = gene_raw_markdown if gene_mode else fulltext
     # Clone-based names typeset with an en-dash (``si:rp71–45k5.2``) must match
-    # the curated hyphenated name.
+    # the curated hyphenated name, and lower-case hyphenated interleukins
+    # (``il-1β``) the curated symbol (``il1b``). Italics split mid-word by the PDF
+    # conversion (``havc*r1*``) are re-joined for the gene regex only; the italic
+    # rescue below reads gene_raw_markdown, where such a marker is meaningful.
     if gene_mode:
-        title = normalize_zfin_clone_name_dashes(title)
-        abstract = normalize_zfin_clone_name_dashes(abstract)
-        body_text = gene_raw_markdown = normalize_zfin_clone_name_dashes(gene_raw_markdown)
+        title = normalize_zfin_interleukin_names(normalize_zfin_clone_name_dashes(title))
+        abstract = normalize_zfin_interleukin_names(normalize_zfin_clone_name_dashes(abstract))
+        gene_raw_markdown = normalize_zfin_interleukin_names(normalize_zfin_clone_name_dashes(gene_raw_markdown))
+        body_text = join_intra_word_emphasis(gene_raw_markdown)
 
     entities = build_entities_from_results_generic(
         results=results,

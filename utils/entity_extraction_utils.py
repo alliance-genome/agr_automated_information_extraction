@@ -15,7 +15,7 @@ Note: callers provide their own regex pattern and (optionally) normalizers.
 
 from __future__ import annotations
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional, Callable, Iterable, Set
+from typing import Dict, List, Tuple, Optional, Callable, Iterable, Iterator, Set
 from collections import Counter, defaultdict, deque
 import hashlib
 import json
@@ -1854,51 +1854,96 @@ def _classify_section_heading(title: str) -> str:
     return "neutral"
 
 
+def _markdown_lines_with_section_decision(raw_md: str) -> Iterator[Tuple[str, Optional[str]]]:
+    """Yield ``(line, decision)`` for every non-heading line of ``raw_md``.
+
+    ``decision`` is ``keep``/``drop`` from the nearest explicitly-classified
+    ancestor heading, so neutral subsections (e.g. "Statistical analysis" under
+    Methods) inherit their parent's decision. A neutral heading with no
+    classified ancestor inherits from the sibling heading it follows: PDF
+    conversion often flattens Methods subsections to the level of "Materials and
+    methods" itself (``## Materials and methods`` / ``## Genotyping`` /
+    ``## TaqMan gene expression analysis``), and those are still Methods.
+    ``None`` means no classified heading applies (e.g. text before the first
+    heading).
+    """
+    stack: List[Tuple[int, Optional[str]]] = []     # (heading level, effective decision)
+    decision: Optional[str] = None
+    for line in raw_md.splitlines():
+        m = _MD_HEADING_RE.match(line)
+        if not m:
+            yield line, decision
+            continue
+        level = len(m.group(1))
+        previous_sibling: Optional[str] = None
+        while stack and stack[-1][0] >= level:
+            previous_sibling = stack.pop()[1]
+        decision = _classify_section_heading(m.group(2))
+        if decision == "neutral":
+            parent = stack[-1][1] if stack else None
+            decision = parent if parent is not None else previous_sibling
+        stack.append((level, decision))
+        # the heading line itself is never yielded
+
+
 def restrict_markdown_to_results_methods(raw_md: str) -> Optional[str]:
     """Return the markdown of the Results + Materials/Methods sections only.
 
     Splits ``raw_md`` on ATX headings and keeps a heading's content when the
     nearest explicitly-classified ancestor heading is a KEEP section (results or
-    methods). Neutral subsections (e.g. "Statistical analysis" under Methods)
-    inherit their parent's decision; DROP sections (Introduction, Discussion,
-    References, ...) and any heading with no KEEP ancestor are excluded.
+    methods); see :func:`_markdown_lines_with_section_decision` for how neutral
+    headings inherit. DROP sections (Introduction, Discussion, References, ...)
+    and any heading with no KEEP ancestor are excluded.
 
     Returns ``None`` when no Results/Methods heading is found, signalling the
-    caller to fall back to scanning the whole body - so papers with numbered,
-    combined, or absent section headers are not silently emptied.
+    caller to fall back to :func:`strip_markdown_back_matter` - so papers with
+    numbered, combined, or absent section headers are not silently emptied.
     """
     if not raw_md:
         return None
-    stack: List[Tuple[int, str]] = []           # (heading level, decision)
+    kept = [line for line, decision in _markdown_lines_with_section_decision(raw_md) if decision == "keep"]
+    restricted = "\n".join(kept).strip()
+    return restricted or None
+
+
+# Back matter that never mentions the paper's own genes. Unlike _DROP_SECTION_RE
+# this leaves out Introduction/Discussion/Figure legends: in a paper with no
+# Results/Methods heading those may be the only place its genes are described.
+_BACK_MATTER_SECTION_RE = re.compile(
+    r'\b(references|bibliography|literature\s+cited|acknowledge?ments?|funding|'
+    r'author\s+contributions?|competing|conflicts?)\b',
+    re.IGNORECASE,
+)
+
+
+def strip_markdown_back_matter(raw_md: str) -> str:
+    """Return ``raw_md`` without its reference list and other back matter
+    (acknowledgments, funding, author contributions, competing interests).
+
+    The fallback for papers with no Results/Methods heading: everything else is
+    still scanned, but the reference list is not - cited titles such as
+    "Ciliary Genes arl13b, ahi1 and cc2d2a ..." are not gene mentions of the
+    paper itself. Subsections of a back-matter heading are dropped with it.
+    """
+    if not raw_md:
+        return raw_md
+    stack: List[Tuple[int, bool]] = []          # (heading level, in back matter)
+    dropping = False
     kept: List[str] = []
-    found_keep = False
-    keeping = False
-
-    def _inherited() -> str:
-        for _, dec in reversed(stack):
-            if dec in ("keep", "drop"):
-                return dec
-        return "drop"
-
     for line in raw_md.splitlines():
         m = _MD_HEADING_RE.match(line)
         if m:
             level = len(m.group(1))
-            decision = _classify_section_heading(m.group(2))
             while stack and stack[-1][0] >= level:
                 stack.pop()
-            stack.append((level, decision))
-            keeping = _inherited() == "keep"
-            if keeping:
-                found_keep = True
-            continue                            # never keep the heading line itself
-        if keeping:
+            title = _SECTION_HEADING_NUMBER_RE.sub('', re.sub(r'[*_`]+', '', m.group(2)))
+            dropping = bool(_BACK_MATTER_SECTION_RE.search(title)) or bool(stack and stack[-1][1])
+            stack.append((level, dropping))
+            if dropping:
+                continue
+        if not dropping:
             kept.append(line)
-
-    if not found_keep:
-        return None
-    restricted = "\n".join(kept).strip()
-    return restricted or None
+    return "\n".join(kept).strip()
 
 
 # Only letters/digits count as "identifier continuation" when deciding whether a
@@ -2131,12 +2176,15 @@ def filter_english_word_gene_symbols(
 # names short enough that many papers never abbreviate them to dla/dlb/dlc/dld
 # (``deltaC`` alone appears in 84 of the 9,417 dry-run papers). Requested by
 # ZFIN curators; each maps to the curated symbol (dla ZDB-GENE-980526-29, dlb
-# ZDB-GENE-980526-114, dlc ZDB-GENE-000125-4, dld ZDB-GENE-990415-47).
+# ZDB-GENE-980526-114, dlc ZDB-GENE-000125-4, dld ZDB-GENE-990415-47). ``parkin``
+# is the usual name of prkn (ZDB-GENE-050417-109); only the lower-case gene
+# spelling counts, the capitalised ``Parkin`` is the protein.
 ZFIN_GENE_NAME_ALIASES = {
     "deltaA": "dla",
     "deltaB": "dlb",
     "deltaC": "dlc",
     "deltaD": "dld",
+    "parkin": "prkn",
 }
 
 
@@ -2166,3 +2214,39 @@ def normalize_zfin_clone_name_dashes(text: str) -> str:
     if not text:
         return text
     return _ZFIN_CLONE_NAME_RE.sub(lambda m: m.group(0).translate(_ZFIN_CLONE_NAME_DASHES), text)
+
+
+# PDF-to-markdown conversion sometimes splits a word's italics mid-word -
+# ``havc*r1*`` for *havcr1* - so the gene regex sees only the fragment ``r1``.
+# An emphasis marker between two letters/digits cannot be a word boundary, so it
+# is removed for the gene-matching text. (The italic rescue keeps the raw
+# markdown: there, such a marker is the partial-emphasis signal of a substring.)
+_ZFIN_INTRA_WORD_EMPHASIS_RE = re.compile(r"(?<=[A-Za-z0-9])\*+(?=[A-Za-z0-9])")
+
+
+def join_intra_word_emphasis(text: str) -> str:
+    """Remove ``*`` emphasis markers sitting inside a word (``havc*r1*``)."""
+    if not text:
+        return text
+    return _ZFIN_INTRA_WORD_EMPHASIS_RE.sub("", text)
+
+
+# Authors often hyphenate interleukin symbols - ``il-1b``, ``il-1β``, ``il-6``,
+# ``il-10`` - where ZFIN has ``il1b``, ``il6``, ``il10``. Only the lower-case
+# spelling is rewritten: upper-case ``IL-6`` is usually the human/mouse protein
+# (as for every other ZFIN gene, see build_entities_from_results). A trailing
+# Greek letter is the paralogue suffix (``il-1β`` -> ``il1b``). Requested by ZFIN
+# curators; a generic hyphen-collapse is NOT safe (``fig-4a``, ``zpr-1``).
+_ZFIN_INTERLEUKIN_RE = re.compile(
+    r"(?<![A-Za-z0-9_.\-])il-(\d+)([a-z]|[αβγδ])?(?![A-Za-z0-9αβγδ])"
+)
+_ZFIN_GREEK_SUFFIX = {"α": "a", "β": "b", "γ": "g", "δ": "d"}
+
+
+def normalize_zfin_interleukin_names(text: str) -> str:
+    """Rewrite lower-case hyphenated interleukins (``il-1β``) as ZFIN symbols (``il1b``)."""
+    if not text:
+        return text
+    return _ZFIN_INTERLEUKIN_RE.sub(
+        lambda m: "il" + m.group(1) + _ZFIN_GREEK_SUFFIX.get(m.group(2) or "", m.group(2) or ""), text
+    )

@@ -9,12 +9,17 @@ utils.entity_extraction_utils:
 - filter_english_word_gene_symbols: English-word symbols (nor, top, rod, sub,
   pro, ...) need italic gene typography before a paper is credited with them.
 - find_zfin_gene_name_aliases / normalize_zfin_clone_name_dashes: gene names
-  used instead of symbols (deltaC) and en-dashes inside si: names.
+  used instead of symbols (deltaC, parkin) and en-dashes inside si: names.
+- strip_markdown_back_matter: drop the reference list when a paper has no
+  Results/Methods headings.
+- join_intra_word_emphasis / normalize_zfin_interleukin_names: italics split
+  mid-word (havc*r1*) and hyphenated interleukins (il-1β -> il1b).
 """
 
 from utils.entity_extraction_utils import (
     _classify_section_heading,
     restrict_markdown_to_results_methods,
+    strip_markdown_back_matter,
     gene_has_standalone_mention,
     filter_construct_embedded_genes,
     filter_english_word_gene_symbols,
@@ -24,6 +29,8 @@ from utils.entity_extraction_utils import (
     _inside_open_parenthetical,
     find_zfin_gene_name_aliases,
     normalize_zfin_clone_name_dashes,
+    join_intra_word_emphasis,
+    normalize_zfin_interleukin_names,
 )
 
 
@@ -127,6 +134,54 @@ def test_restrict_returns_none_when_no_results_methods():
 def test_restrict_returns_none_for_unstructured_text():
     assert restrict_markdown_to_results_methods("plain text, no headers") is None
     assert restrict_markdown_to_results_methods("") is None
+
+
+def test_restrict_flattened_methods_subsections_inherit_keep():
+    # PDF conversion put the Methods subsections at the level of "Materials and
+    # methods" itself (ZDB-PUB-260411-3); they are still Methods.
+    md = (
+        "## Introduction\n\nintro-gene here.\n\n"
+        "## Materials and methods\n\nethics text.\n\n"
+        "## Genotyping\n\n### Primer design\n\nprimer-gene here.\n\n"
+        "## C9orf72 knockout validation\n\nzgc:100846 (C9orf72): Dr03094731_m1\n\n"
+        "## Supporting information\n\nsupp-gene here.\n\n"
+        "## Funding Information\n\nfunding-gene here.\n"
+    )
+    kept = restrict_markdown_to_results_methods(md)
+    assert "primer-gene" in kept
+    assert "zgc:100846" in kept
+    assert "intro-gene" not in kept
+    assert "supp-gene" not in kept
+    # a neutral sibling of a DROP section stays dropped
+    assert "funding-gene" not in kept
+
+
+def test_restrict_neutral_sibling_of_drop_section_dropped():
+    md = (
+        "## Results\n\nresults-gene here.\n\n"
+        "## Discussion\n\ndiscussion-gene here.\n\n"
+        "## Limitations of the study\n\nlimitation-gene here.\n"
+    )
+    kept = restrict_markdown_to_results_methods(md)
+    assert "results-gene" in kept
+    assert "limitation-gene" not in kept
+
+
+def test_strip_back_matter_drops_reference_list_only():
+    # ZDB-PUB-260512-1 has no Results/Methods headings; arl13b/cc2d2a/cep290 are
+    # only in the titles of cited papers.
+    md = (
+        "# Title\n\n## Abstract\n\n*ahi1* and *tmem67* variants.\n\n"
+        "## Author Contributions\n\nA.B. did it.\n\n"
+        "## Figure Legends\n\n### FIGURE 1\n\n*rpgrip1l* morphants.\n\n"
+        "## References\n\n12. Ciliary Genes arl13b, ahi1 and cc2d2a ... cep290 in Zebrafish.\n"
+    )
+    out = strip_markdown_back_matter(md)
+    assert "*ahi1*" in out
+    assert "*rpgrip1l*" in out          # figure legends are kept in the fallback
+    assert "arl13b" not in out
+    assert "A.B. did it" not in out
+    assert strip_markdown_back_matter("") == ""
 
 
 # --------------------------------------------------------------------- #
@@ -520,6 +575,31 @@ def test_gene_name_alias_in_construct_or_uncurated_skipped():
     assert find_zfin_gene_name_aliases("deltaC expression", _ZfinGeneModel("dld")) == []
     # longer identifiers are not the name
     assert find_zfin_gene_name_aliases("deltaCa expression", _ZfinGeneModel("dlc")) == []
+
+
+def test_parkin_alias_maps_to_prkn():
+    model = _ZfinGeneModel("prkn")
+    assert find_zfin_gene_name_aliases("loss of parkin in zebrafish", model) == ["prkn"]
+    # the capitalised protein name and the Parkinson's disease word are not the gene
+    assert find_zfin_gene_name_aliases("Parkin protein levels", model) == []
+    assert find_zfin_gene_name_aliases("parkinson disease model", model) == []
+
+
+def test_join_intra_word_emphasis():
+    assert join_intra_word_emphasis("expression of havc*r1* increased") == "expression of havcr1* increased"
+    # emphasis at word boundaries is left alone
+    assert join_intra_word_emphasis("*agr2*, *mmp9*") == "*agr2*, *mmp9*"
+    assert join_intra_word_emphasis("Dr03094731_m1") == "Dr03094731_m1"
+    assert join_intra_word_emphasis("") == ""
+
+
+def test_normalize_interleukin_names():
+    text = "il-1b and il-1β, *il-6*, il-10. il-6r il-1β:GFP"
+    assert normalize_zfin_interleukin_names(text) == "il1b and il1b, *il6*, il10. il6r il1b:GFP"
+    # upper-case (human/mouse protein) and longer words are untouched
+    assert normalize_zfin_interleukin_names("IL-6 and Il-10") == "IL-6 and Il-10"
+    assert normalize_zfin_interleukin_names("foil-1 nil-2") == "foil-1 nil-2"
+    assert normalize_zfin_interleukin_names("") == ""
 
 
 def test_normalize_clone_name_dashes():
