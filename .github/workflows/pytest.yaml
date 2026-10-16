@@ -1,0 +1,30 @@
+name: pytest
+on: [push]
+jobs:
+  run-pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          ref: ${{ github.head_ref }}
+      - uses: actions/setup-python@v4
+        name: setup python
+        with:
+          python-version: 3.11
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements.txt
+            requirements.dev.txt
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -r requirements.dev.txt
+      - name: run pytest
+        env:
+          ENV_STATE: test
+          # agr_literature_service calls init_tmp_dir() at import, which makedirs XML_PATH
+          # and fails on an empty value, so both paths must be absolute and exist.
+          XML_PATH: ${{ github.workspace }}/tmp/xml/
+          LOG_PATH: ${{ github.workspace }}/tmp/log/
+        run: make run-local-pytest
