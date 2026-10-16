@@ -4,6 +4,10 @@ endif
 
 include ${ENV_FILE}
 
+run-local-pytest:
+	mkdir -p "$${XML_PATH:?XML_PATH must be set}" "$${LOG_PATH:?LOG_PATH must be set}"
+	python3 -m pytest tests/
+
 run-local-flake8:
 	python3 -m flake8 .
 
