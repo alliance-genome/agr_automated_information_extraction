@@ -10,19 +10,20 @@ from unittest.mock import patch
 from agr_document_classifier import agr_document_classifier_classify as clf
 
 
-def _run(conf_scores, classifications, current_status=None, tag_result=True):
+def _run(conf_scores, classifications, current_status=None, tag_result=True, species="NCBITaxon:7214"):
     curies = [f"AGRKB:10100000000000{i}" for i in range(len(conf_scores))]
     files_loaded = [f"/tmp/{c.replace(':', '_')}.md" for c in curies]
     valid_embeddings = [True] * len(conf_scores)
     job_map = {c: {"job": i} for i, c in enumerate(curies)}
     model_meta_data = {"negated": True, "data_novelty": "ATP:0000335", "data_context": "ATP:0000325",
-                       "species": "NCBITaxon:7214", "ml_model_id": 60}
+                       "species": species, "ml_model_id": 60}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=tag_result) as m_tet, \
             patch.object(clf, "get_current_workflow_status", return_value=current_status), \
             patch.object(clf, "create_workflow_tag") as m_wft, \
             patch.object(clf, "set_job_success") as m_success, \
             patch.object(clf, "set_job_started"), \
-            patch.object(clf, "set_job_failure"):
+            patch.object(clf, "set_job_failure"), \
+            patch.object(clf, "get_cached_mod_species_map", return_value={"FB": "NCBITaxon:7227"}):
         clf.send_classification_results(
             files_loaded, classifications, conf_scores, valid_embeddings, job_map,
             "FB", "ATP:0000207", 1, model_meta_data)
@@ -84,3 +85,9 @@ def test_failed_tag_write_leaves_the_job_open_and_adds_no_tbd_tag():
     assert m_tet.call_count == 1
     assert m_wft.call_count == 0
     assert m_success.call_count == 0
+
+
+def test_model_without_a_species_gets_the_mod_default_taxon():
+    curies, m_tet, _, _ = _run(conf_scores=[0.9], classifications=[1], species=None)
+    args, _ = m_tet.call_args
+    assert args == (curies[0], "NCBITaxon:7227", "ATP:0000402")

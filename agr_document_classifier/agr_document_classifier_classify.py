@@ -19,7 +19,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
     set_blue_api_base_url, \
-    get_cached_mod_id_from_abbreviation, create_workflow_tag, \
+    get_cached_mod_id_from_abbreviation, get_cached_mod_species_map, create_workflow_tag, \
     get_current_workflow_status, get_reference_embedding, get_reference_abstract_text, \
     send_curation_status_to_abc
 from utils.abc_embeddings import (is_abc_embedding_model, get_profile, profile_pair_from_model,
@@ -494,6 +494,9 @@ def send_no_genetic_data_tag(reference_curie, mod_abbr, species, classification,
     """
     if classification == 0:
         return True
+    # The model's species (ml_model.species) wins; a model without one gets the MOD's default
+    # taxon, so the tag always has a species (the weekly FB export selects tags by species)
+    species = species or (get_cached_mod_species_map() or {}).get(mod_abbr)
     result = send_classification_tag_to_abc(
         reference_curie, species, GENETIC_DATA_TOPIC,
         negated=True,
