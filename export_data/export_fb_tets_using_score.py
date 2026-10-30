@@ -67,6 +67,7 @@ def get_data(table_name: str):
                              AND cr.reference_id = tet.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND s.source_method = 'abc_document_classifier'
+                             AND (tet.topic != 'ATP:0000402' OR tet.negated)
                              AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
                              AND tet.validation_by_professional_biocurator != 'validated_wrong'
                              order by tet.date_created desc;"""
@@ -92,13 +93,15 @@ def dump_tet():
                    "ATP:0000013": 'new_transg',
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
-                   "ATP:0000207": 'nocur',
+                   "ATP:0000207": 'nocur',  # manual_indexing_tag rows from before SCRUM-6669
+                   "ATP:0000402": 'nocur',  # SCRUM-6669: negated "genetic data" tags
                    }
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
                    "ATP:0000006": 'cam',
                    "ATP:0000069": 'harv',
                    "ATP:0000207": 'cam',
+                   "ATP:0000402": 'cam',
                    }
 
     pos = ""
