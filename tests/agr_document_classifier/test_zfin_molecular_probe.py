@@ -32,18 +32,17 @@ def _run(conf_scores, classifications, negated_model=False, mod_abbr="ZFIN",
     with patch.object(clf, "send_classification_tag_to_abc", return_value=True) as m_tet, \
             patch.object(clf, "create_workflow_tag", return_value=True) as m_wft, \
             patch.object(clf, "send_curation_status_to_abc", return_value=True) as m_cs, \
-            patch.object(clf, "send_manual_indexing_to_abc") as m_mi, \
             patch.object(clf, "set_job_success") as m_success, \
             patch.object(clf, "set_job_started"), \
             patch.object(clf, "set_job_failure"):
         clf.send_classification_results(
             files_loaded, classifications, conf_scores, valid_embeddings, job_map,
             mod_abbr, topic, 1, model_meta_data)
-    return curies, m_tet, m_wft, m_cs, m_mi, m_success
+    return curies, m_tet, m_wft, m_cs, m_success
 
 
 def test_confident_probe_paper_gets_topic_tag_wont_index_and_wont_curate():
-    curies, m_tet, m_wft, m_cs, _, _ = _run(conf_scores=[0.95], classifications=[1])
+    curies, m_tet, m_wft, m_cs, _ = _run(conf_scores=[0.95], classifications=[1])
 
     _, tet_kwargs = m_tet.call_args
     assert m_tet.call_args[0][0] == curies[0]
@@ -62,7 +61,7 @@ def test_confident_probe_paper_gets_topic_tag_wont_index_and_wont_curate():
 
 
 def test_topic_tag_uses_the_probe_topic_and_the_model_metadata():
-    curies, m_tet, _, _, _, _ = _run(conf_scores=[0.95], classifications=[1])
+    curies, m_tet, _, _, _ = _run(conf_scores=[0.95], classifications=[1])
 
     args, kwargs = m_tet.call_args
     assert args[2] == "ATP:0000370"
@@ -72,14 +71,14 @@ def test_topic_tag_uses_the_probe_topic_and_the_model_metadata():
 
 
 def test_paper_at_exactly_the_threshold_is_dropped():
-    _, m_tet, m_wft, m_cs, _, _ = _run(conf_scores=[0.87], classifications=[1])
+    _, m_tet, m_wft, m_cs, _ = _run(conf_scores=[0.87], classifications=[1])
     assert m_tet.call_count == 1
     assert m_wft.call_count == 1
     assert m_cs.call_count == 1
 
 
 def test_positive_below_the_threshold_writes_nothing_but_completes_the_job():
-    _, m_tet, m_wft, m_cs, _, m_success = _run(conf_scores=[0.86], classifications=[1])
+    _, m_tet, m_wft, m_cs, m_success = _run(conf_scores=[0.86], classifications=[1])
     assert m_tet.call_count == 0
     assert m_wft.call_count == 0
     assert m_cs.call_count == 0
@@ -89,7 +88,7 @@ def test_positive_below_the_threshold_writes_nothing_but_completes_the_job():
 
 def test_negatives_never_produce_a_negated_tag_even_for_a_negated_model():
     # a negated model would normally get a negated=True TET for every negative
-    _, m_tet, m_wft, m_cs, _, m_success = _run(
+    _, m_tet, m_wft, m_cs, m_success = _run(
         conf_scores=[0.02], classifications=[0], negated_model=True)
     assert m_tet.call_count == 0
     assert m_wft.call_count == 0
@@ -98,7 +97,7 @@ def test_negatives_never_produce_a_negated_tag_even_for_a_negated_model():
 
 
 def test_only_confident_papers_in_a_mixed_batch_are_dropped():
-    curies, m_tet, m_wft, m_cs, _, m_success = _run(
+    curies, m_tet, m_wft, m_cs, m_success = _run(
         conf_scores=[0.99, 0.5, 0.01], classifications=[1, 1, 0])
     assert m_tet.call_count == 1
     assert m_wft.call_count == 1
@@ -129,13 +128,12 @@ def test_the_drop_is_skipped_when_the_topic_tag_write_fails():
 
 
 def test_other_zfin_topics_keep_the_standard_tagging_path():
-    _, m_tet, m_wft, m_cs, m_mi, _ = _run(
+    _, m_tet, m_wft, m_cs, _ = _run(
         conf_scores=[0.6], classifications=[1], topic="ATP:0000009")
     # standard path: topic tag only, no acquisition-workflow drop
     assert m_tet.call_count == 1
     assert m_wft.call_count == 0
     assert m_cs.call_count == 0
-    assert m_mi.call_count == 0
 
 
 def test_job_still_completes_when_a_drop_write_fails():

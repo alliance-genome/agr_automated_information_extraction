@@ -19,7 +19,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
     set_blue_api_base_url, \
-    get_cached_mod_id_from_abbreviation, send_manual_indexing_to_abc, create_workflow_tag, \
+    get_cached_mod_id_from_abbreviation, get_cached_mod_species_map, create_workflow_tag, \
     get_current_workflow_status, get_reference_embedding, get_reference_abstract_text, \
     send_curation_status_to_abc
 from utils.abc_embeddings import (is_abc_embedding_model, get_profile, profile_pair_from_model,
@@ -35,14 +35,19 @@ from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
 
 logger = logging.getLogger(__name__)
 
-# SCRUM-6203: an FB "no genetic data" (ATP:0000207) paper only gets the "manual indexing
-# status TBD" workflow tag (ATP:0000359) -- i.e. only surfaces for manual indexing -- when the
-# classifier's positive-class confidence is at least this threshold. Previously the tag was
-# created for every classified paper (an effective threshold of 0); it was raised now that a
-# weekly pipeline exports every manual_indexing_tag score to FB directly, so the low-confidence
-# papers no longer need surfacing. The manual_indexing_tag row itself is still written for every
-# paper regardless of confidence (the export consumes all of them).
+# SCRUM-6669: the FB "no genetic data" model (job and ml_model topic ATP:0000207) writes a
+# negated "genetic data" (ATP:0000402) topic tag for a paper it calls positive, so the TET
+# validation rules apply to it. It used to write a manual_indexing_tag for every paper; papers
+# it calls negative now get nothing.
+FB_NO_GENETIC_DATA_TOPIC = "ATP:0000207"
+GENETIC_DATA_TOPIC = "ATP:0000402"
+
+# SCRUM-6203: an FB "no genetic data" paper only gets the "manual indexing status TBD" workflow
+# tag (ATP:0000359) -- i.e. only surfaces for manual indexing -- when the classifier's
+# positive-class confidence is at least this threshold.
 FB_NO_GENETIC_DATA_TBD_THRESHOLD = 0.5
+MANUAL_INDEXING_STATUS_TBD = "ATP:0000359"
+MANUAL_INDEXING_PROCESS = "ATP:0000273"
 
 # SCRUM-5764: ZFIN "molecular probe" papers -- references that only discuss the synthesis and
 # characterization of a probe -- are dropped from the ZFIN reference acquisition workflow. A
@@ -430,9 +435,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
     species = None
     if 'species' in model_meta_data and model_meta_data['species'] and model_meta_data['species'].startswith("NCBITaxon:"):
         species = model_meta_data['species']
-    send_to_manual_indexing = False
-    if topic == 'ATP:0000207' and mod_abbr == 'FB':
-        send_to_manual_indexing = True
+    fb_no_genetic_data = topic == FB_NO_GENETIC_DATA_TOPIC and mod_abbr == 'FB'
     drop_probe_papers = topic == ZFIN_MOLECULAR_PROBE_TOPIC and mod_abbr == 'ZFIN'
 
     for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
@@ -452,37 +455,24 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                 classification=classification, conf_score=conf_score,
                 confidence_level=confidence_level, tet_source_id=tet_source_id,
                 model_meta_data=model_meta_data)
+        elif fb_no_genetic_data:
+            # Before the generic branch: the model is negated, which would tag every paper
+            result = send_no_genetic_data_tag(
+                reference_curie=reference_curie, mod_abbr=mod_abbr, species=species,
+                classification=classification, conf_score=conf_score,
+                confidence_level=confidence_level, tet_source_id=tet_source_id,
+                model_meta_data=model_meta_data)
         elif classification > 0 or model_meta_data['negated']:
             logger.debug(f"reference_curie: '{reference_curie}', species: '{species}', topic: '{topic}', confidence_level: '{confidence_level}', tet_source_id: '{tet_source_id}' data_novelty: '{model_meta_data['data_novelty']}' data_context: '{model_meta_data.get('data_context')}'")
-            if send_to_manual_indexing:
-                result = send_manual_indexing_to_abc(reference_curie, mod_abbr, topic, conf_score)
-                # SCRUM-6203: only set the "manual indexing status TBD" workflow tag for FB
-                # "no genetic data" when the model is actually positive for the topic, i.e.
-                # confidence_score >= 0.5. The manual_indexing_tag above is still written for
-                # every paper (the weekly FB export consumes all scores).
-                if (result and topic == 'ATP:0000207'
-                        and conf_score is not None
-                        and conf_score >= FB_NO_GENETIC_DATA_TBD_THRESHOLD):
-                    # Only create workflow tag if no manual indexing workflow tag exists
-                    current_manual_indexing_status = get_current_workflow_status(
-                        reference_curie, mod_abbr, "ATP:0000273")
-                    if current_manual_indexing_status is None:
-                        create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
-                                            workflow_tag_atp_id="ATP:0000359")
-                    else:
-                        logger.debug(f"Skipping workflow tag creation for {reference_curie}: "
-                                     f"manual indexing workflow tag already exists "
-                                     f"({current_manual_indexing_status})")
-            else:
-                result = send_classification_tag_to_abc(
-                    reference_curie, species, topic,
-                    negated=bool(classification == 0),
-                    data_novelty=model_meta_data['data_novelty'],
-                    data_context=model_meta_data.get('data_context'),
-                    confidence_score=conf_score,
-                    confidence_level=confidence_level,
-                    tet_source_id=tet_source_id,
-                    ml_model_id=model_meta_data['ml_model_id'])
+            result = send_classification_tag_to_abc(
+                reference_curie, species, topic,
+                negated=bool(classification == 0),
+                data_novelty=model_meta_data['data_novelty'],
+                data_context=model_meta_data.get('data_context'),
+                confidence_score=conf_score,
+                confidence_level=confidence_level,
+                tet_source_id=tet_source_id,
+                ml_model_id=model_meta_data['ml_model_id'])
         if result:
             set_job_success(reference_curie_job_map[reference_curie])
         # Legacy path writes a real MD file to clean up here; the ABC path passes
@@ -490,6 +480,43 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
         if os.path.exists(file_path):
             os.remove(file_path)
     logger.info(f"Finished processing batch of {len(files_loaded)} jobs.")
+
+
+def send_no_genetic_data_tag(reference_curie, mod_abbr, species, classification, conf_score,
+                             confidence_level, tet_source_id, model_meta_data):
+    """Report an FB "no genetic data" classification (SCRUM-6669).
+
+    A positive call ("this paper has no genetic data") is a negated "genetic data" topic tag
+    carrying the model's confidence; a negative call writes nothing. With a confidence of at
+    least FB_NO_GENETIC_DATA_TBD_THRESHOLD the paper also gets the "manual indexing status TBD"
+    workflow tag (SCRUM-6203), unless it already has a manual indexing status.
+    Returns whether the job can be marked a success.
+    """
+    if classification == 0:
+        return True
+    # The model's species (ml_model.species) wins; a model without one gets the MOD's default
+    # taxon, so the tag always has a species (the weekly FB export selects tags by species)
+    species = species or (get_cached_mod_species_map() or {}).get(mod_abbr)
+    result = send_classification_tag_to_abc(
+        reference_curie, species, GENETIC_DATA_TOPIC,
+        negated=True,
+        data_novelty=model_meta_data['data_novelty'],
+        data_context=model_meta_data.get('data_context'),
+        confidence_score=conf_score,
+        confidence_level=confidence_level,
+        tet_source_id=tet_source_id,
+        ml_model_id=model_meta_data['ml_model_id'])
+    if result and conf_score is not None and conf_score >= FB_NO_GENETIC_DATA_TBD_THRESHOLD:
+        current_manual_indexing_status = get_current_workflow_status(
+            reference_curie, mod_abbr, MANUAL_INDEXING_PROCESS)
+        if current_manual_indexing_status is None:
+            create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
+                                workflow_tag_atp_id=MANUAL_INDEXING_STATUS_TBD)
+        else:
+            logger.debug(f"Skipping workflow tag creation for {reference_curie}: "
+                         f"manual indexing workflow tag already exists "
+                         f"({current_manual_indexing_status})")
+    return result
 
 
 def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, species, classification,
