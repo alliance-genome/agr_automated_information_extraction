@@ -47,3 +47,23 @@ def test_only_negated_genetic_data_tags_are_selected():
             module.get_data('tet')
     assert len(captured) == 2
     assert all("AND (tet.topic != 'ATP:0000402' OR tet.negated)" in query for query in captured)
+
+
+def test_files_are_only_written_when_fb_svn_commit_is_true(tmp_path, monkeypatch, capsys):
+    """Only the production GoCD pipeline sets FB_SVN_COMMIT=true. Anything else prints instead."""
+    for module in (export_fb_tets, export_fb_tets_using_score):
+        target = tmp_path / f"{module.__name__}.txt"
+        target.write_text("old\n")
+
+        monkeypatch.delenv("FB_SVN_COMMIT", raising=False)
+        module.write_to_top(str(target), "new\n")
+        assert target.read_text() == "old\n"
+        assert "is not written. It would add:\nnew\n" in capsys.readouterr().out
+
+        monkeypatch.setenv("FB_SVN_COMMIT", "false")
+        module.write_to_top(str(target), "new\n")
+        assert target.read_text() == "old\n"
+
+        monkeypatch.setenv("FB_SVN_COMMIT", "true")
+        module.write_to_top(str(target), "new\n")
+        assert target.read_text() == "new\nold\n"

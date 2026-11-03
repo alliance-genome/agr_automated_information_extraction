@@ -16,13 +16,20 @@
 #     -e SVN_USERNAME -e SVN_PASSWORD \
 #     -e SVN_REPO_URL=https://svn.flybase.org/.../curation_status \
 #     -e CURATION_STATUS_DIR=/curation_status \
+#     -e FB_SVN_COMMIT=true \
 #     agr_document_classifier \
 #     ./bin/run_export_and_commit.sh
+#
+# FB_SVN_COMMIT=true must be set by the production GoCD pipeline only. Without it
+# the wrapper runs the export without touching SVN at all: no checkout, no commit,
+# and the export scripts print what they would add to each file to stdout instead
+# of writing it. A stage or test run therefore never writes to FlyBase's SVN, and
+# needs no SVN credentials.
 #
 # CURATION_STATUS_DIR must be /curation_status: the export scripts hardcode
 # /curation_status/textmining_*.txt as their output path.
 #
-# Flow:
+# Flow (when FB_SVN_COMMIT=true; otherwise only step 3 runs, printing to stdout):
 #   1. If /curation_status has no .svn/, run `svn checkout $SVN_REPO_URL` to
 #      create the working copy. Otherwise `svn update`; on E155036 (format too
 #      old), run `svn upgrade` and retry once.
@@ -46,9 +53,13 @@
 #                                                    first run (when .svn/ is missing).
 #                                                    Unused once the working copy
 #                                                    exists but cheap to keep set.
-#   SVN_USERNAME, SVN_PASSWORD                     - passed to every svn call as
+#   SVN_USERNAME, SVN_PASSWORD                     - (FB_SVN_COMMIT=true only) passed to every svn call as
 #                                                    --username/--password
 #                                                    --no-auth-cache
+#   FB_SVN_COMMIT                                  - "true" to write and commit to SVN.
+#                                                    Set in the production GoCD pipeline
+#                                                    only; any other value (or unset) is
+#                                                    a dry run that prints to stdout.
 #
 # Optional overrides:
 #   CURATION_STATUS_DIR  path of the SVN working copy inside the container. Defaults
@@ -64,10 +75,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # Capture $PWD before we cd anywhere, so the default is the caller's CWD.
 CURATION_STATUS_DIR="${CURATION_STATUS_DIR:-$PWD/curation_status}"
-
-: "${SVN_USERNAME:?SVN_USERNAME must be set}"
-: "${SVN_PASSWORD:?SVN_PASSWORD must be set}"
-SVN_AUTH=(--non-interactive --no-auth-cache --username "$SVN_USERNAME" --password "$SVN_PASSWORD")
 
 log() { echo "[$(date -u +%FT%TZ)] $*"; }
 
@@ -114,6 +121,16 @@ run_export() {
 }
 
 # ---- main ----
+
+if [[ "${FB_SVN_COMMIT:-}" != "true" ]]; then
+    log "FB_SVN_COMMIT is not \"true\": dry run. SVN is not touched; the export prints what it would write."
+    run_export
+    exit $?
+fi
+
+: "${SVN_USERNAME:?SVN_USERNAME must be set}"
+: "${SVN_PASSWORD:?SVN_PASSWORD must be set}"
+SVN_AUTH=(--non-interactive --no-auth-cache --username "$SVN_USERNAME" --password "$SVN_PASSWORD")
 
 mkdir -p "$CURATION_STATUS_DIR"
 if ! cd "$CURATION_STATUS_DIR"; then

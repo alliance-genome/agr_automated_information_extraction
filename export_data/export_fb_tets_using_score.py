@@ -36,7 +36,18 @@ def create_postgres_session(verbose):
 
 
 def write_to_top(file_path, text_to_add):
-    """Writes text to the top of a file, preserving existing content."""
+    """Writes text to the top of a file, preserving existing content.
+
+    The file is FlyBase's SVN working copy, so it is only written when FB_SVN_COMMIT is "true",
+    which only the production GoCD pipeline sets. Any other run (stage, a test) prints what it
+    would have added to stdout instead.
+    """
+    if environ.get('FB_SVN_COMMIT') != 'true':
+        print(f'FB_SVN_COMMIT is not "true", so {file_path} is not written. It would add:')
+        print(text_to_add, end='')
+        return
+    print(f"Adding to {file_path}:")
+    print(text_to_add, end='')
     try:
         with open(file_path, 'r') as file:
             existing_content = file.read()
@@ -135,7 +146,6 @@ def dump_tet():
 
     if pos:
         print("Updating positive data")
-        print(pos)
         write_to_top('/curation_status/textmining_positive_ABC_using_score.txt', pos)
     else:
         print("No positive data found")
