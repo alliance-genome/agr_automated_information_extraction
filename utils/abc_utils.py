@@ -286,6 +286,10 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
             # and raise after the final attempt.
             if attempts >= 3:
                 logger.error(f"Error trying to send classification tag to ABC {attempts} times.")
+                if isinstance(exc, HTTPError):
+                    logger.error(f"HTTP {exc.code}: {exc.read().decode('utf-8', errors='replace')}")
+                else:
+                    logger.error(f"{type(exc).__name__}: {exc}")
                 logger.error(f"curie: {reference_curie}, species: {species}, topic: {topic}, ")
                 logger.error(f"negated: {negated}, confidence_score: {confidence_score}, ")
                 logger.error(f"confidence_level: {confidence_level}, tet_source_id: {tet_source_id}")
