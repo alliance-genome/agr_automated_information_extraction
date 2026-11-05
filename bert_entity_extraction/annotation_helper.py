@@ -31,7 +31,7 @@ from retry import retry
 from gene_finding import deep_learning
 from utils.abc_utils import load_all_jobs, get_tet_source_id, \
     set_job_started, set_job_success, send_entity_tag_to_abc, \
-    set_job_failure, set_blue_api_base_url
+    set_job_failure, set_blue_api_base_url, default_data_context_for_mod
 # get_cached_mod_abbreviation_from_id, get_tet_source_id, set_job_started, set_job_success)
 # from agr_literature_service.lit_processing.utils.sqlalchemy_utils import create_postgres_session
 
@@ -73,25 +73,20 @@ logger.debug(args)
 
 EXCEPTIONS_PATH = config_parser.get('PATHS', 'exceptions')
 
-# SCRUM-5697. data_context on the tags this pipeline creates. Both values are
-# ATP:0000325 "experimentally studied data" because this is a FlyBase pipeline
-# and FB's rule is uniform: per FlyBase's note on SCRUM-5697, every FB tag is
-# experimentally studied, so the backfill gives all 173,585 of them ATP:0000325
-# regardless of shape -- entity tags and topic-only negatives alike.
-#
-# The two are named separately anyway because the distinction is real and the
-# values only coincide for FB. WB splits on it (Ceri Van Slyke, 2026-09-01:
-# entity tags ATP:0000325, topic tags the ATP:0000323 root), which is why
-# agr_antibody_string_matching_classifier.DATA_CONTEXT is ATP:0000323 -- that
-# is a WB source, not a different reading of the same rule. If this pipeline
-# ever serves another MOD, these must be looked up per MOD, not reused.
+# SCRUM-5697 / SCRUM-6815. data_context on the tags this FlyBase pipeline
+# creates: FB's entry in the shared per-MOD table, which is ATP:0000405
+# experimental data for both shapes (FlyBase asked for it on everything when
+# ATP:0000325 was deprecated, and the backfill moved their stored tags to it).
+# The two are named separately because the shapes differ for other MODs (WB and
+# ZFIN put entities on ATP:0000406); if this pipeline ever serves another MOD,
+# look them up per MOD rather than reusing these.
 #
 # Keeping them in step with the backfill is load-bearing:
 # check_for_duplicate_tags filters on every payload field, so a value here that
 # disagrees with the stored one turns every re-sent tag into a new row
 # instead of a 409.
-DATA_CONTEXT_ENTITY_TAG = 'ATP:0000325'
-DATA_CONTEXT_TOPIC_TAG = 'ATP:0000325'
+DATA_CONTEXT_ENTITY_TAG = default_data_context_for_mod('FB', has_entity=True)
+DATA_CONTEXT_TOPIC_TAG = default_data_context_for_mod('FB', has_entity=False)
 
 
 def create_postgres_engine(db):

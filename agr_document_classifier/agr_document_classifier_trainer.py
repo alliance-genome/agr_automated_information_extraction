@@ -560,24 +560,16 @@ def parse_arguments():
                         help="Qualifier to be used for novelty. Default 'ATP:0000335'")
     # SCRUM-5697. Stamped onto every tag the classifier creates from this model, so
     # the data-context policy lives on the ml_model row rather than in pipeline code.
-    # The terms are a hierarchy, not four disjoint options:
-    #     ATP:0000323 data context
-    #     |-- ATP:0000324 mentioned data
-    #     |   |-- ATP:0000360 background information
-    #     |   +-- ATP:0000325 experimentally studied data
-    #     +-- ATP:0000326 marker data
-    #         |-- ATP:0000328 expression marker
-    #         +-- ATP:0000327 genetic marker
+    # The terms are a hierarchy (see DATA_CONTEXT_DEFAULTS in utils/abc_utils).
     # Left as None here and resolved per MOD after parsing: the rule is not
-    # universal. Every model this trainer uploads is a topic classifier, and WB's
-    # topic tags take the root term (Ceri Van Slyke, SCRUM-5697, 2026-09-01) --
-    # but FlyBase asked for ATP:0000325 on all of theirs and the other MODs take
-    # the same blanket default, so a fixed ATP:0000323 would have stamped WB's
-    # rule onto every MOD. An explicit -C still wins over the per-MOD default.
+    # universal. Every model this trainer uploads is a topic classifier, so it
+    # takes the MOD's topic-tag value -- the ATP:0000323 root for WB (Ceri Van
+    # Slyke, SCRUM-5697), ATP:0000405 experimental data for the others since
+    # ATP:0000325 was deprecated (SCRUM-6815). An explicit -C still wins.
     parser.add_argument("-C", "--data_context", type=str, required=False, default=None,
                         help="Data context term for the tags this model creates. "
                              "Defaults per MOD: 'ATP:0000323' for WB topic "
-                             "classifiers, 'ATP:0000325' otherwise")
+                             "classifiers, 'ATP:0000405' otherwise")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)

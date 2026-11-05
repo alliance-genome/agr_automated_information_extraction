@@ -15,7 +15,7 @@ def _run(conf_scores, classifications, current_status=None, tag_result=True, spe
     files_loaded = [f"/tmp/{c.replace(':', '_')}.md" for c in curies]
     valid_embeddings = [True] * len(conf_scores)
     job_map = {c: {"job": i} for i, c in enumerate(curies)}
-    model_meta_data = {"negated": True, "data_novelty": "ATP:0000335", "data_context": "ATP:0000325",
+    model_meta_data = {"negated": True, "data_novelty": "ATP:0000335", "data_context": "ATP:0000405",
                        "species": species, "ml_model_id": 60}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=tag_result) as m_tet, \
             patch.object(clf, "get_current_workflow_status", return_value=current_status), \
@@ -39,7 +39,7 @@ def test_positive_call_is_a_negated_genetic_data_tag():
     assert kwargs["confidence_score"] == 0.9
     assert kwargs["confidence_level"] == "HIGH"
     assert kwargs["data_novelty"] == "ATP:0000335"
-    assert kwargs["data_context"] == "ATP:0000325"
+    assert kwargs["data_context"] == "ATP:0000405"
     assert kwargs["tet_source_id"] == 1
     assert kwargs["ml_model_id"] == 60
 

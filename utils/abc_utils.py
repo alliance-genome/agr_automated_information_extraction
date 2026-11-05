@@ -195,39 +195,43 @@ def _read_http_error_body(exc: HTTPError) -> str:
         return ""
 
 
-# SCRUM-5697. data_context terms. The hierarchy is
+# SCRUM-5697 / SCRUM-6815. data_context terms. Since the 2026-10-30 ATP release
+# the hierarchy is
 #     ATP:0000323 data context
 #     |-- ATP:0000324 mentioned data -> ATP:0000360 background information
-#     |                                ATP:0000325 experimentally studied data
-#     +-- ATP:0000326 marker data    -> ATP:0000328 expression marker
-#                                       ATP:0000327 genetic marker
+#     |                                ATP:0000405 experimental data
+#     |                                  |-- ATP:0000406 experimentally studied entity
+#     |                                  +-- ATP:0000409 supporting experimental entity
+#     +-- ATP:0000404 nomenclature error
+# ATP:0000325 "experimentally studied data", the old default, was deprecated with
+# no parent; every MOD moved off it in one cutover (SCRUM-6815).
 DATA_CONTEXT_ROOT = "ATP:0000323"
-DATA_CONTEXT_EXPERIMENTALLY_STUDIED = "ATP:0000325"
+DATA_CONTEXT_EXPERIMENTAL_DATA = "ATP:0000405"
+DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY = "ATP:0000406"
 
-# MODs whose topic tags take the root term. WormBase only: Ceri Van Slyke on
-# SCRUM-5697 (2026-09-01) split WB by what the tag is -- "For WB entities are
-# always experimentally studied ATP:0000325 ... Topic tags should get the
-# 'ATP:0000323 data context' value". FlyBase asked for ATP:0000325 on all of
-# theirs and the remaining MODs take the same blanket default, so WB is the only
-# exception rather than the rule.
-TOPIC_TAG_ROOT_TERM_MODS = frozenset({"WB"})
+# (topic-only tag, tag with an entity) per MOD. WB topic tags take the root and
+# its entities are experimentally studied (Ceri Van Slyke, SCRUM-5697); FB asked
+# for experimental data on everything; ZFIN for experimentally studied entities.
+# The same table as DATA_CONTEXT_DEFAULTS in the ABC (topic_entity_tag_crud), which
+# the backfill applied.
+DATA_CONTEXT_DEFAULTS = {
+    "WB": (DATA_CONTEXT_ROOT, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
+    "FB": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTAL_DATA),
+    "ZFIN": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
+}
+DATA_CONTEXT_DEFAULT_OTHER_MODS = (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTAL_DATA)
 
 
-def default_data_context_for_mod(mod_abbreviation):
-    """The data_context a topic-tag-producing model should carry for this MOD.
+def default_data_context_for_mod(mod_abbreviation, has_entity=False):
+    """The data_context for this MOD's tags, from DATA_CONTEXT_DEFAULTS.
 
     Getting it wrong is not cosmetic: check_for_duplicate_tags on the ABC filters
-    on every field of the payload, so a model whose data_context disagrees with
-    what the backfill wrote for that MOD turns every re-sent tag into a new row
-    instead of a benign 409.
-
-    An unresolved MOD falls back to the experimentally-studied term, which is
-    what the ABC stores when a client sends nothing -- assuming WB's term would
-    be a guess.
+    on every field of the payload, so a value that disagrees with what the
+    backfill wrote for that MOD turns every re-sent tag into a new row instead of
+    a benign 409. An unresolved MOD gets the same fallback as the ABC.
     """
-    if mod_abbreviation in TOPIC_TAG_ROOT_TERM_MODS:
-        return DATA_CONTEXT_ROOT
-    return DATA_CONTEXT_EXPERIMENTALLY_STUDIED
+    topic_only, with_entity = DATA_CONTEXT_DEFAULTS.get(mod_abbreviation or "", DATA_CONTEXT_DEFAULT_OTHER_MODS)
+    return with_entity if has_entity else topic_only
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
