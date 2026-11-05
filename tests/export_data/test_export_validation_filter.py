@@ -32,3 +32,12 @@ def test_both_exports_keep_unvalidated_rows():
         assert "tet.validation_by_professional_biocurator IS DISTINCT FROM 'validated_wrong'" in tet_sql
         assert "mit.validation_by_biocurator IS DISTINCT FROM 'wrong'" in mit_sql
         assert "!= 'validated_wrong'" not in tet_sql + mit_sql
+
+
+def test_both_exports_join_tag_source_on_its_id():
+    # SCRUM-6822: tag_source's key is id since the SCRUM-6719 rename; joining on
+    # s.tag_source_id made the TET query fail and the weekly export send nothing
+    for module in (export_fb_tets, export_fb_tets_using_score):
+        tet_sql, _ = _queries(module)
+        assert "s.id = tet.tag_source_id" in tet_sql
+        assert "s.tag_source_id" not in tet_sql
