@@ -1,4 +1,5 @@
 import argparse
+import inspect
 import json
 import logging
 import os
@@ -7,7 +8,7 @@ import re
 import shutil
 import sys
 from datetime import datetime
-from typing import List, Union
+from typing import List, Optional, Union
 
 import utils.thread_limits  # noqa: F401  (import first: pins native threads to 1)
 import joblib
@@ -22,6 +23,8 @@ from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from agr_document_classifier.models import POSSIBLE_CLASSIFIERS
+from agr_document_classifier.rebalance import (REBALANCE_MODES, Strata, bucket_counts, corpus_weights,
+                                               format_counts, load_strata, scored_buckets, subsample)
 from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
                              get_reference_embedding, get_reference_abstract_text,
                              default_data_context_for_mod)
@@ -95,7 +98,8 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
 
 def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_bow: bool = False,
                                   profile_name: str = ABC_EMBEDDING_PROFILE,
-                                  version: int = ABC_EMBEDDING_VERSION):
+                                  version: int = ABC_EMBEDDING_VERSION,
+                                  kept_curies: Optional[list] = None):
     """Build ``(X, y)`` for the requested feature profile.
 
     ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists. The
@@ -112,7 +116,10 @@ def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_b
 
     References whose features are unavailable — no embedding, or no title/abstract —
     are dropped and counted, the same policy the BioWordVec path applies to
-    references with no downloadable MD file."""
+    references with no downloadable MD file.
+
+    When ``kept_curies`` is given, the curie of every row of ``X`` is appended to
+    it, in row order (SCRUM-6482: per-row NNC bucket and weight)."""
     rows = []
     y = []
     missing = 0
@@ -145,6 +152,8 @@ def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_b
             else:
                 rows.append(pooled)
             y.append(int(label == "positive"))
+            if kept_curies is not None:
+                kept_curies.append(reference_curie)
     if not rows:
         raise ValueError("No ABC embeddings could be retrieved for the training set; "
                          "cannot train. Check that the references have been embedded.")
@@ -163,7 +172,11 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                      include_keywords: bool = False, include_metadata: bool = False,
                      use_abc_embeddings: bool = False, abc_curies: dict = None,
                      mod_abbreviation: str = None,
-                     embedding_profile: str = ABC_EMBEDDING_PROFILE):
+                     embedding_profile: str = ABC_EMBEDDING_PROFILE,
+                     strata: Optional[Strata] = None, rebalance: str = "none"):
+    """``strata`` (SCRUM-6482) gives each training reference its NNC bucket: the
+    holdout test set is then also scored per bucket and weighted to the corpus
+    mix, and ``rebalance="weight"`` trains with those corpus weights."""
     if use_abc_embeddings:
         # New path (SCRUM-5781): use the ABC's precomputed OpenAI embeddings instead
         # of loading BioWordVec and pooling word vectors over downloaded Markdown.
@@ -181,15 +194,27 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         if profile is None:
             raise ValueError(f"Unknown embedding profile: {embedding_profile}")
         logger.info(f"Training on the '{profile.name}' embedding profile (v{profile.version}).")
+        kept_curies: list = []
         X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation, use_bow=True,
-                                             profile_name=profile.name, version=profile.version)
+                                             profile_name=profile.name, version=profile.version,
+                                             kept_curies=kept_curies)
         logger.info("Finished loading training set.")
         logger.info(f"Dataset size: {str(len(y))}")
         y = np.array(y)
+        buckets = [strata.bucket(curie) for curie in kept_curies] if strata else None
+        sample_weight = None
+        if rebalance == "weight":
+            if strata is None:
+                raise ValueError("rebalance='weight' needs the NNC strata")
+            sample_weight = corpus_weights(buckets, strata)
+            weight_of = dict(zip(buckets, sample_weight))
+            logger.info("Training with corpus-mix sample weights: "
+                        + ", ".join(f"{b} {weight_of[b]:.2f}" for b in scored_buckets(buckets)))
         # The matrix is wide+sparse (embedding + BoW), so the same SVC/MLP skip and
         # gradient-booster concurrency cap the BioWordVec BoW path uses apply here.
         return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
-                                     use_bow_features=True, use_lsh_features=False)
+                                     use_bow_features=True, use_lsh_features=False,
+                                     sample_weight=sample_weight, buckets=buckets, strata=strata)
 
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
@@ -244,13 +269,49 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                                  use_bow_features=use_bow_features, use_lsh_features=use_lsh_features)
 
 
-def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
-                          use_bow_features=False, use_lsh_features=False):
+def _supports_sample_weight(model) -> bool:
+    return "sample_weight" in inspect.signature(model.fit).parameters
 
-    # Step 1: Split data into train+val (80%) and holdout test set (20%)
-    X_train_val, X_test, y_train_val, y_test = train_test_split(
-        X, y, test_size=0.20, stratify=y, random_state=42
+
+def _bucket_metrics(y_true, y_pred, buckets, strata):
+    """Holdout metrics per NNC bucket, and weighted to the corpus mix (SCRUM-6482):
+    the labeled pool over-represents NNC-HIGH, so the plain test F1 overstates
+    performance on the papers the classifier will actually see."""
+    y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
+    by_bucket = {}
+    for bucket in scored_buckets(buckets):
+        mask = np.array([b == bucket for b in buckets])
+        by_bucket[bucket] = {
+            "n": int(mask.sum()), "positives": int(y_true[mask].sum()),
+            "precision": round(float(precision_score(y_true[mask], y_pred[mask], zero_division=0)), 3),
+            "recall": round(float(recall_score(y_true[mask], y_pred[mask], zero_division=0)), 3),
+            "f1": round(float(f1_score(y_true[mask], y_pred[mask], zero_division=0)), 3)}
+    weights = corpus_weights(buckets, strata)
+    weighted = {
+        "precision": round(float(precision_score(y_true, y_pred, sample_weight=weights, zero_division=0)), 3),
+        "recall": round(float(recall_score(y_true, y_pred, sample_weight=weights, zero_division=0)), 3),
+        "f1": round(float(f1_score(y_true, y_pred, sample_weight=weights, zero_division=0)), 3)}
+    return by_bucket, weighted
+
+
+def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
+                          use_bow_features=False, use_lsh_features=False,
+                          sample_weight=None, buckets=None, strata=None):
+    """``sample_weight`` (per row) trains every candidate with those weights;
+    candidates whose ``fit`` takes no weights are skipped. ``buckets`` (per row
+    NNC bucket) with ``strata`` adds per-bucket and corpus-weighted holdout
+    metrics to the stats (SCRUM-6482)."""
+    if remove_outliers and (sample_weight is not None or buckets is not None):
+        raise ValueError("--remove_outliers cannot be combined with NNC rebalancing: it drops rows")
+
+    # Step 1: Split data into train+val (80%) and holdout test set (20%). Splitting
+    # the row indices too does not change the split (same rows, same random_state).
+    X_train_val, X_test, y_train_val, y_test, idx_train_val, idx_test = train_test_split(
+        X, y, np.arange(X.shape[0]), test_size=0.20, stratify=y, random_state=42
     )
+    fit_params = {}
+    if sample_weight is not None:
+        fit_params["sample_weight"] = np.asarray(sample_weight)[idx_train_val]
 
     logger.info(f"Dataset split - Total: {X.shape[0]}, Train+Val: {X_train_val.shape[0]}, "
                 f"Test: {X_test.shape[0]}")
@@ -295,6 +356,9 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
             logger.info(f"Skipping {classifier_name}: not suitable for the high-dimensional sparse "
                         f"BoW feature matrix.")
             continue
+        if fit_params and not _supports_sample_weight(classifier_info['model']):
+            logger.info(f"Skipping {classifier_name}: its fit() takes no sample weights.")
+            continue
         logger.info(f"Evaluating model {classifier_name}.")
 
         # Reduce n_iter for faster training with focus on regularization
@@ -326,7 +390,7 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
             n_jobs=search_n_jobs,
             random_state=42
         )
-        random_search.fit(X_train_val, y_train_val)
+        random_search.fit(X_train_val, y_train_val, **fit_params)
 
         # Evaluate on test set
         test_pred = random_search.predict(X_test)
@@ -402,7 +466,7 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
 
     # Retrain best model on full train+val set for final model
     logger.info("Retraining best model on full training set...")
-    best_classifier.fit(X_train_val, y_train_val)
+    best_classifier.fit(X_train_val, y_train_val, **fit_params)
 
     # Final evaluation on test set
     final_test_pred = best_classifier.predict(X_test)
@@ -441,6 +505,18 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
         }
     }
 
+    stats["sample_weighted"] = sample_weight is not None
+    if buckets is not None and strata is not None:
+        test_buckets = [buckets[i] for i in idx_test]
+        by_bucket, weighted = _bucket_metrics(y_test, final_test_pred, test_buckets, strata)
+        stats["test_by_nnc_bucket"] = by_bucket
+        stats["test_corpus_weighted"] = weighted
+        logger.info(f"Holdout test set weighted to the corpus NNC mix: F1={weighted['f1']:.3f}, "
+                    f"Precision={weighted['precision']:.3f}, Recall={weighted['recall']:.3f}")
+        for bucket, m in by_bucket.items():
+            logger.info(f"  {bucket:7s} n={m['n']:5d} positives={m['positives']:5d} "
+                        f"P={m['precision']:.3f} R={m['recall']:.3f} F1={m['f1']:.3f}")
+
     # Log comparison between CV and test performance
     logger.info(f"\n{'=' * 60}")
     logger.info(f"Final Model Performance Summary for {best_classifier_name}:")
@@ -469,7 +545,11 @@ def save_classifier(classifier, mod_abbreviation: str, topic: str,
     # Save the classifier directly (compatible with existing classification pipeline)
     joblib.dump(classifier, model_path)
     if test_mode:
-        logger.info(f"Saved model to {model_path}, skipping upload because in test mode.")
+        stats_path = os.path.join(training_data_dir, f"{mod_abbreviation}_{topic_formatted}_stats.json")
+        with open(stats_path, "w") as stats_file:
+            json.dump(stats, stats_file, indent=2, default=str)
+        logger.info(f"Saved model to {model_path} and its stats to {stats_path}, "
+                    f"skipping upload because in test mode.")
     else:
         upload_ml_model("biocuration_topic_classification", mod_abbreviation=mod_abbreviation, topic=topic,
                         data_novelty=data_novelty, data_context=data_context,
@@ -596,7 +676,22 @@ def parse_arguments():
                         help="Outlier detection method (default: isolation_forest)")
     parser.add_argument("--outlier_contamination", type=float, default=0.1,
                         help="Expected proportion of outliers (default: 0.1)")
+    # SCRUM-6482: rebalance the training set to the corpus mix of the NNC buckets
+    parser.add_argument("--nnc_strata_csv", type=str, default=None,
+                        help="Per-paper NNC buckets written by scripts/wb_nnc_training_bias.py --papers-csv. "
+                             "Adds per-bucket and corpus-weighted holdout metrics; needed by --rebalance.")
+    parser.add_argument("--rebalance", type=str, default="none", choices=REBALANCE_MODES,
+                        help="'subsample': drop papers from over-represented NNC buckets until the training "
+                             "mix matches the corpus; 'weight': keep every paper, weighted by corpus share / "
+                             "training share of its bucket (equivalent to repeating papers, without leaking "
+                             "repeats across the train/test split or CV folds). Default: none")
+    parser.add_argument("--rebalance_seed", type=int, default=42,
+                        help="Random seed for --rebalance subsample (default: 42)")
     args = parser.parse_args()
+    if args.rebalance != "none" and not args.nnc_strata_csv:
+        parser.error("--rebalance needs --nnc_strata_csv")
+    if args.remove_outliers and args.nnc_strata_csv:
+        parser.error("--remove_outliers cannot be combined with --nnc_strata_csv")
     # SCRUM-5697. Resolve the per-MOD default only when the caller stated
     # nothing, so -C remains an override rather than a suggestion.
     if args.data_context is None:
@@ -689,7 +784,8 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
-def train_and_save_model(args, training_data_dir, training_set, abc_curies=None):
+def train_and_save_model(args, training_data_dir, training_set, abc_curies=None,
+                         strata: Optional[Strata] = None, rebalance_info: Optional[dict] = None):
     if args.test_mode:
         logger.info("Running in test mode. Model will be saved locally and not uploaded to ABC.")
     # ABC precomputed embeddings + hashed BoW are the standard training recipe now
@@ -713,7 +809,11 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None)
         use_abc_embeddings=True,
         abc_curies=abc_curies,
         mod_abbreviation=args.mod_train,
-        embedding_profile=args.embedding_profile)
+        embedding_profile=args.embedding_profile,
+        strata=strata,
+        rebalance=getattr(args, "rebalance", "none"))
+    if rebalance_info:
+        stats["rebalance"] = rebalance_info
     logger.info(f"Best classifier stats: {str(stats)}")
     # Tag the model (via the ml_model embedding_* columns) so the classifier
     # fetches ABC embeddings for it and rebuilds the identical embedding+BoW
@@ -744,8 +844,35 @@ def train_mode(args):
     abc_curies = get_filtered_training_curies(args, training_set)
     if args.skip_training:
         upload_pre_existing_model(args, training_set, training_data_dir)
-    else:
-        train_and_save_model(args, training_data_dir, training_set, abc_curies=abc_curies)
+        return
+    strata, rebalance_info = None, None
+    if args.nnc_strata_csv:
+        abc_curies, strata, rebalance_info = rebalance_training_curies(args, abc_curies)
+    train_and_save_model(args, training_data_dir, training_set, abc_curies=abc_curies,
+                         strata=strata, rebalance_info=rebalance_info)
+
+
+def rebalance_training_curies(args, abc_curies):
+    """Load the NNC strata for the topic and, for --rebalance subsample, subsample
+    the training curies to the corpus mix (SCRUM-6482). The corpus mix counts the
+    papers from the --filter_date_before year on, like the training set. Returns
+    (curies, strata, stats entry describing the before/after bucket counts)."""
+    year_from = int(args.filter_date_before[:4]) if args.filter_date_before else None
+    strata = load_strata(args.nnc_strata_csv, args.datatype_train, year_from=year_from)
+    before = bucket_counts(abc_curies, strata)
+    logger.info("Corpus NNC mix: " + ", ".join(
+        f"{b} {100 * strata.corpus_mix[b]:.1f}%" for b in scored_buckets(strata.corpus_mix)))
+    logger.info(f"Training set by NNC bucket: {format_counts(before)}")
+    if args.rebalance == "subsample":
+        abc_curies = subsample(abc_curies, strata, seed=args.rebalance_seed)
+        logger.info(f"Subsampled to the corpus mix (seed {args.rebalance_seed}): "
+                    f"{format_counts(bucket_counts(abc_curies, strata))}")
+    info = {"mode": args.rebalance, "nnc_strata_csv": os.path.basename(args.nnc_strata_csv),
+            "corpus_mix": {b: round(v, 4) for b, v in strata.corpus_mix.items()},
+            "bucket_counts_before": before, "bucket_counts_after": bucket_counts(abc_curies, strata)}
+    if args.rebalance == "subsample":
+        info["seed"] = args.rebalance_seed
+    return abc_curies, strata, info
 
 
 def main():
