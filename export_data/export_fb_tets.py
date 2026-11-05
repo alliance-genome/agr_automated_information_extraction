@@ -73,7 +73,7 @@ def get_data(table_name: str):
         query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
                       FROM topic_entity_tag tet, cross_reference cr, tag_source s
                         WHERE tet.date_created >= '{sql_date}'
-                             AND s.tag_source_id = tet.tag_source_id
+                             AND s.id = tet.tag_source_id
                              AND cr.reference_id = tet.reference_id
                              AND cr.curie_prefix = 'PMID'
                              AND s.source_method = 'abc_document_classifier'
