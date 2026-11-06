@@ -35,11 +35,10 @@ from utils.slack_utils import send_slack_notification, format_skipped_jobs_html
 
 logger = logging.getLogger(__name__)
 
-# SCRUM-6669 / SCRUM-6670: the FB "no genetic data" model (job and ml_model topic ATP:0000207)
-# writes a "genetic data" (ATP:0000402) topic tag for every paper, so the TET validation rules
-# apply to it: negated for a paper it calls positive ("no genetic data"), non-negated with
-# confidence level NEG for one it calls negative -- the convention the generic path uses for
-# every other negated model. It used to write a manual_indexing_tag for every paper.
+# SCRUM-6669: the FB "no genetic data" model (job and ml_model topic ATP:0000207) writes a
+# negated "genetic data" (ATP:0000402) topic tag for a paper it calls positive, so the TET
+# validation rules apply to it. It used to write a manual_indexing_tag for every paper; papers
+# it calls negative now get nothing.
 FB_NO_GENETIC_DATA_TOPIC = "ATP:0000207"
 GENETIC_DATA_TOPIC = "ATP:0000402"
 
@@ -457,7 +456,7 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
                 confidence_level=confidence_level, tet_source_id=tet_source_id,
                 model_meta_data=model_meta_data)
         elif fb_no_genetic_data:
-            # Before the generic branch, which would tag the job topic (ATP:0000207), not ATP:0000402
+            # Before the generic branch: the model is negated, which would tag every paper
             result = send_no_genetic_data_tag(
                 reference_curie=reference_curie, mod_abbr=mod_abbr, species=species,
                 classification=classification, conf_score=conf_score,
@@ -485,29 +484,29 @@ def send_classification_results(files_loaded, classifications, conf_scores, vali
 
 def send_no_genetic_data_tag(reference_curie, mod_abbr, species, classification, conf_score,
                              confidence_level, tet_source_id, model_meta_data):
-    """Report an FB "no genetic data" classification (SCRUM-6669, SCRUM-6670).
+    """Report an FB "no genetic data" classification (SCRUM-6669).
 
-    Every paper gets a "genetic data" topic tag carrying the model's confidence, which is the
-    probability of "no genetic data": negated for a positive call ("this paper has no genetic
-    data"), non-negated with confidence level NEG for a negative call ("has genetic data"). For a
-    positive call with a confidence of at least FB_NO_GENETIC_DATA_TBD_THRESHOLD the paper also gets
-    the "manual indexing status TBD" workflow tag (SCRUM-6203), unless it already has a manual
-    indexing status. Returns whether the job can be marked a success.
+    A positive call ("this paper has no genetic data") is a negated "genetic data" topic tag
+    carrying the model's confidence; a negative call writes nothing. With a confidence of at
+    least FB_NO_GENETIC_DATA_TBD_THRESHOLD the paper also gets the "manual indexing status TBD"
+    workflow tag (SCRUM-6203), unless it already has a manual indexing status.
+    Returns whether the job can be marked a success.
     """
-    no_genetic_data = classification > 0
+    if classification == 0:
+        return True
     # The model's species (ml_model.species) wins; a model without one gets the MOD's default
     # taxon, so the tag always has a species (the weekly FB export selects tags by species)
     species = species or (get_cached_mod_species_map() or {}).get(mod_abbr)
     result = send_classification_tag_to_abc(
         reference_curie, species, GENETIC_DATA_TOPIC,
-        negated=no_genetic_data,
+        negated=True,
         data_novelty=model_meta_data['data_novelty'],
         data_context=model_meta_data.get('data_context'),
         confidence_score=conf_score,
         confidence_level=confidence_level,
         tet_source_id=tet_source_id,
         ml_model_id=model_meta_data['ml_model_id'])
-    if result and no_genetic_data and conf_score is not None and conf_score >= FB_NO_GENETIC_DATA_TBD_THRESHOLD:
+    if result and conf_score is not None and conf_score >= FB_NO_GENETIC_DATA_TBD_THRESHOLD:
         current_manual_indexing_status = get_current_workflow_status(
             reference_curie, mod_abbr, MANUAL_INDEXING_PROCESS)
         if current_manual_indexing_status is None:

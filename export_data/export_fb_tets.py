@@ -75,6 +75,7 @@ def get_data():
                          AND cr.reference_id = tet.reference_id
                          AND cr.curie_prefix = 'PMID'
                          AND s.source_method = 'abc_document_classifier'
+                         AND (tet.topic != 'ATP:0000402' OR tet.negated)
                          AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
                          AND tet.validation_by_professional_biocurator IS DISTINCT FROM 'validated_wrong'
                          order by tet.date_created desc;"""
@@ -98,7 +99,7 @@ def dump_tet():
                    "ATP:0000013": 'new_transg',
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
-                   "ATP:0000402": 'nocur',  # SCRUM-6669/6670: "genetic data" tags from the no genetic data model
+                   "ATP:0000402": 'nocur',  # SCRUM-6669: negated "genetic data" tags
                    "ATP:0000005": 'gene'}
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
@@ -132,7 +133,7 @@ def dump_tet():
             conf_level = conversions[row[2]]
         if row[1] not in atp_to_dept:
             atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
-        # Partition on conf_level: NEG tags (e.g. "has genetic data" calls, SCRUM-6670) go in the negative pot
+        # Partition on conf_level: NEG tags go in the negative pot
         if conf_level != 'neg':
             pos += (
                 f"{row[0].strftime('%y%m%d')}\t\t"

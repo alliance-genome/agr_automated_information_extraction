@@ -1,5 +1,5 @@
-"""SCRUM-6669 / SCRUM-6670: the weekly FB export reports the "no genetic data" model's "genetic data"
-(ATP:0000402) tags as nocur: a positive call in the positive file, a NEG call in the negative file."""
+"""SCRUM-6669: the weekly FB export reports a negated "genetic data" (ATP:0000402) tag as nocur.
+SCRUM-6670: it reads topic_entity_tag only; the old manual_indexing_tag rows are backfilled."""
 from datetime import datetime
 from unittest.mock import patch
 
@@ -27,21 +27,7 @@ def test_genetic_data_tag_with_its_score_in_the_score_export():
                        "261030\t\t12345\tnocur:0.91\tcam\tnot_validated\n"}
 
 
-def test_neg_genetic_data_tag_is_a_negative_nocur_flag():
-    # SCRUM-6670: a "has genetic data" call is kept, as the old manual_indexing_tag rows under
-    # 0.5 were, and goes in the negative file
-    written = _dump(export_fb_tets, [(DATE, "ATP:0000402", "NEG", "PMID:777")])
-    assert written == {'/curation_status/textmining_negative_ABC.txt': "261030\t\t777\tnocur:neg\tcam\n"}
-
-
-def test_neg_genetic_data_tag_with_its_score_in_the_score_export():
-    # the score export keeps its own rule: only a score of 0 is negative
-    written = _dump(export_fb_tets_using_score, [(DATE, "ATP:0000402", 0.12, "PMID:777", "not_validated")])
-    assert written == {'/curation_status/textmining_positive_ABC_using_score.txt':
-                       "261030\t\t777\tnocur:0.12\tcam\tnot_validated\n"}
-
-
-def test_genetic_data_tags_of_both_polarities_are_selected():
+def test_only_negated_genetic_data_tags_are_selected():
     captured = []
 
     class _Session:
@@ -56,9 +42,8 @@ def test_genetic_data_tags_of_both_polarities_are_selected():
         with patch.object(module, "create_postgres_session", return_value=_Session()):
             module.get_data()
     assert len(captured) == 2
-    # SCRUM-6670: the source filter already limits it to classifier tags
-    assert not any("tet.negated" in query for query in captured)
-    assert all("s.source_method = 'abc_document_classifier'" in query for query in captured)
+    assert all("AND (tet.topic != 'ATP:0000402' OR tet.negated)" in query for query in captured)
+    # SCRUM-6670: no manual_indexing_tag query any more
     assert not any("manual_indexing_tag" in query for query in captured)
 
 
