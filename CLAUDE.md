@@ -70,14 +70,14 @@ The repository implements machine learning pipelines for biocuration in the Alli
    - Includes string matching and custom tokenization for biological text
 
 3. **Dataset Management** (`agr_dataset_manager/`)
-   - Downloads training data from ABC in TEI format
+   - Downloads training data from ABC as converted Markdown
    - Manages embedding matrices and document processing
    - Handles data upload/download workflows
 
 ### Key Integration Points
 
 - **ABC API Integration**: All document fetching, model storage, and result submission goes through the ABC REST API (`utils/abc_utils.py`)
-- **TEI Document Processing**: Documents are handled in TEI (Text Encoding Initiative) XML format via `utils/tei_utils.py`
+- **Document Processing**: Documents are read as the ABC's converted Markdown via `utils/md_utils.py` (TEI support was removed in SCRUM-6826; the ABC no longer holds TEI files)
 - **Authentication**: Uses Okta OAuth2 for API authentication (configured via environment variables)
 - **Embedding Models**: Primarily uses BioWordVec for biological text embeddings, with support for other models
 
@@ -98,7 +98,7 @@ Key environment variables (set in `.env`):
 - `CLASSIFIERS_PATH`: Model storage location
 
 ### Pipeline Workflow
-1. Training: Downloads TEI documents → Extracts text → Generates embeddings → Trains classifier → Uploads model to ABC
+1. Training: Downloads Markdown documents → Extracts text → Generates embeddings → Trains classifier → Uploads model to ABC
 2. Classification: Downloads documents → Fetches model from ABC → Classifies → Sends results back to ABC
 3. Entity Extraction: Downloads documents → Applies extraction models → Tags entities → Submits to ABC
 

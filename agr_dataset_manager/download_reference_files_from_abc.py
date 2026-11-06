@@ -3,12 +3,10 @@ import os
 import logging
 from utils.abc_utils import (
     download_md_files_for_references,
-    download_tei_files_for_references,
     download_main_pdf,
     get_pmids_from_reference_curies,
 )
 from utils.md_utils import convert_all_md_files_in_dir_to_txt
-from utils.tei_utils import convert_all_tei_files_in_dir_to_txt
 
 # Configure the logger
 logging.basicConfig(
@@ -49,25 +47,9 @@ def download_pdfs(output_directory, mod_abbreviation, curie_list):
         logger.error(f"Error downloading PDFs: {e}")
 
 
-def download_tei_files(output_directory, mod_abbreviation, curie_list):
-    """
-    Download TEI files for references and save them in the specified directory.
-    Download files only for the specified MOD ID and CURIE list if provided.
-    """
-    os.makedirs(output_directory, exist_ok=True)
-    logger.info(f"Downloading TEI files to {output_directory} for MOD {mod_abbreviation}...")
-
-    try:
-        download_tei_files_for_references(reference_curies=curie_list, mod_abbreviation=mod_abbreviation,
-                                          output_dir=output_directory)
-    except Exception as e:
-        logger.error(f"Error downloading TEI files: {e}")
-
-
 def download_md_files(output_directory, mod_abbreviation, curie_list):
     """
-    Download Markdown files (with TEI->MD fallback) for references and save them
-    in the specified directory.
+    Download Markdown files for references and save them in the specified directory.
     """
     os.makedirs(output_directory, exist_ok=True)
     logger.info(f"Downloading Markdown files to {output_directory} for MOD {mod_abbreviation}...")
@@ -77,20 +59,6 @@ def download_md_files(output_directory, mod_abbreviation, curie_list):
                                          output_dir=output_directory)
     except Exception as e:
         logger.error(f"Error downloading Markdown files: {e}")
-
-
-def convert_tei_to_txt(tei_directory):
-    """
-    Convert TEI files in the specified directory to text files
-    and remove the TEI files after conversion.
-    """
-    logger.info(f"Converting TEI files in {tei_directory} to text files...")
-
-    try:
-        convert_all_tei_files_in_dir_to_txt(tei_directory)
-        logger.info("TEI files converted to text successfully.")
-    except Exception as e:
-        logger.error(f"Error converting TEI files: {e}")
 
 
 def convert_md_to_txt(md_directory):
@@ -125,9 +93,9 @@ def main():
     )
     parser.add_argument(
         "--download",
-        choices=["pdf", "tei", "md", "text"],
+        choices=["pdf", "md", "text"],
         required=True,
-        help="Specify the type of file to download or save. Options: 'pdf', 'tei', 'md' (with TEI->MD fallback), or 'text' (Markdown converted to plain text)."
+        help="Specify the type of file to download or save. Options: 'pdf', 'md', or 'text' (Markdown converted to plain text)."
     )
     parser.add_argument(
         "--input-file",
@@ -156,19 +124,16 @@ def main():
     if args.download == "pdf":
         download_pdfs(output_directory, args.mod_abbreviation, curie_list)
         rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="pdf")
-    elif args.download == "tei":
-        download_tei_files(output_directory, args.mod_abbreviation, curie_list)
-        rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="tei")
     elif args.download == "md":
         download_md_files(output_directory, args.mod_abbreviation, curie_list)
         rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="md")
     elif args.download == "text":
-        # Download MD files (with TEI->MD fallback), then convert them to plain text.
+        # Download MD files, then convert them to plain text.
         download_md_files(output_directory, args.mod_abbreviation, curie_list)
         rename_files_in_dir_from_agrkb_to_pmid(curie_to_pmid_dict, output_directory, file_extension="md")
         convert_md_to_txt(output_directory)
     else:
-        logger.error("Invalid option for --download. Use 'pdf', 'tei', 'md', or 'text'.")
+        logger.error("Invalid option for --download. Use 'pdf', 'md', or 'text'.")
 
 
 if __name__ == "__main__":

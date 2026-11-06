@@ -42,7 +42,7 @@ def test_downloads_only_main_md_for_matching_mod(
             "referencefile_id": 333,
             "referencefile_mods": [{"mod_abbreviation": "MGI"}],
         },
-        # TEI file → unused when MD exists for the same MOD
+        # TEI file → ignored (no TEI support since SCRUM-6826)
         {
             "file_extension": "tei",
             "file_class": "tei",
@@ -73,11 +73,11 @@ def test_downloads_only_main_md_for_matching_mod(
 @patch("utils.abc_utils.urllib.request.urlopen")
 @patch("utils.abc_utils.urllib.request.Request")
 @patch("utils.abc_utils.get_file_from_abc_reffile_obj")
-def test_falls_back_to_tei_and_converts_when_no_main_md(
+def test_tei_only_reference_writes_no_file(
     mock_download, _req, mock_urlopen, _tok,
 ):
-    """When no main MD exists but a TEI is present, the function should
-    download the TEI bytes and convert them to MD via the shared library."""
+    """SCRUM-6826: the ABC no longer holds TEI files and the TEI->MD fallback
+    is gone, so a reference with only a TEI gets no Markdown file."""
     ref_files = [
         {
             "file_extension": "tei",
@@ -87,28 +87,20 @@ def test_falls_back_to_tei_and_converts_when_no_main_md(
         },
     ]
     mock_urlopen.return_value = _show_all_response(ref_files)
-    tei_bytes = b"<?xml version='1.0'?><TEI xmlns='http://www.tei-c.org/ns/1.0'/>"
-    mock_download.return_value = tei_bytes
 
-    with patch("agr_abc_document_parsers.convert_xml_to_markdown",
-               return_value="# Converted from TEI") as mock_convert:
-        with tempfile.TemporaryDirectory() as tmp:
-            abc_utils.download_md_files_for_references(
-                ["AGRKB:101000000000001"], tmp, "WB",
-            )
-
-            mock_convert.assert_called_once_with(tei_bytes, "tei")
-            out_path = os.path.join(tmp, "AGRKB_101000000000001.md")
-            assert os.path.exists(out_path)
-            with open(out_path, "r", encoding="utf-8") as fh:
-                assert fh.read() == "# Converted from TEI"
+    with tempfile.TemporaryDirectory() as tmp:
+        abc_utils.download_md_files_for_references(
+            ["AGRKB:101000000000001"], tmp, "WB",
+        )
+        assert mock_download.call_count == 0
+        assert os.listdir(tmp) == []
 
 
 @patch("utils.abc_utils.get_authentication_token", return_value="t")
 @patch("utils.abc_utils.urllib.request.urlopen")
 @patch("utils.abc_utils.urllib.request.Request")
 @patch("utils.abc_utils.get_file_from_abc_reffile_obj")
-def test_no_md_or_tei_writes_no_file(mock_download, _req, mock_urlopen, _tok):
+def test_no_main_md_writes_no_file(mock_download, _req, mock_urlopen, _tok):
     ref_files = [
         {
             "file_extension": "md",
@@ -322,7 +314,7 @@ def test_global_main_md_is_used_when_no_mod_scoped_md(
 ):
     """ABC stores converted_merged_main MDs globally (mod_id IS NULL,
     surfaced as mod_abbreviation: None). The downloader must select that
-    row for any requested MOD instead of falling back to TEI conversion."""
+    row for any requested MOD."""
     ref_files = [
         {
             "file_extension": "md",
@@ -330,7 +322,7 @@ def test_global_main_md_is_used_when_no_mod_scoped_md(
             "referencefile_id": 500,
             "referencefile_mods": [{"mod_abbreviation": None}],
         },
-        # A MOD-scoped TEI exists too; it must NOT be used because MD wins.
+        # A MOD-scoped TEI exists too; it is ignored.
         {
             "file_extension": "tei",
             "file_class": "tei",
@@ -384,12 +376,12 @@ def test_main_md_with_empty_referencefile_mods_is_used(
 @patch("utils.abc_utils.urllib.request.urlopen")
 @patch("utils.abc_utils.urllib.request.Request")
 @patch("utils.abc_utils.get_file_from_abc_reffile_obj")
-def test_cross_mod_main_md_preferred_over_tei(
+def test_cross_mod_main_md_is_used(
     mock_download, _req, mock_urlopen, _tok,
 ):
     """A converted_merged_main MD is the paper's full text (MOD-agnostic), so
-    even when it is scoped to a different MOD it is used directly and preferred
-    over converting a TEI fallback for the requested MOD."""
+    even when it is scoped to a different MOD it is used directly (a TEI for
+    the requested MOD is ignored)."""
     ref_files = [
         {
             "file_extension": "md",
@@ -407,17 +399,14 @@ def test_cross_mod_main_md_preferred_over_tei(
     mock_urlopen.return_value = _show_all_response(ref_files)
     mock_download.return_value = b"# md from other mod"
 
-    with patch("agr_abc_document_parsers.convert_xml_to_markdown") as mock_convert:
-        with tempfile.TemporaryDirectory() as tmp:
-            abc_utils.download_md_files_for_references(
-                ["AGRKB:1"], tmp, "FB",
-            )
-            # The cross-MOD MD is used directly; the TEI is not converted.
-            assert mock_download.call_count == 1
-            assert mock_download.call_args[0][0]["referencefile_id"] == 800
-            mock_convert.assert_not_called()
-            with open(os.path.join(tmp, "AGRKB_1.md"), "rb") as fh:
-                assert fh.read() == b"# md from other mod"
+    with tempfile.TemporaryDirectory() as tmp:
+        abc_utils.download_md_files_for_references(
+            ["AGRKB:1"], tmp, "FB",
+        )
+        assert mock_download.call_count == 1
+        assert mock_download.call_args[0][0]["referencefile_id"] == 800
+        with open(os.path.join(tmp, "AGRKB_1.md"), "rb") as fh:
+            assert fh.read() == b"# md from other mod"
 
 
 @patch("utils.abc_utils.get_authentication_token", return_value="t")
