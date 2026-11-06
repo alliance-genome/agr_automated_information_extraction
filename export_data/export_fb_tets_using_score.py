@@ -58,7 +58,7 @@ def write_to_top(file_path, text_to_add):
         file.write(text_to_add + existing_content)
 
 
-def get_data(table_name: str):
+def get_data():
     # Get the current date
     today = datetime.now()
 
@@ -68,31 +68,18 @@ def get_data(table_name: str):
     # Format the date for SQL (YYYY-MM-DD)
     sql_date = seven_days_ago.strftime('%Y-%m-%d')
     db_session = create_postgres_session(False)
-    if table_name == 'tet':
-
-        # changed query to get tet.confidence_score instead of tet.confidence_level
-        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie, tet.validation_by_professional_biocurator
-                      FROM topic_entity_tag tet, cross_reference cr, tag_source s
-                        WHERE tet.date_created >= '{sql_date}'
-                             AND s.id = tet.tag_source_id
-                             AND cr.reference_id = tet.reference_id
-                             AND cr.curie_prefix = 'PMID'
-                             AND s.source_method = 'abc_document_classifier'
-                             AND (tet.topic != 'ATP:0000402' OR tet.negated)
-                             AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
-                             AND tet.validation_by_professional_biocurator IS DISTINCT FROM 'validated_wrong'
-                             order by tet.date_created desc;"""
-        print(query)
-    else:
-        query = f"""SELECT mit.date_created, mit.curation_tag, mit.confidence_score, cr.curie, mit.validation_by_biocurator
-                      FROM manual_indexing_tag mit, cross_reference cr
-                        WHERE mit.date_created >= '{sql_date}'
-                             AND mit.reference_id = cr.reference_id
-                             AND cr.curie_prefix = 'PMID'
-                             AND mit.mod_id = 1
-                             AND mit.validation_by_biocurator IS DISTINCT FROM 'wrong'
-                             order by mit.date_created desc"""
-        print(query)
+    # changed query to get tet.confidence_score instead of tet.confidence_level
+    query = f"""SELECT tet.date_created, tet.topic, tet.confidence_score, cr.curie, tet.validation_by_professional_biocurator
+                  FROM topic_entity_tag tet, cross_reference cr, tag_source s
+                    WHERE tet.date_created >= '{sql_date}'
+                         AND s.id = tet.tag_source_id
+                         AND cr.reference_id = tet.reference_id
+                         AND cr.curie_prefix = 'PMID'
+                         AND s.source_method = 'abc_document_classifier'
+                         AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
+                         AND tet.validation_by_professional_biocurator IS DISTINCT FROM 'validated_wrong'
+                         order by tet.date_created desc;"""
+    print(query)
 
     rs = db_session.execute(text(query))
     rows = rs.fetchall()
@@ -104,45 +91,41 @@ def dump_tet():
                    "ATP:0000013": 'new_transg',
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
-                   "ATP:0000207": 'nocur',  # manual_indexing_tag rows from before SCRUM-6669
-                   "ATP:0000402": 'nocur',  # SCRUM-6669: negated "genetic data" tags
+                   "ATP:0000402": 'nocur',  # SCRUM-6669/6670: "genetic data" tags from the no genetic data model
                    }
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
                    "ATP:0000006": 'cam',
                    "ATP:0000069": 'harv',
-                   "ATP:0000207": 'cam',
                    "ATP:0000402": 'cam',
                    }
 
     pos = ""
     neg = ""
-    for table_name in ('tet', 'mi'):  # topic_entity_tag, Manual_indexing
-        rows = get_data(table_name)
-        for row in rows:
-            # do not crash on keyword error. Give message and continue.
-            if row[1] not in atp_to_flag:
-                atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
-            if row[1] not in atp_to_dept:
-                atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
-            ## put anything with a score of 0 in the negative pot, everything else goes in the positive pot
-            ## in both cases, print the confidence_score after "flag:"
-            if row[2] == 0:
-                neg += (
-                    f"{row[0].strftime('%y%m%d')}\t\t"
-                    f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{row[2]}\t"
-                    f"{atp_to_dept[row[1]]}\t"
-                    f"{row[4]}\n"
-                )
-            else:
-                pos += (
-                    f"{row[0].strftime('%y%m%d')}\t\t"
-                    f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{row[2]}\t"
-                    f"{atp_to_dept[row[1]]}\t"
-                    f"{row[4]}\n"
-                )
+    for row in get_data():
+        # do not crash on keyword error. Give message and continue.
+        if row[1] not in atp_to_flag:
+            atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
+        if row[1] not in atp_to_dept:
+            atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
+        ## put anything with a score of 0 in the negative pot, everything else goes in the positive pot
+        ## in both cases, print the confidence_score after "flag:"
+        if row[2] == 0:
+            neg += (
+                f"{row[0].strftime('%y%m%d')}\t\t"
+                f"{row[3][5:]}\t"
+                f"{atp_to_flag[row[1]]}:{row[2]}\t"
+                f"{atp_to_dept[row[1]]}\t"
+                f"{row[4]}\n"
+            )
+        else:
+            pos += (
+                f"{row[0].strftime('%y%m%d')}\t\t"
+                f"{row[3][5:]}\t"
+                f"{atp_to_flag[row[1]]}:{row[2]}\t"
+                f"{atp_to_dept[row[1]]}\t"
+                f"{row[4]}\n"
+            )
 
     if pos:
         print("Updating positive data")

@@ -1,7 +1,8 @@
 """FB "no genetic data" classification (job and model topic ATP:0000207).
 
-SCRUM-6669: a paper the model calls positive gets a negated "genetic data" (ATP:0000402) topic
-tag; a paper it calls negative gets nothing. No manual_indexing_tag is written any more.
+SCRUM-6669 / SCRUM-6670: every paper gets a "genetic data" (ATP:0000402) topic tag -- negated
+for a positive call ("no genetic data"), non-negated with confidence level NEG for a negative call.
+No manual_indexing_tag is written any more.
 SCRUM-6203: the "manual indexing status TBD" workflow tag (ATP:0000359) is only added when the
 confidence is >= 0.5 and the paper has no manual indexing status yet.
 """
@@ -44,17 +45,24 @@ def test_positive_call_is_a_negated_genetic_data_tag():
     assert kwargs["ml_model_id"] == 60
 
 
-def test_negative_call_writes_nothing_and_completes_the_job():
-    # the model is negated, so the generic path would have tagged this paper too
-    _, m_tet, m_wft, m_success = _run(conf_scores=[0.3], classifications=[0])
-    assert m_tet.call_count == 0
+def test_negative_call_is_a_non_negated_genetic_data_tag_with_level_neg():
+    # SCRUM-6670: the paper is kept, as the old manual_indexing_tag did, with the model's
+    # probability of "no genetic data" as its score; no TBD workflow tag
+    curies, m_tet, m_wft, m_success = _run(conf_scores=[0.3], classifications=[0])
+    assert m_tet.call_count == 1
+    args, kwargs = m_tet.call_args
+    assert args == (curies[0], "NCBITaxon:7214", "ATP:0000402")
+    assert kwargs["negated"] is False
+    assert kwargs["confidence_score"] == 0.3
+    assert kwargs["confidence_level"] == "NEG"
+    assert kwargs["ml_model_id"] == 60
     assert m_wft.call_count == 0
     assert m_success.call_count == 1
 
 
 def test_tbd_tag_only_for_confidence_at_or_above_half():
     curies, m_tet, m_wft, _ = _run(conf_scores=[0.9, 0.3], classifications=[1, 0])
-    assert m_tet.call_count == 1
+    assert m_tet.call_count == 2
     assert m_wft.call_count == 1
     _, kwargs = m_wft.call_args
     assert kwargs["reference_curie"] == curies[0]
@@ -91,3 +99,10 @@ def test_model_without_a_species_gets_the_mod_default_taxon():
     curies, m_tet, _, _ = _run(conf_scores=[0.9], classifications=[1], species=None)
     args, _ = m_tet.call_args
     assert args == (curies[0], "NCBITaxon:7227", "ATP:0000402")
+
+
+def test_failed_negative_tag_write_leaves_the_job_open():
+    _, m_tet, m_wft, m_success = _run(conf_scores=[0.2], classifications=[0], tag_result=False)
+    assert m_tet.call_count == 1
+    assert m_wft.call_count == 0
+    assert m_success.call_count == 0
