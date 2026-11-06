@@ -7,7 +7,6 @@ ENV PYTHONUNBUFFERED=1
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 WORKDIR /usr/src/app
 ADD ./requirements.txt .
-ADD ./requirements_nodeps.txt .
 ADD utils/abc_utils.py .
 ADD agr_document_classifier/agr_document_classification_pipeline.py .
 ADD agr_document_classifier/agr_document_classifier_classify.py .
@@ -46,7 +45,6 @@ RUN apt-get -y install git-lfs wget
 RUN apt-get update && apt-get install --no-install-recommends --yes build-essential git cron subversion
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
-RUN pip install --no-cache-dir --no-deps -r requirements_nodeps.txt
 RUN python3 -c "import nltk; nltk.download('stopwords'); nltk.download('punkt'); nltk.download('punkt_tab')"
 RUN git lfs install --force
 RUN git clone https://huggingface.co/cgrivaz/FlyBaseGeneAbstractClassifier.git

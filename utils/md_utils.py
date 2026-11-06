@@ -16,7 +16,7 @@ from agr_abc_document_parsers import (
 logger = logging.getLogger(__name__)
 
 
-# Entity-token regex + filter ported from utils/tei_utils.py for the
+# Entity-token regex + filter ported from the old utils/tei_utils.py (removed in SCRUM-6826) for the
 # "include_attributes" allele-extraction path. We mine the entire MD
 # (including references) for letter+digit identifiers that look like
 # biological entity names — replicates the spirit of the old TEI
@@ -85,7 +85,7 @@ def _discover_supplement_paths(main_path: str) -> list[str]:
 class AllianceMarkdown:
     """Wrapper around an ABC-format Markdown document.
 
-    Provides the same surface as ``AllianceTEI`` (``load_from_file``,
+    Provides the same surface as the old ``AllianceTEI`` (``load_from_file``,
     ``get_title``, ``get_abstract``, ``get_fulltext``, ``get_sentences``)
     so it can be used as a drop-in replacement for downstream pipelines
     that previously consumed TEI.

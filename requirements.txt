@@ -23,7 +23,6 @@ fasttext==0.9.3
 filelock==3.17.0
 fsspec==2025.2.0
 gensim==4.3.2
-# grobid-client: see requirements_nodeps.txt (SCRUM-6826)
 h11==0.16.0
 httpcore==1.0.9
 httpx==0.28.1
