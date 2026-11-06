@@ -1,0 +1,10 @@
+# Installed with `pip install --no-deps -r requirements_nodeps.txt` (Dockerfiles and CI), after
+# requirements.txt.
+#
+# grobid-client 0.8.8 (the latest release) pins httpx==0.23.0, which in turn pins httpcore 0.15,
+# h11 < 0.13 and anyio 3 -- all with critical advisories (SCRUM-6826). We only use its TEI model
+# classes in utils/tei_utils.py, never its HTTP client, so it is installed without its
+# dependencies and runs against the httpx/h11/anyio in requirements.txt. Its other dependencies
+# (attrs, python-dateutil, beautifulsoup4, lxml) are pinned there. tests/utils/test_tei_utils.py
+# guards the parsing.
+grobid-client==0.8.8

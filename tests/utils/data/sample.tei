@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<TEI xmlns="http://www.tei-c.org/ns/1.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <teiHeader xml:lang="en">
+    <fileDesc>
+      <titleStmt>
+        <title level="a" type="main">Wingless signalling in the Drosophila wing disc</title>
+      </titleStmt>
+      <publicationStmt><publisher/><availability status="unknown"><licence/></availability></publicationStmt>
+      <sourceDesc>
+        <biblStruct>
+          <analytic>
+            <author><persName><forename type="first">Ada</forename><surname>Lovelace</surname></persName></author>
+            <title level="a" type="main">Wingless signalling in the Drosophila wing disc</title>
+          </analytic>
+          <monogr><imprint><date type="published" when="2024"/></imprint></monogr>
+        </biblStruct>
+      </sourceDesc>
+    </fileDesc>
+    <profileDesc>
+      <abstract>
+        <div><p>We studied wg mutants in the wing disc.</p></div>
+      </abstract>
+    </profileDesc>
+  </teiHeader>
+  <text xml:lang="en">
+    <body>
+      <div><head>Introduction</head><p>Wingless (wg) patterns the wing.</p></div>
+      <div><head>Results</head><p>Loss of wg reduced the wing margin.</p></div>
+    </body>
+  </text>
+</TEI>
