@@ -160,8 +160,9 @@ class TestDefaultDataContextForMod:
     the ABC. ATP:0000325 was deprecated and every MOD moved off it in one cutover.
     """
 
-    def test_wb_topic_tags_take_the_root_term(self):
-        assert abc_utils.default_data_context_for_mod("WB") == "ATP:0000323"
+    def test_wb_topic_tags_take_experimental_data(self):
+        # Kimberly Van Auken on SCRUM-6815 (2026-11-10): WB matches ZFIN
+        assert abc_utils.default_data_context_for_mod("WB") == "ATP:0000405"
 
     def test_wb_entities_are_experimentally_studied_entities(self):
         assert abc_utils.default_data_context_for_mod("WB", has_entity=True) == "ATP:0000406"

@@ -19,6 +19,7 @@ from argparse import Namespace
 
 from agr_document_classifier.antibody_rules import build_regexes, match_antibody_spans
 from utils.abc_utils import (
+    default_data_context_for_mod,
     download_md_files_for_references,
     get_cached_mod_id_from_abbreviation,
     get_tet_source_id,
@@ -50,13 +51,13 @@ SOURCE_DESCRIPTION = (
 JOB_LABEL = "antibody_string_matching_job"
 WB_SPECIES = "NCBITaxon:6239"
 DATA_NOVELTY = "ATP:0000335"  # parent term, per design spec D2
-# SCRUM-5697. This is a classifier: it decides whether a paper is about antibody
-# production/use and emits a topic tag with no entity. Per Ceri Van Slyke on
-# SCRUM-5697 (2026-09-01), WB topic tags take the root term -- a string match on
-# an antibody name establishes that the name appears, not that the antibody was
-# the subject of an experiment. The backfill gives this source's existing tags
-# the same value, so the two agree and check_for_duplicate_tags keeps working.
-DATA_CONTEXT = "ATP:0000323"  # data context (root)
+# SCRUM-5697 / SCRUM-6815. This is a classifier: it decides whether a paper is
+# about antibody production/use and emits a topic tag with no entity, so it takes
+# WB's topic-tag value from DATA_CONTEXT_DEFAULTS (ATP:0000405 since Kimberly Van
+# Auken's answer on SCRUM-6815, 2026-11-10; the ATP:0000323 root before). The
+# backfill gives this source's existing tags the same value, so the two agree and
+# check_for_duplicate_tags keeps working.
+DATA_CONTEXT = default_data_context_for_mod("WB")
 
 DATA_DIR = "/data/agr_document_classifier"
 TO_CLASSIFY_DIR = f"{DATA_DIR}/to_classify_antibody"
