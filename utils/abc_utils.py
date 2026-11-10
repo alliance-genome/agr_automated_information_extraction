@@ -205,17 +205,17 @@ def _read_http_error_body(exc: HTTPError) -> str:
 #     +-- ATP:0000404 nomenclature error
 # ATP:0000325 "experimentally studied data", the old default, was deprecated with
 # no parent; every MOD moved off it in one cutover (SCRUM-6815).
-DATA_CONTEXT_ROOT = "ATP:0000323"
 DATA_CONTEXT_EXPERIMENTAL_DATA = "ATP:0000405"
 DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY = "ATP:0000406"
 
-# (topic-only tag, tag with an entity) per MOD. WB topic tags take the root and
-# its entities are experimentally studied (Ceri Van Slyke, SCRUM-5697); FB asked
-# for experimental data on everything; ZFIN for experimentally studied entities.
+# (topic-only tag, tag with an entity) per MOD. FB asked for experimental data
+# on everything; ZFIN and WB for experimental data on topic tags and
+# experimentally studied entities on entity tags (WB topic tags used the
+# ATP:0000323 root until Kimberly Van Auken's answer on SCRUM-6815, 2026-11-10).
 # The same table as DATA_CONTEXT_DEFAULTS in the ABC (topic_entity_tag_crud), which
 # the backfill applied.
 DATA_CONTEXT_DEFAULTS = {
-    "WB": (DATA_CONTEXT_ROOT, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
+    "WB": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
     "FB": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTAL_DATA),
     "ZFIN": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
 }

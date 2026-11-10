@@ -563,13 +563,13 @@ def parse_arguments():
     # The terms are a hierarchy (see DATA_CONTEXT_DEFAULTS in utils/abc_utils).
     # Left as None here and resolved per MOD after parsing: the rule is not
     # universal. Every model this trainer uploads is a topic classifier, so it
-    # takes the MOD's topic-tag value -- the ATP:0000323 root for WB (Ceri Van
-    # Slyke, SCRUM-5697), ATP:0000405 experimental data for the others since
-    # ATP:0000325 was deprecated (SCRUM-6815). An explicit -C still wins.
+    # takes the MOD's topic-tag value -- ATP:0000405 experimental data for every
+    # MOD since ATP:0000325 was deprecated (SCRUM-6815; WB used the ATP:0000323
+    # root before). An explicit -C still wins.
     parser.add_argument("-C", "--data_context", type=str, required=False, default=None,
                         help="Data context term for the tags this model creates. "
-                             "Defaults per MOD: 'ATP:0000323' for WB topic "
-                             "classifiers, 'ATP:0000405' otherwise")
+                             "Defaults to the MOD's topic-tag value, "
+                             "'ATP:0000405' for every MOD")
     parser.add_argument("-a", "--alternative_species", type=str,
                         help="Use a non standard mod species taxon. Must include 'taxon:'",
                         required=False)
