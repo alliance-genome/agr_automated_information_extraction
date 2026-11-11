@@ -207,39 +207,43 @@ def _read_http_error_body(exc: HTTPError) -> str:
         return ""
 
 
-# SCRUM-5697. data_context terms. The hierarchy is
+# SCRUM-5697 / SCRUM-6815. data_context terms. Since the 2026-10-30 ATP release
+# the hierarchy is
 #     ATP:0000323 data context
 #     |-- ATP:0000324 mentioned data -> ATP:0000360 background information
-#     |                                ATP:0000325 experimentally studied data
-#     +-- ATP:0000326 marker data    -> ATP:0000328 expression marker
-#                                       ATP:0000327 genetic marker
+#     |                                ATP:0000405 experimental data
+#     |                                  |-- ATP:0000406 experimentally studied entity
+#     |                                  +-- ATP:0000409 supporting experimental entity
+#     +-- ATP:0000404 nomenclature error
+# ATP:0000325 "experimentally studied data", the old default, was deprecated with
+# no parent; every MOD moved off it in one cutover (SCRUM-6815).
 DATA_CONTEXT_ROOT = "ATP:0000323"
-DATA_CONTEXT_EXPERIMENTALLY_STUDIED = "ATP:0000325"
+DATA_CONTEXT_EXPERIMENTAL_DATA = "ATP:0000405"
+DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY = "ATP:0000406"
 
-# MODs whose topic tags take the root term. WormBase only: Ceri Van Slyke on
-# SCRUM-5697 (2026-09-01) split WB by what the tag is -- "For WB entities are
-# always experimentally studied ATP:0000325 ... Topic tags should get the
-# 'ATP:0000323 data context' value". FlyBase asked for ATP:0000325 on all of
-# theirs and the remaining MODs take the same blanket default, so WB is the only
-# exception rather than the rule.
-TOPIC_TAG_ROOT_TERM_MODS = frozenset({"WB"})
+# (topic-only tag, tag with an entity) per MOD. WB topic tags take the root and
+# its entities are experimentally studied (Ceri Van Slyke, SCRUM-5697); FB asked
+# for experimental data on everything; ZFIN for experimentally studied entities.
+# The same table as DATA_CONTEXT_DEFAULTS in the ABC (topic_entity_tag_crud), which
+# the backfill applied.
+DATA_CONTEXT_DEFAULTS = {
+    "WB": (DATA_CONTEXT_ROOT, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
+    "FB": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTAL_DATA),
+    "ZFIN": (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTALLY_STUDIED_ENTITY),
+}
+DATA_CONTEXT_DEFAULT_OTHER_MODS = (DATA_CONTEXT_EXPERIMENTAL_DATA, DATA_CONTEXT_EXPERIMENTAL_DATA)
 
 
-def default_data_context_for_mod(mod_abbreviation):
-    """The data_context a topic-tag-producing model should carry for this MOD.
+def default_data_context_for_mod(mod_abbreviation, has_entity=False):
+    """The data_context for this MOD's tags, from DATA_CONTEXT_DEFAULTS.
 
     Getting it wrong is not cosmetic: check_for_duplicate_tags on the ABC filters
-    on every field of the payload, so a model whose data_context disagrees with
-    what the backfill wrote for that MOD turns every re-sent tag into a new row
-    instead of a benign 409.
-
-    An unresolved MOD falls back to the experimentally-studied term, which is
-    what the ABC stores when a client sends nothing -- assuming WB's term would
-    be a guess.
+    on every field of the payload, so a value that disagrees with what the
+    backfill wrote for that MOD turns every re-sent tag into a new row instead of
+    a benign 409. An unresolved MOD gets the same fallback as the ABC.
     """
-    if mod_abbreviation in TOPIC_TAG_ROOT_TERM_MODS:
-        return DATA_CONTEXT_ROOT
-    return DATA_CONTEXT_EXPERIMENTALLY_STUDIED
+    topic_only, with_entity = DATA_CONTEXT_DEFAULTS.get(mod_abbreviation or "", DATA_CONTEXT_DEFAULT_OTHER_MODS)
+    return with_entity if has_entity else topic_only
 
 
 def send_classification_tag_to_abc(reference_curie: str, species: str, topic: str, negated: bool,
@@ -777,35 +781,6 @@ def download_bib_data_for_references(reference_curies: List[str], output_dir: st
             logger.info(f"Error occurred for accessing/retrieving bib data from {bib_url}: error={e}")
 
 
-def download_tei_files_for_references(reference_curies: List[str], output_dir: str, mod_abbreviation):
-    logger.info("Started downloading TEI files")
-    token = get_authentication_token()
-    headers = generate_headers(token)
-    for reference_curie in reference_curies:
-        all_reffiles_for_pap_api = f'{blue_api_base_url}/reference/referencefile/show_all/{reference_curie}'
-        request = urllib.request.Request(url=all_reffiles_for_pap_api, headers=headers)
-        request.add_header("Content-type", "application/json")
-        request.add_header("Accept", "application/json")
-        try:
-            with urllib.request.urlopen(request) as response:
-                resp = response.read().decode("utf8")
-                resp_obj = json.loads(resp)
-                for ref_file in resp_obj:
-                    if ref_file["file_extension"] == "tei" and ref_file["file_class"] == "tei" and any(
-                            ref_file_mod["mod_abbreviation"] == mod_abbreviation for ref_file_mod in
-                            ref_file["referencefile_mods"]):
-                        file_content = get_file_from_abc_reffile_obj(ref_file)
-                        if file_content:
-                            filename = os.path.join(output_dir, reference_curie.replace(":", "_") + ".tei")
-                            with open(filename, "wb") as out_file:
-                                out_file.write(file_content)
-                        else:
-                            logger.error(f"No TEI file found for {reference_curie}")
-        except HTTPError as e:
-            logger.error(e)
-    logger.info("Finished downloading TEI files")
-
-
 def request_conversion_for_reference(reference_curie: str,
                                      poll_interval_seconds: float = 15.0,
                                      timeout_seconds: float = 1200.0,
@@ -885,10 +860,7 @@ def download_md_files_for_references(reference_curies: List[str], output_dir: st
 
     1. ``file_class == "converted_merged_main"``, ``file_extension == "md"``
        — fetched directly.
-    2. ``file_class == "tei"``, ``file_extension == "tei"`` — fetched and
-       converted in-process via
-       :func:`agr_abc_document_parsers.convert_xml_to_markdown`.
-    3. (Only when ``request_conversion`` is True) trigger server-side
+    2. (Only when ``request_conversion`` is True) trigger server-side
        conversion via
        ``GET /reference/referencefile/conversion_request/{curie}``, poll
        until the job terminates, then re-fetch the resulting MD row from
@@ -904,9 +876,9 @@ def download_md_files_for_references(reference_curies: List[str], output_dir: st
     ``<curie>.supp_<N>.md`` (supplements).
     """
     logger.info(
-        "Started downloading Markdown files (with TEI->MD fallback%s%s)",
-        ", server-side conversion fallback" if request_conversion else "",
-        ", supplements included" if include_supplements else "",
+        "Started downloading Markdown files%s%s",
+        " (server-side conversion fallback)" if request_conversion else "",
+        " (supplements included)" if include_supplements else "",
     )
     os.makedirs(output_dir, exist_ok=True)
     for reference_curie in reference_curies:
@@ -915,7 +887,7 @@ def download_md_files_for_references(reference_curies: List[str], output_dir: st
         )
 
         if not main_written and request_conversion:
-            logger.info(f"No MD/TEI for {reference_curie}; requesting on-demand conversion")
+            logger.info(f"No MD for {reference_curie}; requesting on-demand conversion")
             conv_status = request_conversion_for_reference(
                 reference_curie, wait_for_supplements=include_supplements,
             )
@@ -934,7 +906,7 @@ def download_md_files_for_references(reference_curies: List[str], output_dir: st
                 )
 
         if not main_written:
-            logger.warning(f"No main MD or TEI file available for {reference_curie}")
+            logger.warning(f"No main MD file available for {reference_curie}")
             continue
 
         if include_supplements:
@@ -976,8 +948,7 @@ def _reffile_matches_mod(rf: dict, mod_abbreviation: str) -> bool:
     A referencefile row is in scope when it is either mod-scoped to
     ``mod_abbreviation`` or stored as a global (mod-less) file. ABC stores
     ``converted_merged_main`` MDs globally (``mod_id IS NULL``, surfaced by the
-    API as ``mod_abbreviation = None``); TEIs are mod-scoped. Both must be
-    selectable here.
+    API as ``mod_abbreviation = None``); both must be selectable here.
     """
     mods = rf.get("referencefile_mods") or []
     if not mods:
@@ -989,12 +960,10 @@ def _reffile_matches_mod(rf: dict, mod_abbreviation: str) -> bool:
 
 
 def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviation: str) -> bool:
-    """Try to write a ``<curie>.md`` file, preferring an existing main MD row
-    and falling back to in-process TEI->MD conversion. Returns True iff a file
-    was written.
+    """Try to write a ``<curie>.md`` file from the reference's main MD row.
+    Returns True iff a file was written. (The ABC no longer holds TEI files, so
+    there is no TEI->MD fallback any more, SCRUM-6826.)
     """
-    from agr_abc_document_parsers import convert_xml_to_markdown
-
     resp_obj = _show_all_for_reference(reference_curie)
     if resp_obj is None:
         return False
@@ -1011,7 +980,7 @@ def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviatio
     # Most are stored globally (mod_id NULL), but the weekly conversion cron
     # scopes some to a specific MOD. Prefer an MD scoped to this MOD or stored
     # globally, but fall back to any converted MD so a cron-scoped MD for a
-    # different MOD is still used instead of being reported as "no MD/TEI".
+    # different MOD is still used instead of being reported as "no MD".
     md_ref_file = next(
         (rf for rf in md_candidates if _reffile_matches_mod(rf, mod_abbreviation)),
         None,
@@ -1025,29 +994,7 @@ def _try_download_main_md(reference_curie: str, output_dir: str, mod_abbreviatio
                 out_file.write(content)
             return True
         logger.error(f"Main MD entry exists but download returned no bytes for {reference_curie}")
-
-    tei_ref_file = next(
-        (rf for rf in resp_obj
-         if rf.get("file_extension") == "tei"
-         and rf.get("file_class") == "tei"
-         and _reffile_matches_mod(rf, mod_abbreviation)),
-        None,
-    )
-    if tei_ref_file is None:
-        return False
-
-    tei_bytes = get_file_from_abc_reffile_obj(tei_ref_file)
-    if not tei_bytes:
-        logger.error(f"TEI download returned no bytes for {reference_curie}")
-        return False
-    try:
-        md_text = convert_xml_to_markdown(tei_bytes, "tei")
-    except Exception as e:
-        logger.error(f"Failed to convert TEI to MD for {reference_curie}: {e}")
-        return False
-    with open(out_path, "w", encoding="utf-8") as out_file:
-        out_file.write(md_text)
-    return True
+    return False
 
 
 def _download_main_md_supplements(reference_curie: str, output_dir: str, mod_abbreviation: str) -> None:

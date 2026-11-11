@@ -58,7 +58,7 @@ def write_to_top(file_path, text_to_add):
         file.write(text_to_add + existing_content)
 
 
-def get_data(table_name: str):
+def get_data():
     # Get the current date
     today = datetime.now()
 
@@ -68,30 +68,18 @@ def get_data(table_name: str):
     # Format the date for SQL (YYYY-MM-DD)
     sql_date = seven_days_ago.strftime('%Y-%m-%d')
     db_session = create_postgres_session(False)
-    if table_name == 'tet':
-
-        query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
-                      FROM topic_entity_tag tet, cross_reference cr, tag_source s
-                        WHERE tet.date_created >= '{sql_date}'
-                             AND s.tag_source_id = tet.tag_source_id
-                             AND cr.reference_id = tet.reference_id
-                             AND cr.curie_prefix = 'PMID'
-                             AND s.source_method = 'abc_document_classifier'
-                             AND (tet.topic != 'ATP:0000402' OR tet.negated)
-                             AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
-                             AND tet.validation_by_professional_biocurator IS DISTINCT FROM 'validated_wrong'
-                             order by tet.date_created desc;"""
-        print(query)
-    else:
-        query = f"""SELECT mit.date_created, mit.curation_tag, mit.confidence_score, cr.curie
-                      FROM manual_indexing_tag mit, cross_reference cr
-                        WHERE mit.date_created >= '{sql_date}'
-                             AND mit.reference_id = cr.reference_id
-                             AND cr.curie_prefix = 'PMID'
-                             AND mit.mod_id = 1
-                             AND mit.validation_by_biocurator IS DISTINCT FROM 'wrong'
-                             order by mit.date_created desc"""
-        print(query)
+    query = f"""SELECT tet.date_created, tet.topic, tet.confidence_level, cr.curie
+                  FROM topic_entity_tag tet, cross_reference cr, tag_source s
+                    WHERE tet.date_created >= '{sql_date}'
+                         AND s.id = tet.tag_source_id
+                         AND cr.reference_id = tet.reference_id
+                         AND cr.curie_prefix = 'PMID'
+                         AND s.source_method = 'abc_document_classifier'
+                         AND (tet.topic != 'ATP:0000402' OR tet.negated)
+                         AND tet.species in ('NCBITaxon:7227', 'NCBITaxon:7214')
+                         AND tet.validation_by_professional_biocurator IS DISTINCT FROM 'validated_wrong'
+                         order by tet.date_created desc;"""
+    print(query)
 
     rs = db_session.execute(text(query))
     rows = rs.fetchall()
@@ -111,60 +99,55 @@ def dump_tet():
                    "ATP:0000013": 'new_transg',
                    "ATP:0000006": 'new_al',
                    "ATP:0000069": 'phys_int',
-                   "ATP:0000207": 'nocur',  # manual_indexing_tag rows from before SCRUM-6669
                    "ATP:0000402": 'nocur',  # SCRUM-6669: negated "genetic data" tags
                    "ATP:0000005": 'gene'}
     atp_to_dept = {"ATP:0000152": 'dis',
                    "ATP:0000013": 'cam',
                    "ATP:0000006": 'cam',
                    "ATP:0000069": 'harv',
-                   "ATP:0000207": 'cam',
                    "ATP:0000402": 'cam',
                    "ATP:0000005": 'cam'}
 
     pos = ""
     neg = ""
-    for table_name in ('tet', 'mi'):  # topic_entity_tag, Manual_indexing
-        rows = get_data(table_name)
-        for row in rows:
-            conf_level = 'low'
-            # do not crash on keyword error. Give message and continue.
-            if row[1] not in atp_to_flag:
-                atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
-            if row[2] not in conversions:
-                # Using guessed score levels until told otherwise
-                # taken from method get_confidence_level in classifier
-                if type(row[2]) == float:
-                    ## add loop to set confidence level to neg for manual_indexing_tag results where mit.confidence_score = 0 so that they can be put in the negative pot
-                    if row[2] < 0.5:
-                        conf_level = "neg"
-                    elif row[2] < 0.75:
-                        conf_level = "low"
-                    elif row[2] < 0.9:
-                        conf_level = "medium"
-                    else:
-                        conf_level = "high"
+    for row in get_data():
+        conf_level = 'low'
+        # do not crash on keyword error. Give message and continue.
+        if row[1] not in atp_to_flag:
+            atp_to_flag[row[1]] = f'UNKNOWN_FLAG_{row[1]}'
+        if row[2] not in conversions:
+            # Using guessed score levels until told otherwise
+            # taken from method get_confidence_level in classifier
+            if type(row[2]) == float:
+                if row[2] < 0.5:
+                    conf_level = "neg"
+                elif row[2] < 0.75:
+                    conf_level = "low"
+                elif row[2] < 0.9:
+                    conf_level = "medium"
                 else:
-                    conf_level = f'UNKNOWN_LEVEL_{row[2]}'
+                    conf_level = "high"
             else:
-                conf_level = conversions[row[2]]
-            if row[1] not in atp_to_dept:
-                atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
-            ## use conf_level rather than row[2] to partition data into positive/negative pots so that negative manual_indexing_tag results go in the negative pot
-            if conf_level != 'neg':
-                pos += (
-                    f"{row[0].strftime('%y%m%d')}\t\t"
-                    f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{conf_level}\t"
-                    f"{atp_to_dept[row[1]]}\n"
-                )
-            else:
-                neg += (
-                    f"{row[0].strftime('%y%m%d')}\t\t"
-                    f"{row[3][5:]}\t"
-                    f"{atp_to_flag[row[1]]}:{conf_level}\t"
-                    f"{atp_to_dept[row[1]]}\n"
-                )
+                conf_level = f'UNKNOWN_LEVEL_{row[2]}'
+        else:
+            conf_level = conversions[row[2]]
+        if row[1] not in atp_to_dept:
+            atp_to_dept[row[1]] = f'UNKNOWN_ATP_{row[1]}'
+        # Partition on conf_level: NEG tags go in the negative pot
+        if conf_level != 'neg':
+            pos += (
+                f"{row[0].strftime('%y%m%d')}\t\t"
+                f"{row[3][5:]}\t"
+                f"{atp_to_flag[row[1]]}:{conf_level}\t"
+                f"{atp_to_dept[row[1]]}\n"
+            )
+        else:
+            neg += (
+                f"{row[0].strftime('%y%m%d')}\t\t"
+                f"{row[3][5:]}\t"
+                f"{atp_to_flag[row[1]]}:{conf_level}\t"
+                f"{atp_to_dept[row[1]]}\n"
+            )
 
     if pos:
         print("Updating positive data")
