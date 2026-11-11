@@ -68,6 +68,13 @@ training AS (
 SELECT r.curie, nnc.bucket, training.cls, substring(r.date_published from '^[0-9]{4}')
 FROM nnc FULL JOIN training ON training.reference_id = nnc.reference_id
 JOIN reference r ON r.id = coalesce(nnc.reference_id, training.reference_id)
+WHERE NOT %(classified_only)s
+   OR (r.category = 'Research_Article'
+       AND EXISTS (SELECT 1 FROM reference_mod_referencetype rmr
+                   JOIN mod_referencetype mrt ON mrt.id = rmr.mod_referencetype_id
+                   JOIN referencetype rt ON rt.id = mrt.referencetype_id
+                   JOIN mod m2 ON m2.id = mrt.mod_id
+                   WHERE rmr.reference_id = r.id AND m2.abbreviation = %(mod)s AND rt.label = 'Experimental'))
 """
 
 _SQL_DATASET = """
@@ -157,9 +164,10 @@ def subsample_size(stats: List[BucketStats]) -> Tuple[int, Dict[str, int]]:
     return sum(per_bucket.values()), per_bucket
 
 
-def fetch_papers(connection, mod: str, topic: str, source_method: str,
-                 version: Optional[int]) -> Tuple[Optional[Tuple[int, int]], List[Paper]]:
-    params = {"mod": mod, "topic": topic, "source_method": source_method, "version": version}
+def fetch_papers(connection, mod: str, topic: str, source_method: str, version: Optional[int],
+                 classified_only: bool = True) -> Tuple[Optional[Tuple[int, int]], List[Paper]]:
+    params = {"mod": mod, "topic": topic, "source_method": source_method, "version": version,
+              "classified_only": classified_only}
     with connection.cursor() as cursor:
         cursor.execute(_SQL_DATASET, params)
         dataset = cursor.fetchone()
@@ -205,6 +213,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--date-from", default="2005-01-01",
                         help="count papers published in or after this year (YYYY or YYYY-MM-DD; '' for all)")
     parser.add_argument("--papers-csv", help="also write every paper (curie, topic, bucket, classification, year)")
+    parser.add_argument("--all-papers", action="store_true",
+                        help="count every paper; by default only the papers the ABC sends to classification "
+                             "(research articles of reference type Experimental for the MOD) are counted")
     parser.add_argument("--log-level", default="INFO")
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level, format="%(asctime)s %(levelname)s %(message)s")
@@ -223,7 +234,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             writer = csv.writer(papers_file)
             writer.writerow(["reference_curie", "topic", "nnc_bucket", "classification", "year"])
         for topic, source_method in topics:
-            dataset, papers = fetch_papers(connection, args.mod, topic, source_method, args.dataset_version)
+            dataset, papers = fetch_papers(connection, args.mod, topic, source_method, args.dataset_version,
+                                           classified_only=not args.all_papers)
             logger.info(f"{topic}: {len(papers):,} papers ({source_method}, dataset {dataset})")
             print(format_table(topic, dataset, bucket_stats(papers, year_from)))
             print()

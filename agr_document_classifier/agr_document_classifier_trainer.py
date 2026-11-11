@@ -7,6 +7,8 @@ import os.path
 import re
 import shutil
 import sys
+from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional, Union
 
@@ -15,7 +17,8 @@ import joblib
 import numpy as np
 import scipy.sparse as sp
 from gensim.models import KeyedVectors
-from sklearn.metrics import make_scorer, precision_score, recall_score, f1_score
+from sklearn.base import clone
+from sklearn.metrics import average_precision_score, make_scorer, precision_score, recall_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold, train_test_split
 from sklearn.ensemble import IsolationForest
 from sklearn.covariance import EllipticEnvelope
@@ -23,9 +26,11 @@ from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
 from agr_document_classifier.models import POSSIBLE_CLASSIFIERS
-from agr_document_classifier.rebalance import (REBALANCE_MODES, Strata, bucket_counts, corpus_weights,
-                                               format_counts, load_strata, scored_buckets, subsample)
-from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_date,
+from agr_document_classifier.rebalance import (POSITIVE_MIX_MODES, REBALANCE_MODES, Strata, balance_classes,
+                                               bucket_counts, corpus_weights, format_counts,
+                                               load_bucket_prevalence, load_strata, prevalence_weights,
+                                               scored_buckets, subsample)
+from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_metadata,
                              get_reference_embedding, get_reference_abstract_text,
                              default_data_context_for_mod)
 from utils.abc_embeddings import (abc_embedding_recipe, get_profile, get_profile_by_name,
@@ -96,10 +101,59 @@ def detect_and_remove_outliers(X, y, method='isolation_forest', contamination=0.
     return X_clean, y_clean, outlier_mask
 
 
+def _cache_path(cache_dir: str, reference_curie: str, profile_name: str, version: int) -> str:
+    return os.path.join(cache_dir, f"{profile_name}_v{version}", reference_curie.replace(":", "_") + ".npz")
+
+
+def _read_cached_features(path: str):
+    """``(pooled_or_None, text)`` from a cache file, or None if it is missing or unreadable."""
+    try:
+        with np.load(path, allow_pickle=False) as data:
+            pooled = data["pooled"]
+            return (pooled if pooled.size else None), str(data["text"])
+    except (OSError, KeyError, ValueError):
+        return None
+
+
+def _write_cached_features(path: str, result) -> None:
+    pooled, text = result
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp_path = f"{path}.{os.getpid()}.tmp.npz"
+    np.savez_compressed(tmp_path, pooled=np.zeros(0, dtype=np.float32) if pooled is None else pooled,
+                        text=np.array(text or ""))
+    os.replace(tmp_path, path)
+
+
+def _fetch_reference_features(reference_curie: str, mod_abbreviation: str, profile_name: str, version: int,
+                              text_from_reference: bool, cache_dir: Optional[str] = None):
+    """``(pooled_or_None, text)`` for one reference, or None when unavailable.
+
+    With ``cache_dir`` (SCRUM-6482), a reference fetched once is stored there, keyed by profile name and
+    version, and later runs read it from disk instead of downloading the parquet again. Unavailable
+    references are not cached, so they are retried on the next run. A re-embedding under the same profile
+    version is not noticed: delete the cache directory to refresh it."""
+    path = _cache_path(cache_dir, reference_curie, profile_name, version) if cache_dir else None
+    if path and os.path.exists(path):
+        cached = _read_cached_features(path)
+        if cached is not None:
+            return cached
+    if text_from_reference:
+        # BoW-only profile: no parquet, the reference record is the source.
+        text_only = get_reference_abstract_text(reference_curie)
+        result = None if text_only is None else (None, text_only)
+    else:
+        result = get_reference_embedding(reference_curie, mod_abbreviation,
+                                         profile_name=profile_name, version=version)
+    if result is not None and path:
+        _write_cached_features(path, result)
+    return result
+
+
 def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_bow: bool = False,
                                   profile_name: str = ABC_EMBEDDING_PROFILE,
                                   version: int = ABC_EMBEDDING_VERSION,
-                                  kept_curies: Optional[list] = None):
+                                  kept_curies: Optional[list] = None,
+                                  cache_dir: Optional[str] = None, workers: int = 1):
     """Build ``(X, y)`` for the requested feature profile.
 
     ``abc_curies`` maps ``"positive"``/``"negative"`` to reference-curie lists. The
@@ -119,7 +173,10 @@ def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_b
     references with no downloadable MD file.
 
     When ``kept_curies`` is given, the curie of every row of ``X`` is appended to
-    it, in row order (SCRUM-6482: per-row NNC bucket and weight)."""
+    it, in row order (SCRUM-6482: per-row NNC bucket and weight).
+
+    ``cache_dir`` keeps each fetched reference on disk for later runs and ``workers`` fetches that many
+    references in parallel (SCRUM-6482); the row order does not depend on either."""
     rows = []
     y = []
     missing = 0
@@ -130,30 +187,33 @@ def _build_abc_embedding_features(abc_curies: dict, mod_abbreviation: str, use_b
     use_embedding_block = profile.use_embedding if profile else True
     text_from_reference = (profile is not None
                            and profile.text_source == TEXT_SOURCE_REFERENCE_ABSTRACT)
-    for label in ["positive", "negative"]:
-        for reference_curie in abc_curies.get(label, []):
-            if text_from_reference:
-                # BoW-only profile: no parquet, the reference record is the source.
-                text_only = get_reference_abstract_text(reference_curie)
-                result = None if text_only is None else (None, text_only)
-            else:
-                result = get_reference_embedding(reference_curie, mod_abbreviation,
-                                                 profile_name=profile_name, version=version)
-            if result is None:
-                missing += 1
-                continue
-            pooled, text = result
-            if use_bow:
-                blocks = []
-                if use_embedding_block:
-                    blocks.append(sp.csr_matrix(pooled.reshape(1, -1)))
-                blocks.append(bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""]))
-                rows.append(sp.hstack(blocks, format="csr") if len(blocks) > 1 else blocks[0])
-            else:
-                rows.append(pooled)
-            y.append(int(label == "positive"))
-            if kept_curies is not None:
-                kept_curies.append(reference_curie)
+    labelled = [(label, curie) for label in ["positive", "negative"] for curie in abc_curies.get(label, [])]
+
+    def fetch(item):
+        return _fetch_reference_features(item[1], mod_abbreviation, profile_name, version,
+                                         text_from_reference, cache_dir)
+
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(fetch, labelled))
+    else:
+        results = [fetch(item) for item in labelled]
+    for (label, reference_curie), result in zip(labelled, results):
+        if result is None:
+            missing += 1
+            continue
+        pooled, text = result
+        if use_bow:
+            blocks = []
+            if use_embedding_block:
+                blocks.append(sp.csr_matrix(pooled.reshape(1, -1)))
+            blocks.append(bow_vectorizer.transform([remove_stopwords(text).lower() if text else ""]))
+            rows.append(sp.hstack(blocks, format="csr") if len(blocks) > 1 else blocks[0])
+        else:
+            rows.append(pooled)
+        y.append(int(label == "positive"))
+        if kept_curies is not None:
+            kept_curies.append(reference_curie)
     if not rows:
         raise ValueError("No ABC embeddings could be retrieved for the training set; "
                          "cannot train. Check that the references have been embedded.")
@@ -173,10 +233,17 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
                      use_abc_embeddings: bool = False, abc_curies: dict = None,
                      mod_abbreviation: str = None,
                      embedding_profile: str = ABC_EMBEDDING_PROFILE,
-                     strata: Optional[Strata] = None, rebalance: str = "none"):
+                     strata: Optional[Strata] = None, rebalance: str = "none",
+                     embedding_cache_dir: Optional[str] = None, embedding_fetch_workers: int = 1,
+                     positive_share: Optional[dict] = None, fixed_model: Optional[tuple] = None):
     """``strata`` (SCRUM-6482) gives each training reference its NNC bucket: the
     holdout test set is then also scored per bucket and weighted to the corpus
-    mix, and ``rebalance="weight"`` trains with those corpus weights."""
+    mix, and ``rebalance="bucket_mix"`` trains with those corpus weights.
+    ``positive_share`` ({bucket: estimated share of positives in the corpus}) adds a
+    holdout score weighted to the estimated corpus (bucket mix and positives within
+    each bucket) and a decision threshold tuned for it, and
+    ``rebalance="bucket_and_positive_mix"`` trains with those weights
+    (``..._balanced``: the same, with both classes scaled to equal total weight)."""
     if use_abc_embeddings:
         # New path (SCRUM-5781): use the ABC's precomputed OpenAI embeddings instead
         # of loading BioWordVec and pooling word vectors over downloaded Markdown.
@@ -197,24 +264,36 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
         kept_curies: list = []
         X, y = _build_abc_embedding_features(abc_curies or {}, mod_abbreviation, use_bow=True,
                                              profile_name=profile.name, version=profile.version,
-                                             kept_curies=kept_curies)
+                                             kept_curies=kept_curies, cache_dir=embedding_cache_dir,
+                                             workers=embedding_fetch_workers)
         logger.info("Finished loading training set.")
         logger.info(f"Dataset size: {str(len(y))}")
         y = np.array(y)
         buckets = [strata.bucket(curie) for curie in kept_curies] if strata else None
         sample_weight = None
-        if rebalance == "weight":
+        if rebalance == "bucket_mix":
             if strata is None:
-                raise ValueError("rebalance='weight' needs the NNC strata")
+                raise ValueError("rebalance='bucket_mix' needs the NNC strata")
             sample_weight = corpus_weights(buckets, strata)
             weight_of = dict(zip(buckets, sample_weight))
             logger.info("Training with corpus-mix sample weights: "
                         + ", ".join(f"{b} {weight_of[b]:.2f}" for b in scored_buckets(buckets)))
+        elif rebalance in POSITIVE_MIX_MODES:
+            if strata is None or not positive_share:
+                raise ValueError(f"rebalance='{rebalance}' needs the NNC strata and the per-bucket prevalence")
+            sample_weight = prevalence_weights(buckets, y, strata, positive_share)
+            if rebalance == "bucket_and_positive_mix_balanced":
+                sample_weight = balance_classes(sample_weight, y)
+            weight_of = dict(zip(zip(buckets, y.tolist()), sample_weight))
+            logger.info("Training with estimated-corpus sample weights (+/-): " + ", ".join(
+                f"{b} {weight_of.get((b, 1), float('nan')):.2f}/{weight_of.get((b, 0), float('nan')):.2f}"
+                for b in scored_buckets(buckets)))
         # The matrix is wide+sparse (embedding + BoW), so the same SVC/MLP skip and
         # gradient-booster concurrency cap the BioWordVec BoW path uses apply here.
         return _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
                                      use_bow_features=True, use_lsh_features=False,
-                                     sample_weight=sample_weight, buckets=buckets, strata=strata)
+                                     sample_weight=sample_weight, buckets=buckets, strata=strata,
+                                     positive_share=positive_share, fixed_model=fixed_model)
 
     embedding_model = load_embedding_model(model_path=embedding_model_path)
 
@@ -273,6 +352,82 @@ def _supports_sample_weight(model) -> bool:
     return "sample_weight" in inspect.signature(model.fit).parameters
 
 
+def _decision_scores(model, X):
+    """Positive-class scores: predict_proba where the model has it, else the decision function."""
+    if hasattr(model, "predict_proba"):
+        try:
+            return model.predict_proba(X)[:, 1]
+        except AttributeError:  # e.g. SGDClassifier with a loss that has no probabilities
+            pass
+    return model.decision_function(X)
+
+
+def _best_threshold(y_true, scores, weights):
+    """The score cut-off with the best weighted F1 (ties: the higher cut-off)."""
+    y_true, scores = np.asarray(y_true), np.asarray(scores)
+    candidates = np.unique(np.quantile(scores, np.linspace(0, 1, 501)))
+    best_threshold, best_f1 = float(candidates[0]), -1.0
+    for threshold in candidates:
+        f1 = f1_score(y_true, (scores >= threshold).astype(int), sample_weight=weights, zero_division=0)
+        if f1 >= best_f1:
+            best_threshold, best_f1 = float(threshold), f1
+    return best_threshold, best_f1
+
+
+def _fit_fold(model, X, y, fit_weight, train_rows, val_rows):
+    model = clone(model)
+    if fit_weight is not None:
+        model.fit(X[train_rows], y[train_rows], sample_weight=fit_weight[train_rows])
+    else:
+        model.fit(X[train_rows], y[train_rows])
+    return val_rows, _decision_scores(model, X[val_rows]), model.predict(X[val_rows])
+
+
+def _cross_validate(model, X, y, fit_weight, folds, n_jobs):
+    """Out-of-fold scores of every row, and precision/recall/F1 (at the model's own cut-off) of every fold,
+    with the folds fitted in parallel worker processes (SCRUM-6482)."""
+    results = joblib.Parallel(n_jobs=n_jobs)(
+        joblib.delayed(_fit_fold)(model, X, y, fit_weight, train_rows, val_rows)
+        for train_rows, val_rows in folds.split(X, y))
+    oof = np.zeros(len(y), dtype=float)
+    per_fold = []
+    for val_rows, scores, preds in results:
+        oof[val_rows] = scores
+        per_fold.append({"precision": precision_score(y[val_rows], preds, zero_division=0),
+                         "recall": recall_score(y[val_rows], preds, zero_division=0),
+                         "f1": f1_score(y[val_rows], preds, zero_division=0)})
+    return oof, per_fold
+
+
+def _tuned_threshold_stats(best_classifier, X_train_val, y_train_val, X_test, y_test, idx_train_val, idx_test,
+                           fit_weight, buckets, strata, positive_share, folds, oof=None, n_jobs=1):
+    """Decision threshold for the estimated corpus (SCRUM-6482), and the holdout scored with it.
+
+    The cut-off is chosen on out-of-fold scores of the train+val rows (the selected model's settings refit per
+    fold, with the training weights), weighted to the estimated corpus, so the holdout is not used to choose it.
+    Also gives the holdout's precision-recall area (average precision) weighted the same way, which compares
+    models independently of any cut-off. ``oof``: out-of-fold scores already computed for these folds."""
+    if oof is None:
+        oof, _ = _cross_validate(best_classifier, X_train_val, y_train_val, fit_weight, folds, n_jobs)
+    train_weights = prevalence_weights([buckets[i] for i in idx_train_val], y_train_val, strata, positive_share)
+    threshold, oof_f1 = _best_threshold(y_train_val, oof, train_weights)
+    test_weights = prevalence_weights([buckets[i] for i in idx_test], y_test, strata, positive_share)
+    test_scores = _decision_scores(best_classifier, X_test)
+    tuned_pred = (test_scores >= threshold).astype(int)
+    return {"threshold": round(threshold, 4), "out_of_fold_estimated_corpus_f1": round(float(oof_f1), 3),
+            "test_estimated_corpus": _weighted_metrics(y_test, tuned_pred, test_weights),
+            "test_plain": _weighted_metrics(y_test, tuned_pred, None),
+            "test_estimated_corpus_average_precision": round(float(
+                average_precision_score(y_test, test_scores, sample_weight=test_weights)), 3)}
+
+
+def _weighted_metrics(y_true, y_pred, weights):
+    return {
+        "precision": round(float(precision_score(y_true, y_pred, sample_weight=weights, zero_division=0)), 3),
+        "recall": round(float(recall_score(y_true, y_pred, sample_weight=weights, zero_division=0)), 3),
+        "f1": round(float(f1_score(y_true, y_pred, sample_weight=weights, zero_division=0)), 3)}
+
+
 def _bucket_metrics(y_true, y_pred, buckets, strata):
     """Holdout metrics per NNC bucket, and weighted to the corpus mix (SCRUM-6482):
     the labeled pool over-represents NNC-HIGH, so the plain test F1 overstates
@@ -296,11 +451,14 @@ def _bucket_metrics(y_true, y_pred, buckets, strata):
 
 def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contamination,
                           use_bow_features=False, use_lsh_features=False,
-                          sample_weight=None, buckets=None, strata=None):
+                          sample_weight=None, buckets=None, strata=None, positive_share=None,
+                          fixed_model=None):
     """``sample_weight`` (per row) trains every candidate with those weights;
     candidates whose ``fit`` takes no weights are skipped. ``buckets`` (per row
     NNC bucket) with ``strata`` adds per-bucket and corpus-weighted holdout
-    metrics to the stats (SCRUM-6482)."""
+    metrics to the stats (SCRUM-6482). ``fixed_model`` (name, settings) skips the
+    model search and trains that one model type with those settings, e.g. to compare
+    rebalancing modes on the same model (SCRUM-6482)."""
     if remove_outliers and (sample_weight is not None or buckets is not None):
         raise ValueError("--remove_outliers cannot be combined with NNC rebalancing: it drops rows")
 
@@ -343,10 +501,27 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
         'f1': make_scorer(f1_score, zero_division=0)
     }
 
-    logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
-    logger.info("Using penalized scoring: weighted_score = 0.7 * test_f1 + 0.3 * cv_f1 - penalty")
+    candidates = POSSIBLE_CLASSIFIERS
+    fold_jobs = min(5, int(os.environ.get('SEARCH_MAX_JOBS', '5')))
+    oof_scores = None
+    if fixed_model is not None:
+        candidates = {}
+        best_classifier_name, best_params = fixed_model
+        best_classifier = clone(POSSIBLE_CLASSIFIERS[best_classifier_name]['model']).set_params(**best_params)
+        logger.info(f"No model search: {best_classifier_name} with fixed settings {best_params}; "
+                    f"5-fold cross-validation, {fold_jobs} folds in parallel.")
+        oof_scores, per_fold = _cross_validate(best_classifier, X_train_val, y_train_val,
+                                               fit_params.get("sample_weight"), stratified_k_folds, fold_jobs)
+        summaries = (("mean", np.mean), ("std", np.std))
+        best_results = {f"{stat}_test_{metric}": [float(fn([fold[metric] for fold in per_fold]))]
+                        for metric in ("precision", "recall", "f1") for stat, fn in summaries}
+        best_index = 0
+        best_penalized_score = best_results["mean_test_f1"][0]
+    else:
+        logger.info("Starting model selection with hyperparameter optimization and cross-validation.")
+        logger.info("Using penalized scoring: weighted_score = 0.7 * test_f1 + 0.3 * cv_f1 - penalty")
 
-    for classifier_name, classifier_info in POSSIBLE_CLASSIFIERS.items():
+    for classifier_name, classifier_info in candidates.items():
         # On the high-dimensional sparse matrix produced by the BoW block, RBF-SVC
         # is slow/weak and MLPClassifier is both memory-heavy (its input-layer
         # weight matrix is n_features x hidden, ~210MB at 2**18 features, multiplied
@@ -516,6 +691,24 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
         for bucket, m in by_bucket.items():
             logger.info(f"  {bucket:7s} n={m['n']:5d} positives={m['positives']:5d} "
                         f"P={m['precision']:.3f} R={m['recall']:.3f} F1={m['f1']:.3f}")
+        if positive_share:
+            # also fix the positives within each bucket: the closest the labelled holdout gets to the corpus
+            estimated = _weighted_metrics(y_test, final_test_pred,
+                                          prevalence_weights(test_buckets, y_test, strata, positive_share))
+            stats["test_estimated_corpus_weighted"] = estimated
+            logger.info(f"Holdout test set weighted to the estimated corpus (NNC mix and positives per bucket): "
+                        f"F1={estimated['f1']:.3f}, Precision={estimated['precision']:.3f}, "
+                        f"Recall={estimated['recall']:.3f}")
+            logger.info("Tuning the decision threshold for the estimated corpus on out-of-fold scores...")
+            tuned = _tuned_threshold_stats(
+                best_classifier, X_train_val, y_train_val, X_test, y_test, idx_train_val, idx_test,
+                fit_params.get("sample_weight"), buckets, strata, positive_share, stratified_k_folds,
+                oof=oof_scores, n_jobs=fold_jobs)
+            stats["tuned_threshold"] = tuned
+            est = tuned["test_estimated_corpus"]
+            logger.info(f"Tuned threshold {tuned['threshold']}: holdout weighted to the estimated corpus "
+                        f"F1={est['f1']:.3f}, Precision={est['precision']:.3f}, Recall={est['recall']:.3f}; "
+                        f"average precision {tuned['test_estimated_corpus_average_precision']:.3f}")
 
     # Log comparison between CV and test performance
     logger.info(f"\n{'=' * 60}")
@@ -669,6 +862,12 @@ def parse_arguments():
                         help="Filter out references published before this date (YYYY-MM-DD format). "
                              "Defaults to 2005-01-01; pass an empty string to disable date filtering.")
     # Outlier detection arguments
+    parser.add_argument("--require_category", type=str, default=None,
+                        help="Train only on references of this category, e.g. Research_Article (the ABC only "
+                             "classifies research articles). Default: any category")
+    parser.add_argument("--require_mod_reference_type", type=str, default=None,
+                        help="Train only on references with this --mod_train reference type, e.g. Experimental "
+                             "(WB's classification gate). Default: any type")
     parser.add_argument("--remove_outliers", action="store_true",
                         help="Enable outlier detection and removal")
     parser.add_argument("--outlier_method", type=str, default="isolation_forest",
@@ -681,15 +880,39 @@ def parse_arguments():
                         help="Per-paper NNC buckets written by scripts/wb_nnc_training_bias.py --papers-csv. "
                              "Adds per-bucket and corpus-weighted holdout metrics; needed by --rebalance.")
     parser.add_argument("--rebalance", type=str, default="none", choices=REBALANCE_MODES,
-                        help="'subsample': drop papers from over-represented NNC buckets until the training "
-                             "mix matches the corpus; 'weight': keep every paper, weighted by corpus share / "
-                             "training share of its bucket (equivalent to repeating papers, without leaking "
-                             "repeats across the train/test split or CV folds). Default: none")
+                        help="'bucket_subsample': drop papers from over-represented NNC buckets until the "
+                             "training mix of buckets matches the corpus; 'bucket_mix': keep every paper, weighted "
+                             "by corpus share / training share of its bucket (equivalent to repeating papers, "
+                             "without leaking repeats across the train/test split or CV folds); "
+                             "'bucket_and_positive_mix': as 'bucket_mix', and within each bucket weight positives "
+                             "and negatives to the estimated share of positives in the corpus (needs "
+                             "--bucket_prevalence_tsv); 'bucket_and_positive_mix_balanced': as "
+                             "'bucket_and_positive_mix', with both classes scaled to equal total weight. "
+                             "Default: none")
+    parser.add_argument("--bucket_prevalence_tsv", type=str, default=None,
+                        help="Estimated share of positives per NNC bucket (bucket_prevalence_<model>.tsv from "
+                             "scripts/wb_llm_prevalence_estimate.py --nnc_strata_csv). Adds a holdout score "
+                             "weighted to the estimated corpus; needed by --rebalance prevalence.")
     parser.add_argument("--rebalance_seed", type=int, default=42,
-                        help="Random seed for --rebalance subsample (default: 42)")
+                        help="Random seed for --rebalance bucket_subsample (default: 42)")
+    parser.add_argument("--fixed_model", type=str, default=None, choices=sorted(POSSIBLE_CLASSIFIERS),
+                        help="Skip the model search: train only this model type, with --fixed_params "
+                             "(e.g. to compare rebalancing modes on one model). Default: search all types")
+    parser.add_argument("--fixed_params", type=str, default=None,
+                        help="JSON settings for --fixed_model, e.g. '{\"n_estimators\": 177}'")
+    parser.add_argument("--embedding_cache_dir", type=str, default=None,
+                        help="Keep each reference's fetched embedding and text in this directory (one .npz per "
+                             "reference, per profile and version) and read it from there on later runs instead "
+                             "of downloading it again. Delete the directory after a re-embedding. Default: no cache")
+    parser.add_argument("--embedding_fetch_workers", type=int, default=8,
+                        help="References to fetch from the ABC in parallel when loading embeddings (default: 8)")
     args = parser.parse_args()
     if args.rebalance != "none" and not args.nnc_strata_csv:
         parser.error("--rebalance needs --nnc_strata_csv")
+    if args.bucket_prevalence_tsv and not args.nnc_strata_csv:
+        parser.error("--bucket_prevalence_tsv needs --nnc_strata_csv")
+    if args.rebalance in POSITIVE_MIX_MODES and not args.bucket_prevalence_tsv:
+        parser.error(f"--rebalance {args.rebalance} needs --bucket_prevalence_tsv")
     if args.remove_outliers and args.nnc_strata_csv:
         parser.error("--remove_outliers cannot be combined with --nnc_strata_csv")
     # SCRUM-5697. Resolve the per-MOD default only when the caller stated
@@ -699,49 +922,84 @@ def parse_arguments():
     return args
 
 
+def _cached_reference_metadata(reference_curie: str, cache_dir: Optional[str]):
+    """get_reference_metadata, kept as one JSON file per reference under ``cache_dir/reference_metadata`` when
+    ``cache_dir`` is given (SCRUM-6482: the same training set is filtered once per rebalancing mode). A failed
+    lookup is not cached. Delete the directory to pick up changed dates, categories or reference types."""
+    path = os.path.join(cache_dir, "reference_metadata", reference_curie.replace(":", "_") + ".json") \
+        if cache_dir else None
+    if path and os.path.exists(path):
+        try:
+            with open(path) as f:
+                meta = json.load(f)
+            meta["mod_reference_types"] = [tuple(pair) for pair in meta.get("mod_reference_types") or []]
+            return meta
+        except (OSError, ValueError):
+            pass
+    meta = get_reference_metadata(reference_curie)
+    if meta is not None and path:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp_path = f"{path}.{os.getpid()}.tmp"
+        with open(tmp_path, "w") as f:
+            json.dump(meta, f)
+        os.replace(tmp_path, path)
+    return meta
+
+
 def get_filtered_training_curies(args, training_set):
-    """Split a training set into positive/negative reference-curie lists, applying
-    the optional ``--filter_date_before`` cutoff. Returns
-    ``{"positive": [...], "negative": [...]}``."""
+    """Split a training set into positive/negative reference-curie lists, keeping only the references that pass
+    the optional ``--filter_date_before`` cutoff and, when given, ``--require_category`` and
+    ``--require_mod_reference_type`` (the papers the ABC actually sends to classification, e.g. WB research
+    articles of reference type Experimental). Returns ``{"positive": [...], "negative": [...]}``."""
     reference_ids_positive = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
                               classification_value == "positive"]
     reference_ids_negative = [agrkbid for agrkbid, classification_value in training_set["data_training"].items() if
                               classification_value == "negative"]
+    require_category = getattr(args, "require_category", None)
+    require_type = getattr(args, "require_mod_reference_type", None)
+    if not (args.filter_date_before or require_category or require_type):
+        return {"positive": reference_ids_positive, "negative": reference_ids_negative}
 
-    # Apply date filtering if specified
+    filter_date = None
     if args.filter_date_before:
         try:
             filter_date = datetime.strptime(args.filter_date_before, "%Y-%m-%d")
         except ValueError:
             logger.error(f"Invalid date format: {args.filter_date_before}. Expected YYYY-MM-DD")
             raise
-        logger.info(f"Filtering out references published before {args.filter_date_before}")
+    logger.info(f"Filtering the training set: published on/after {args.filter_date_before or '-'}, "
+                f"category {require_category or 'any'}, {args.mod_train} reference type {require_type or 'any'}")
 
-        def _keep_on_or_after(ref_ids):
-            """Keep references published on/after filter_date. References whose
-            (possibly messy PubMed) date cannot be parsed at all are kept."""
-            kept = []
-            for ref_id in ref_ids:
-                ref_date_str = get_reference_date(ref_id)
-                ref_date = parse_reference_date(ref_date_str)
-                if ref_date is None:
-                    logger.debug(f"No parseable date for {ref_id} ('{ref_date_str}'), including it")
-                    kept.append(ref_id)
-                elif ref_date >= filter_date:
-                    kept.append(ref_id)
-                else:
-                    logger.debug(f"Filtering out {ref_id} (published {ref_date_str})")
-            return kept
+    all_ids = reference_ids_positive + reference_ids_negative
+    cache_dir = getattr(args, "embedding_cache_dir", None)
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        metadata = dict(zip(all_ids, pool.map(lambda ref_id: _cached_reference_metadata(ref_id, cache_dir),
+                                              all_ids)))
+    reasons = Counter()
 
-        filtered_positive = _keep_on_or_after(reference_ids_positive)
-        filtered_negative = _keep_on_or_after(reference_ids_negative)
-        logger.info(f"Date filtering complete. Positive: {len(reference_ids_positive)} -> "
-                    f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
-                    f"{len(filtered_negative)}")
-        reference_ids_positive = filtered_positive
-        reference_ids_negative = filtered_negative
+    def _keep(ref_id):
+        meta = metadata.get(ref_id) or {}
+        # the API returns the enum value (research_article), the DB the name (Research_Article)
+        if require_category and (meta.get("category") or "").lower() != require_category.lower():
+            reasons["category"] += 1
+            return False
+        if require_type and (args.mod_train, require_type) not in set(meta.get("mod_reference_types") or []):
+            reasons["reference type"] += 1
+            return False
+        if filter_date:
+            # References whose (possibly messy PubMed) date cannot be parsed at all are kept.
+            ref_date = parse_reference_date(meta.get("date"))
+            if ref_date is not None and ref_date < filter_date:
+                reasons["date"] += 1
+                return False
+        return True
 
-    return {"positive": reference_ids_positive, "negative": reference_ids_negative}
+    filtered_positive = [r for r in reference_ids_positive if _keep(r)]
+    filtered_negative = [r for r in reference_ids_negative if _keep(r)]
+    logger.info(f"Training set filtering complete. Positive: {len(reference_ids_positive)} -> "
+                f"{len(filtered_positive)}, Negative: {len(reference_ids_negative)} -> "
+                f"{len(filtered_negative)}; dropped by {dict(reasons)}")
+    return {"positive": filtered_positive, "negative": filtered_negative}
 
 
 def download_training_set(args, training_data_dir):
@@ -811,7 +1069,13 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None,
         mod_abbreviation=args.mod_train,
         embedding_profile=args.embedding_profile,
         strata=strata,
-        rebalance=getattr(args, "rebalance", "none"))
+        rebalance=getattr(args, "rebalance", "none"),
+        embedding_cache_dir=getattr(args, "embedding_cache_dir", None),
+        embedding_fetch_workers=getattr(args, "embedding_fetch_workers", 1),
+        positive_share=(load_bucket_prevalence(args.bucket_prevalence_tsv, args.datatype_train)
+                        if getattr(args, "bucket_prevalence_tsv", None) else None),
+        fixed_model=((args.fixed_model, json.loads(args.fixed_params or "{}"))
+                     if getattr(args, "fixed_model", None) else None))
     if rebalance_info:
         stats["rebalance"] = rebalance_info
     logger.info(f"Best classifier stats: {str(stats)}")
@@ -853,7 +1117,7 @@ def train_mode(args):
 
 
 def rebalance_training_curies(args, abc_curies):
-    """Load the NNC strata for the topic and, for --rebalance subsample, subsample
+    """Load the NNC strata for the topic and, for --rebalance bucket_subsample, subsample
     the training curies to the corpus mix (SCRUM-6482). The corpus mix counts the
     papers from the --filter_date_before year on, like the training set. Returns
     (curies, strata, stats entry describing the before/after bucket counts)."""
@@ -863,15 +1127,21 @@ def rebalance_training_curies(args, abc_curies):
     logger.info("Corpus NNC mix: " + ", ".join(
         f"{b} {100 * strata.corpus_mix[b]:.1f}%" for b in scored_buckets(strata.corpus_mix)))
     logger.info(f"Training set by NNC bucket: {format_counts(before)}")
-    if args.rebalance == "subsample":
+    if args.rebalance == "bucket_subsample":
         abc_curies = subsample(abc_curies, strata, seed=args.rebalance_seed)
         logger.info(f"Subsampled to the corpus mix (seed {args.rebalance_seed}): "
                     f"{format_counts(bucket_counts(abc_curies, strata))}")
     info = {"mode": args.rebalance, "nnc_strata_csv": os.path.basename(args.nnc_strata_csv),
             "corpus_mix": {b: round(v, 4) for b, v in strata.corpus_mix.items()},
             "bucket_counts_before": before, "bucket_counts_after": bucket_counts(abc_curies, strata)}
-    if args.rebalance == "subsample":
+    if args.rebalance == "bucket_subsample":
         info["seed"] = args.rebalance_seed
+    if args.bucket_prevalence_tsv:
+        shares = load_bucket_prevalence(args.bucket_prevalence_tsv, args.datatype_train)
+        logger.info("Estimated share of positives per NNC bucket: " + ", ".join(
+            f"{b} {100 * shares[b]:.1f}%" for b in scored_buckets(shares)))
+        info["bucket_prevalence_tsv"] = os.path.basename(args.bucket_prevalence_tsv)
+        info["estimated_positive_share"] = shares
     return abc_curies, strata, info
 
 

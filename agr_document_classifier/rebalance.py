@@ -3,11 +3,21 @@
 WB curators validate papers the in-house NNC classifier flagged HIGH far more often than the rest, so a WB
 training set over-represents NNC-HIGH papers and under-represents NNC-NEG ones (see
 scripts/wb_nnc_training_bias.py). This module brings the training set's per-bucket mix in line with the corpus,
-in one of two ways:
+in one of these ways (``--rebalance``):
 
-  - ``subsample``: drop papers from the over-represented buckets until each bucket has its corpus share. The
-    scarcest bucket relative to its share sets the size, so this costs data.
-  - ``weight``: keep every paper and weight it by corpus share / training share of its bucket.
+  - ``bucket_subsample``: drop papers from the over-represented buckets until each bucket has its corpus share.
+    The scarcest bucket relative to its share sets the size, so this costs data.
+  - ``bucket_mix``: keep every paper and weight it by corpus share / training share of its bucket. Inside each
+    bucket the positive/negative split stays as curators labelled it.
+  - ``bucket_and_positive_mix``: as ``bucket_mix``, and inside each bucket weight positives and negatives to the
+    share of positives estimated for that bucket of the corpus (the LLM reading of a random sample,
+    scripts/wb_llm_prevalence_estimate.py --nnc_strata_csv), not the share curators happened to label (e.g. the
+    NNC-NEG papers curators validated are far more often positive than NNC-NEG papers are). The training set
+    then has the corpus's (low) share of positives.
+  - ``bucket_and_positive_mix_balanced``: as ``bucket_and_positive_mix``, then all positives scaled up together
+    so both classes carry the same total weight: the positives still look like the corpus's positives and the
+    negatives like its negatives, but the model learns from a 50/50 class mix. Its decision threshold then has to
+    be set for the real share of positives (the trainer's tuned threshold).
 
 The same per-paper corpus weights also give an estimate of how a model would score on the corpus mix rather
 than on the biased labeled pool (``corpus_weights`` on a test split).
@@ -27,7 +37,9 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-REBALANCE_MODES = ("none", "subsample", "weight")
+REBALANCE_MODES = ("none", "bucket_subsample", "bucket_mix", "bucket_and_positive_mix",
+                   "bucket_and_positive_mix_balanced")
+POSITIVE_MIX_MODES = ("bucket_and_positive_mix", "bucket_and_positive_mix_balanced")
 NO_BUCKET = "no NNC"
 LABELS = ("positive", "negative")
 
@@ -110,6 +122,62 @@ def corpus_weights(buckets: Sequence[str], strata: Strata) -> np.ndarray:
         per_bucket[bucket] = (share / present_share) / (n / scored_total) if share and scored_total else 1.0
     weights = np.array([per_bucket[b] for b in buckets], dtype=float)
     return weights / weights.mean() if len(weights) else weights
+
+
+def load_bucket_prevalence(tsv_path: str, topic: str) -> Dict[str, float]:
+    """{bucket: estimated share of positives} for one topic, from the positive_share column of the TSV that
+    scripts/wb_llm_prevalence_estimate.py --nnc_strata_csv writes."""
+    shares: Dict[str, float] = {}
+    with open(tsv_path, newline="") as f:
+        for row in csv.DictReader(f, delimiter="\t"):
+            if row["topic"] == topic:
+                shares[row["bucket"]] = float(row["positive_share"])
+    if not shares:
+        raise ValueError(f"{tsv_path} has no per-bucket prevalence for {topic}")
+    return shares
+
+
+def prevalence_weights(buckets: Sequence[str], labels: Sequence[int], strata: Strata,
+                       positive_share: Dict[str, float]) -> np.ndarray:
+    """Per-row weights that give every (bucket, class) cell its estimated corpus share: the bucket's corpus share
+    times the bucket's estimated share of positives (or of negatives), over the cell's share of these rows.
+    Normalised to mean 1. A bucket with no estimate keeps the rows' own positive share in it (a bucket-only
+    weight, as ``corpus_weights``); rows in no bucket, or in a bucket the corpus lacks, get weight 1 before
+    normalisation. A bucket whose rows are all one class cannot be fixed within the bucket and is weighted as a
+    whole."""
+    labels = [int(v) for v in labels]
+    cells = Counter(zip(buckets, labels))
+    rows_in = Counter(buckets)
+    in_corpus = [b for b in rows_in if b != NO_BUCKET and strata.corpus_mix.get(b)]
+    scored_total = sum(rows_in[b] for b in in_corpus)
+    present_share = sum(strata.corpus_mix[b] for b in in_corpus)
+    per_cell: Dict[tuple, float] = {}
+    for (bucket, label), n in cells.items():
+        if bucket not in in_corpus:
+            per_cell[(bucket, label)] = 1.0
+            continue
+        bucket_target = strata.corpus_mix[bucket] / present_share
+        own_positive = cells.get((bucket, 1), 0) / rows_in[bucket]
+        share = positive_share.get(bucket, own_positive)
+        if own_positive in (0.0, 1.0):
+            share = own_positive
+        target = bucket_target * (share if label == 1 else 1 - share)
+        per_cell[(bucket, label)] = target / (n / scored_total)
+    weights = np.array([per_cell[cell] for cell in zip(buckets, labels)], dtype=float)
+    return weights / weights.mean() if len(weights) else weights
+
+
+def balance_classes(weights: Sequence[float], labels: Sequence[int]) -> np.ndarray:
+    """Scale each class's weights so both classes carry the same total weight (keeping the weights' relative
+    sizes within each class), normalised to mean 1."""
+    weights = np.asarray(weights, dtype=float)
+    labels = np.asarray(labels).astype(int)
+    out = weights.copy()
+    for label in (0, 1):
+        mask = labels == label
+        if mask.any() and weights[mask].sum() > 0:
+            out[mask] = weights[mask] / weights[mask].sum()
+    return out / out.mean() if len(out) else out
 
 
 def format_counts(counts: Dict[str, Dict[str, int]]) -> str:
