@@ -1,8 +1,31 @@
 import logging
+from collections import defaultdict
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from agr_curation_api import AGRCurationAPIClient, APIConfig
+from agr_curation_api.db_methods import DatabaseConfig
+from sqlalchemy import bindparam, create_engine, text
 
 PAGE_LIMIT = 1000
+NCBI_GENE_PREFIX = "NCBI_Gene:"
+NCBI_XREF_QUERY_CHUNK = 5000
+
+# Alliance genes carrying an NCBI_Gene cross-reference, keyed by that curie.
+# genomicentity_crossreference is the join table behind GenomicEntity.crossReferences.
+NCBI_XREF_SQL = """
+    SELECT cr.referencedcurie, be.primaryexternalid, taxon.curie
+    FROM biologicalentity be
+    JOIN gene g ON g.id = be.id
+    JOIN genomicentity_crossreference gx ON gx.genomicentity_id = be.id
+    JOIN crossreference cr ON cr.id = gx.crossreferences_id
+    JOIN ontologyterm taxon ON taxon.id = be.taxon_id
+    WHERE cr.referencedcurie IN :curies
+      AND cr.obsolete = false
+      AND be.obsolete = false
+      AND be.internal = false
+"""
+
+_ateam_engine = None
 
 # will add XB one later
 MOD_TAXON_MAPPING = {
@@ -197,3 +220,42 @@ def get_all_curated_entities(mod_abbreviation: str, entity_type_str: str, *, for
         if wbid and entity_name_curie_mappings.get("HT115"):
             entity_name_curie_mappings["HT115"] = wbid
     return all_curated_entity_names, entity_name_curie_mappings, curie_to_taxon_mappings
+
+
+def _get_ateam_engine():
+    global _ateam_engine
+    if _ateam_engine is None:
+        _ateam_engine = create_engine(DatabaseConfig().connection_string, pool_pre_ping=True)
+    return _ateam_engine
+
+
+def _query_ncbi_gene_xrefs(curies: List[str]) -> List[Tuple[str, str, str]]:
+    """Return (NCBI_Gene curie, Alliance gene curie, taxon curie) rows from the A-team DB."""
+    query = text(NCBI_XREF_SQL).bindparams(bindparam("curies", expanding=True))
+    rows: List[Tuple[str, str, str]] = []
+    with _get_ateam_engine().connect() as conn:
+        for start in range(0, len(curies), NCBI_XREF_QUERY_CHUNK):
+            chunk = curies[start:start + NCBI_XREF_QUERY_CHUNK]
+            rows.extend(tuple(row) for row in conn.execute(query, {"curies": chunk}))
+    return rows
+
+
+def get_alliance_genes_for_ncbi_gene_ids(ncbi_gene_ids: Iterable[int],
+                                         taxon_curie: Optional[str] = None) -> Dict[int, List[str]]:
+    """Map NCBI Gene IDs to Alliance gene curies via A-team NCBI_Gene cross-references.
+
+    Returns {ncbi_gene_id: [gene curies]} for the IDs that have a match, restricted to
+    ``taxon_curie`` when given. This is the only place that knows where the A-team
+    data lives; if it moves into the ABC database only this body has to change.
+    """
+    curies = sorted({f"{NCBI_GENE_PREFIX}{int(gene_id)}" for gene_id in ncbi_gene_ids})
+    if not curies:
+        return {}
+    mapping: Dict[int, List[str]] = defaultdict(list)
+    for xref_curie, gene_curie, gene_taxon in _query_ncbi_gene_xrefs(curies):
+        if taxon_curie and gene_taxon != taxon_curie:
+            continue
+        gene_id = int(xref_curie[len(NCBI_GENE_PREFIX):])
+        if gene_curie not in mapping[gene_id]:
+            mapping[gene_id].append(gene_curie)
+    return dict(mapping)

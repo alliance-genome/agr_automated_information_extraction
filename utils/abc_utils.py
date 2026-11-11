@@ -137,6 +137,7 @@ def get_tet_source_id(mod_abbreviation: str, source_method: str, source_descript
         "abc_document_classifier": "ECO:0008004",  # ML
         "abc_literature_system": "ATP:0000036",
         "abc_string_matching_antibody": "ECO:0008021",  # WB antibody string matching topic classifier
+        "abc_genbank_extraction": "ECO:0008023",  # regular expression method (GenBank/RefSeq accessions)
     }
     eco_code = eco_map.get(source_method)
     if eco_code is None:
@@ -302,7 +303,7 @@ def send_classification_tag_to_abc(reference_curie: str, species: str, topic: st
     return False
 
 
-def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None, data_context: Optional[str] = None):
+def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str, topic: str, tet_source_id: int, entity: Optional[str] = None, entity_type: Optional[str] = None, negated: bool = False, confidence_score: Optional[float] = None, confidence_level: Optional[str] = None, ml_model_id: Optional[int] = None, data_context: Optional[str] = None, note: Optional[str] = None):
     url = f'{blue_api_base_url}/topic_entity_tag/'
     try:
         token = get_authentication_token()
@@ -332,6 +333,8 @@ def send_entity_tag_to_abc(reference_curie: str, species: str, data_novelty: str
         # constraint (SCRUM-5697).
         if data_context is not None:
             payload["data_context"] = data_context
+        if note is not None:
+            payload["note"] = note
         tet_data = json.dumps(payload).encode('utf-8')
     except Exception:
         logger.exception(f"{reference_curie}: json.dumps failed; cannot send entity tag")

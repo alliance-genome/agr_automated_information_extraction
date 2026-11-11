@@ -176,3 +176,36 @@ def test_final_failure_logs_network_error(mock_request, mock_urlopen, _tok, _sle
         )
 
     assert "ConnectionError: connection refused" in caplog.text
+
+
+def _send_entity_tag(**extra):
+    return abc_utils.send_entity_tag_to_abc(
+        reference_curie="AGRKB:101000000000001",
+        species="NCBITaxon:10090",
+        data_novelty="ATP:0000335",
+        topic="ATP:0000005",
+        entity_type="ATP:0000005",
+        entity="MGI:104661",
+        tet_source_id=1,
+        **extra,
+    )
+
+
+@patch("utils.abc_utils.get_authentication_token", return_value="t")
+@patch("utils.abc_utils.urllib.request.urlopen")
+@patch("utils.abc_utils.urllib.request.Request")
+def test_entity_tag_note_is_included_when_provided(mock_request, mock_urlopen, _tok):
+    mock_urlopen.return_value.__enter__.return_value.getcode.return_value = 201
+    assert _send_entity_tag(note="GenBank/RefSeq accession: NM_013646 (main text)") is True
+    payload = _read_payload_from_request(mock_request)
+    assert payload["note"] == "GenBank/RefSeq accession: NM_013646 (main text)"
+    assert payload["entity"] == "MGI:104661"
+
+
+@patch("utils.abc_utils.get_authentication_token", return_value="t")
+@patch("utils.abc_utils.urllib.request.urlopen")
+@patch("utils.abc_utils.urllib.request.Request")
+def test_entity_tag_note_is_omitted_when_none(mock_request, mock_urlopen, _tok):
+    mock_urlopen.return_value.__enter__.return_value.getcode.return_value = 201
+    assert _send_entity_tag() is True
+    assert "note" not in _read_payload_from_request(mock_request)
