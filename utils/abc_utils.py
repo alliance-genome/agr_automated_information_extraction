@@ -106,8 +106,11 @@ def get_curie_from_reference_id(reference_id):
         logger.error(e)
 
 
-def get_reference_date(reference_id):
-    """Get the publication date of a reference."""
+def get_reference_metadata(reference_id):
+    """Publication date, category and MOD reference types of a reference, from one GET /reference call.
+
+    Returns {"date": str or None, "category": str or None, "mod_reference_types": [(mod, type), ...]},
+    or None when the reference cannot be fetched."""
     url = f'{blue_api_base_url}/reference/{reference_id}'
     token = get_authentication_token()
     headers = generate_headers(token)
@@ -116,19 +119,28 @@ def get_reference_date(reference_id):
     request.add_header("Accept", "application/json")
     try:
         with urllib.request.urlopen(request) as response:
-            resp = response.read().decode("utf8")
-            resp_obj = json.loads(resp)
-            # Try different date fields that might be available
-            if "date_published" in resp_obj and resp_obj["date_published"]:
-                return resp_obj["date_published"]
-            elif "date_published_start" in resp_obj and resp_obj["date_published_start"]:
-                return resp_obj["date_published_start"]
-            elif "year" in resp_obj and resp_obj["year"]:
-                return f"{resp_obj['year']}-01-01"  # Use January 1st if only year is available
-            return None
-    except (HTTPError, KeyError) as e:
-        logger.debug(f"Could not get date for reference {reference_id}: {e}")
+            resp_obj = json.loads(response.read().decode("utf8"))
+    except (HTTPError, KeyError, ValueError) as e:
+        logger.debug(f"Could not get reference {reference_id}: {e}")
         return None
+    # Try different date fields that might be available
+    if resp_obj.get("date_published"):
+        date = resp_obj["date_published"]
+    elif resp_obj.get("date_published_start"):
+        date = resp_obj["date_published_start"]
+    elif resp_obj.get("year"):
+        date = f"{resp_obj['year']}-01-01"  # Use January 1st if only year is available
+    else:
+        date = None
+    mod_types = [(mrt.get("mod_abbreviation"), mrt.get("reference_type"))
+                 for mrt in resp_obj.get("mod_reference_types") or []]
+    return {"date": date, "category": resp_obj.get("category"), "mod_reference_types": mod_types}
+
+
+def get_reference_date(reference_id):
+    """Get the publication date of a reference."""
+    metadata = get_reference_metadata(reference_id)
+    return metadata["date"] if metadata else None
 
 
 def get_tet_source_id(mod_abbreviation: str, source_method: str, source_description: str):
@@ -1203,6 +1215,12 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
     # uploads leave these columns NULL.
     if embedding_recipe:
         metadata.update(embedding_recipe)
+    # SCRUM-6482: the score from which the classifier calls a paper positive (unset means 0.5), and
+    # whether the tags get the score rescaled so it maps to 0.5 (the ABC's default) or the model's own.
+    if stats.get("decision_threshold") is not None:
+        metadata["decision_threshold"] = stats["decision_threshold"]
+    if stats.get("rescale_confidence") is False:
+        metadata["rescale_confidence"] = False
 
     model_dir = os.path.dirname(model_path)
     if topic is None:

@@ -189,3 +189,38 @@ class TestDefaultDataContextForMod:
         for mod in ("WB", "FB", "ZFIN", "MGI", "SGD", "RGD", "XB", None):
             for has_entity in (False, True):
                 assert abc_utils.default_data_context_for_mod(mod, has_entity) != "ATP:0000325"
+
+
+def _upload_with_stats(tmp_path, stats):
+    model_path = tmp_path / "ZFIN_ATP_0000370_classifier.joblib"
+    model_path.write_bytes(b"model-bytes")
+    resp = MagicMock(status_code=201)
+    with patch("utils.abc_utils.get_authentication_token", return_value="t"), \
+            patch("utils.abc_utils.generate_headers",
+                  return_value={"Content-Type": "application/json"}), \
+            patch("utils.abc_utils.requests.post", return_value=resp) as mock_post:
+        abc_utils.upload_ml_model(
+            task_type="biocuration_topic_classification", mod_abbreviation="ZFIN", topic="ATP:0000370",
+            model_path=str(model_path), stats=stats, file_extension="joblib", data_novelty="ATP:0000335")
+    files = mock_post.call_args.kwargs["files"]
+    return json.loads(files["model_data_file"][1].getvalue())
+
+
+def test_upload_ml_model_sends_the_decision_threshold(tmp_path):
+    """SCRUM-6482: the ABC reads the model data file, so the threshold must be in it."""
+    stats = {"model_name": "lgbm", "average_precision": 0.9, "average_recall": 0.8,
+             "average_f1": 0.85, "best_params": None, "decision_threshold": 0.87}
+    assert _upload_with_stats(tmp_path, stats)["decision_threshold"] == 0.87
+
+
+def test_upload_ml_model_leaves_out_an_unset_decision_threshold(tmp_path):
+    stats = {"model_name": "lgbm", "average_precision": 0.9, "average_recall": 0.8,
+             "average_f1": 0.85, "best_params": None, "decision_threshold": None}
+    assert "decision_threshold" not in _upload_with_stats(tmp_path, stats)
+
+
+def test_upload_ml_model_sends_rescale_confidence_only_when_off(tmp_path):
+    stats = {"model_name": "lgbm", "average_precision": 0.9, "average_recall": 0.8,
+             "average_f1": 0.85, "best_params": None, "decision_threshold": 0.87}
+    assert "rescale_confidence" not in _upload_with_stats(tmp_path, dict(stats, rescale_confidence=True))
+    assert _upload_with_stats(tmp_path, dict(stats, rescale_confidence=False))["rescale_confidence"] is False

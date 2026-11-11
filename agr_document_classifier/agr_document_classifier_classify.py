@@ -7,6 +7,7 @@ import sys
 
 import traceback
 from argparse import Namespace
+from typing import Optional
 
 import joblib
 import numpy as np
@@ -51,14 +52,18 @@ MANUAL_INDEXING_PROCESS = "ATP:0000273"
 
 # SCRUM-5764: ZFIN "molecular probe" papers -- references that only discuss the synthesis and
 # characterization of a probe -- are dropped from the ZFIN reference acquisition workflow. A
-# paper the abstract classifier calls positive with at least this confidence gets the molecular
-# probe topic tag, the "won't manually index" workflow tag and a "won't curate" curation status
-# on the whole paper, the last two carrying "outside of scope" as their curation tag.
-# Below the threshold nothing is written at all: Ceri chose to let borderline papers reach a
-# curator untouched, because wrongly dropping a curatable paper is the expensive mistake -- it
-# is never seen again -- whereas a probe paper that slips through costs a few seconds of triage.
+# paper the abstract classifier calls positive gets the molecular probe topic tag, the "won't
+# manually index" workflow tag and a "won't curate" curation status on the whole paper, the last
+# two carrying "outside of scope" as their curation tag. A negative gets nothing at all. The
+# model's ml_model.decision_threshold (0.87, SCRUM-6482) makes it call positive only confident
+# papers, and its ml_model.rescale_confidence (false) keeps the model's own score on the tag,
+# as ZFIN curators have always seen it. Ceri chose to let borderline papers reach a curator untouched, because wrongly dropping
+# a curatable paper is the expensive mistake -- it is never seen again -- whereas a probe paper
+# that slips through costs a few seconds of triage.
 ZFIN_MOLECULAR_PROBE_TOPIC = "ATP:0000370"
-ZFIN_MOLECULAR_PROBE_THRESHOLD = 0.87
+
+# Score from which a model with no ml_model.decision_threshold calls a paper positive.
+DEFAULT_DECISION_THRESHOLD = 0.5
 WONT_MANUALLY_INDEX_TAG = "ATP:0000343"
 WONT_CURATE_STATUS = "ATP:0000299"
 OUTSIDE_OF_SCOPE_CURATION_TAG = "ATP:0000209"
@@ -80,7 +85,8 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
                        embedding_model=None, classifier_model=None,
                        use_bow_features: bool = False, use_max_pooling: bool = False,
                        use_lsh_features: bool = False,
-                       include_keywords: bool = False, include_metadata: bool = False):
+                       include_keywords: bool = False, include_metadata: bool = False,
+                       decision_threshold: Optional[float] = None, rescale_confidence: bool = True):
     if embedding_model is None:
         embedding_model = load_embedding_model(model_path=embedding_model_path)
     if classifier_model is None:
@@ -124,14 +130,17 @@ def classify_documents(input_docs_dir: str, embedding_model_path: str = None, cl
         )
         return files_loaded, np.array([]), [], valid_embeddings
     X = sp.vstack(rows, format="csr") if sparse_features else np.vstack(rows)
-    classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X)
+    classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X, decision_threshold,
+                                                                       rescale_confidence)
     return files_loaded, classifications, confidence_scores, valid_embeddings
 
 
 def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifier_model, use_bow=False,
                                            embedding_cache=None,
                                            profile_name=ABC_EMBEDDING_PROFILE,
-                                           version=ABC_EMBEDDING_VERSION):
+                                           version=ABC_EMBEDDING_VERSION,
+                                           decision_threshold: Optional[float] = None,
+                                           rescale_confidence: bool = True):
     """Classify references from their profile's features (SCRUM-5781, SCRUM-5764).
 
     The profile decides the feature layout, so train and classify cannot disagree:
@@ -219,17 +228,38 @@ def classify_documents_from_abc_embeddings(reference_curies, mod_abbr, classifie
     if not ids_loaded:
         return ids_loaded, np.array([]), [], valid_embeddings
     X = sp.vstack(rows, format="csr") if use_bow else np.vstack(rows)
-    classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X)
+    classifications, confidence_scores = predict_labels_and_confidence(classifier_model, X, decision_threshold,
+                                                                       rescale_confidence)
     return ids_loaded, classifications, confidence_scores, valid_embeddings
 
 
-def predict_labels_and_confidence(classifier_model, X):
+def rescale_to_threshold(score: float, threshold: float) -> float:
+    """Map a positive-class score so that ``threshold`` becomes 0.5 (SCRUM-6482).
+
+    ``sigmoid(logit(score) - logit(threshold))``, written without logs so 0 and 1 need no
+    special case: 0 stays 0, 1 stays 1, ``threshold`` becomes exactly 0.5 and the order of
+    the scores is kept. With ``threshold`` 0.5 it returns ``score`` unchanged."""
+    above = score * (1 - threshold)
+    return float(above / (above + (1 - score) * threshold))
+
+
+def predict_labels_and_confidence(classifier_model, X, decision_threshold: Optional[float] = None,
+                                  rescale_confidence: bool = True):
     """Predict labels together with a confidence score for the positive class.
 
-    ``confidence_score`` is the probability of the positive class
+    The model's score is the probability of the positive class
     (``classifier_model.classes_[1]``). The label is derived from that score
-    (``score >= 0.5`` -> positive) instead of from ``classifier_model.predict()``
-    so the two can never disagree.
+    (``score >= decision_threshold`` -> positive) instead of from
+    ``classifier_model.predict()`` so the two can never disagree.
+
+    ``decision_threshold`` is the model's ``ml_model.decision_threshold``
+    (SCRUM-6482); None means 0.5. With ``rescale_confidence`` (the model's
+    ``ml_model.rescale_confidence``, true by default) the returned confidence is
+    the score rescaled so the threshold maps to 0.5 (``rescale_to_threshold``),
+    so a positive always has a confidence of at least 0.5 and the
+    LOW/MEDIUM/HIGH bands mean the same for every model. Without it the
+    confidence is the model's own score (ZFIN molecular probe: a borderline
+    positive reports 0.87, not 0.5).
 
     This matters for ``SVC(probability=True)``: its ``predict()`` uses the sign of
     the raw SVM margin while ``predict_proba()`` uses a separately fitted
@@ -248,8 +278,11 @@ def predict_labels_and_confidence(classifier_model, X):
         confidence_scores = [1 / (1 + np.exp(-decision_value))
                              for decision_value in classifier_model.decision_function(X)]
     negative_label, positive_label = classifier_model.classes_[0], classifier_model.classes_[1]
-    classifications = np.array([positive_label if score >= 0.5 else negative_label
+    threshold = DEFAULT_DECISION_THRESHOLD if decision_threshold is None else decision_threshold
+    classifications = np.array([positive_label if score >= threshold else negative_label
                                 for score in confidence_scores])
+    if rescale_confidence and threshold != DEFAULT_DECISION_THRESHOLD:
+        confidence_scores = [rescale_to_threshold(score, threshold) for score in confidence_scores]
     return classifications, confidence_scores
 
 
@@ -368,7 +401,9 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         embedding_profile_name, embedding_version = profile_pair_from_model(model_meta_data)
         files_loaded, classifications, conf_scores, valid_embeddings = classify_documents_from_abc_embeddings(
             list(reference_curie_job_map.keys()), mod_abbr, classifier_model, use_bow=abc_use_bow,
-            profile_name=embedding_profile_name, version=embedding_version)
+            profile_name=embedding_profile_name, version=embedding_version,
+            decision_threshold=model_meta_data.get("decision_threshold"),
+            rescale_confidence=model_meta_data.get("rescale_confidence") is not False)
     else:
         prepare_classification_directory()
         download_md_files_for_references(list(reference_curie_job_map.keys()),
@@ -401,7 +436,9 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
             use_max_pooling=use_max_pooling,
             use_lsh_features=use_lsh_features,
             include_keywords=include_keywords,
-            include_metadata=include_metadata)
+            include_metadata=include_metadata,
+            decision_threshold=model_meta_data.get("decision_threshold"),
+            rescale_confidence=model_meta_data.get("rescale_confidence") is not False)
     if test_mode:
         for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                           valid_embeddings):
@@ -526,8 +563,8 @@ def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, specie
 
     A confident positive gets three writes: the molecular probe topic tag, the "won't manually
     index" workflow tag, and a "won't curate" curation status on the whole paper -- the last two
-    tagged "outside of scope". Anything else (a negative, or a positive below the threshold) is
-    reported nowhere: no negated tags are wanted for this topic, and a borderline paper is left
+    tagged "outside of scope". A negative (with the model's 0.87 decision threshold, anything
+    less confident) is reported nowhere: no negated tags are wanted for this topic, and a borderline paper is left
     in the workflow for a curator to see.
 
     Returns whether the classification job can be marked done. Only a failed topic tag write
@@ -535,7 +572,7 @@ def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, specie
     workflow tag would hit a permanent 422 duplicate and the job would never complete. A failed
     drop write is logged and leaves the paper in the ZFIN workflow, which is the safe direction.
     """
-    if classification <= 0 or conf_score is None or conf_score < ZFIN_MOLECULAR_PROBE_THRESHOLD:
+    if classification <= 0:
         logger.debug(f"{reference_curie}: not dropped from the ZFIN acquisition workflow "
                      f"(classification: {classification}, confidence_score: {conf_score})")
         return True
