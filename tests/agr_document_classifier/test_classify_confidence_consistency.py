@@ -14,7 +14,10 @@ import numpy as np
 from sklearn.datasets import make_classification
 from sklearn.svm import SVC, LinearSVC
 
-from agr_document_classifier.agr_document_classifier_classify import predict_labels_and_confidence
+import pytest
+
+from agr_document_classifier.agr_document_classifier_classify import (predict_labels_and_confidence,
+                                                                      rescale_to_threshold)
 
 
 def _overlapping_dataset():
@@ -78,3 +81,50 @@ def test_linear_svc_decision_function_fallback_is_consistent():
     assert len(classifications) == len(confidence_scores) == len(X)
     for label, score in zip(classifications, confidence_scores):
         assert (label > 0) == (score >= 0.5)
+
+
+def test_decision_threshold_rescales_the_score_so_the_threshold_is_0_5():
+    """SCRUM-6482: ml_model.decision_threshold moves the cut-off and, by default, the
+    confidence is rescaled so a positive always has at least 0.5."""
+    X, y = _overlapping_dataset()
+    model = SVC(probability=True, random_state=42).fit(X, y)
+    _, raw_scores = predict_labels_and_confidence(model, X)
+    classifications, scores = predict_labels_and_confidence(model, X, decision_threshold=0.3)
+
+    assert scores == [rescale_to_threshold(s, 0.3) for s in raw_scores]
+    for label, raw, score in zip(classifications, raw_scores, scores):
+        assert (label > 0) == (raw >= 0.3) == (score >= 0.5)
+
+
+def test_rescale_confidence_false_keeps_the_model_score():
+    """ZFIN molecular probe: the label follows the threshold, the score stays the model's own."""
+    X, y = _overlapping_dataset()
+    model = SVC(probability=True, random_state=42).fit(X, y)
+    _, raw_scores = predict_labels_and_confidence(model, X)
+    classifications, scores = predict_labels_and_confidence(model, X, decision_threshold=0.8,
+                                                            rescale_confidence=False)
+
+    assert scores == raw_scores
+    for label, score in zip(classifications, scores):
+        assert (label > 0) == (score >= 0.8)
+
+
+@pytest.mark.parametrize("threshold", [0.1, 0.3, 0.5, 0.87])
+def test_rescale_to_threshold(threshold):
+    assert rescale_to_threshold(threshold, threshold) == 0.5
+    assert rescale_to_threshold(0.0, threshold) == 0.0
+    assert rescale_to_threshold(1.0, threshold) == 1.0
+    grid = np.linspace(0, 1, 101)
+    rescaled = [rescale_to_threshold(s, threshold) for s in grid]
+    assert all(a < b for a, b in zip(rescaled, rescaled[1:]))
+    if threshold == 0.5:
+        assert np.allclose(rescaled, grid)
+
+
+def test_no_decision_threshold_means_0_5():
+    X, y = _overlapping_dataset()
+    model = LinearSVC(random_state=42, max_iter=5000).fit(X, y)
+    default = predict_labels_and_confidence(model, X)
+    explicit = predict_labels_and_confidence(model, X, decision_threshold=0.5)
+    assert list(default[0]) == list(explicit[0])
+    assert default[1] == explicit[1]

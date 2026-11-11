@@ -1215,6 +1215,12 @@ def upload_ml_model(task_type: str, mod_abbreviation: str, model_path, stats: di
     # uploads leave these columns NULL.
     if embedding_recipe:
         metadata.update(embedding_recipe)
+    # SCRUM-6482: the score from which the classifier calls a paper positive (unset means 0.5), and
+    # whether the tags get the score rescaled so it maps to 0.5 (the ABC's default) or the model's own.
+    if stats.get("decision_threshold") is not None:
+        metadata["decision_threshold"] = stats["decision_threshold"]
+    if stats.get("rescale_confidence") is False:
+        metadata["rescale_confidence"] = False
 
     model_dir = os.path.dirname(model_path)
     if topic is None:

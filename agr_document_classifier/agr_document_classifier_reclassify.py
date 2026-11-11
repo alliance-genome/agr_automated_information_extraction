@@ -160,7 +160,9 @@ def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
     profile_name, profile_version = profile_pair_from_model(meta)
     ids, classifications, confidences, valid = classify_documents_from_abc_embeddings(
         curies, MOD, classifier, use_bow=True, embedding_cache=cache,
-        profile_name=profile_name, version=profile_version)
+        profile_name=profile_name, version=profile_version,
+        decision_threshold=meta.get("decision_threshold"),
+        rescale_confidence=meta.get("rescale_confidence") is not False)
     sent = skipped = not_tagged = 0
     for curie, cls, conf, ok in zip(ids, classifications, confidences, valid):
         if not ok:
@@ -201,7 +203,9 @@ def reclassify_no_gen_data(cache, dry_run, limit, curies_override=None):
     profile_name, profile_version = profile_pair_from_model(meta)
     ids, classifications, confidences, valid = classify_documents_from_abc_embeddings(
         curies, MOD, classifier, use_bow=True, embedding_cache=cache,
-        profile_name=profile_name, version=profile_version)
+        profile_name=profile_name, version=profile_version,
+        decision_threshold=meta.get("decision_threshold"),
+        rescale_confidence=meta.get("rescale_confidence") is not False)
     curie_to_conf = {curie: float(conf) for curie, conf, ok in zip(ids, confidences, valid) if ok}
     skipped = len(ids) - len(curie_to_conf)
     if dry_run:

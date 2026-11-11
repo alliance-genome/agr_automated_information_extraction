@@ -1,8 +1,7 @@
 """SCRUM-5764: ZFIN "molecular probe" (ATP:0000370) classification results.
 
-A paper the abstract classifier calls a probe paper with at least
-ZFIN_MOLECULAR_PROBE_THRESHOLD confidence is dropped from the ZFIN acquisition
-workflow, which means three writes:
+A paper the abstract classifier calls a probe paper is dropped from the ZFIN
+acquisition workflow, which means three writes:
 
   * the ATP:0000370 topic tag (never negated -- only positives are reported)
   * the "won't manually index" (ATP:0000343) workflow tag
@@ -11,12 +10,16 @@ workflow, which means three writes:
 
 with the last two carrying the "outside of scope" (ATP:0000209) curation tag.
 
-Below the threshold nothing at all is written: Ceri chose (SCRUM-5764,
-2026-08-17) to let borderline papers reach a curator untouched, because wrongly
-dropping a curatable paper is the expensive mistake -- nobody ever sees it
-again.
+A negative gets nothing at all. The model calls positive only papers scored at
+or above its ml_model.decision_threshold, 0.87 (SCRUM-6482; it used to be
+hard-coded here), and its ml_model.rescale_confidence is false so the tags keep
+the model's own score. Ceri chose (SCRUM-5764, 2026-08-17) to let borderline papers
+reach a curator untouched, because wrongly dropping a curatable paper is the
+expensive mistake -- nobody ever sees it again.
 """
 from unittest.mock import patch
+
+import numpy as np
 
 from agr_document_classifier import agr_document_classifier_classify as clf
 
@@ -70,15 +73,33 @@ def test_topic_tag_uses_the_probe_topic_and_the_model_metadata():
     assert kwargs["ml_model_id"] == 71
 
 
-def test_paper_at_exactly_the_threshold_is_dropped():
-    _, m_tet, m_wft, m_cs, _ = _run(conf_scores=[0.87], classifications=[1])
-    assert m_tet.call_count == 1
-    assert m_wft.call_count == 1
-    assert m_cs.call_count == 1
+class _FixedScores:
+    """A stand-in model that returns fixed positive-class probabilities."""
+    classes_ = np.array([0, 1])
+
+    def __init__(self, scores):
+        self.scores = np.asarray(scores, dtype=float)
+
+    def predict_proba(self, X):
+        return np.column_stack([1 - self.scores, self.scores])
 
 
-def test_positive_below_the_threshold_writes_nothing_but_completes_the_job():
-    _, m_tet, m_wft, m_cs, m_success = _run(conf_scores=[0.86], classifications=[1])
+def test_the_model_threshold_decides_which_papers_are_dropped_and_keeps_the_raw_score():
+    scores = [0.86, 0.87, 0.95]
+    classifications, conf_scores = clf.predict_labels_and_confidence(
+        _FixedScores(scores), np.zeros((3, 1)), decision_threshold=0.87, rescale_confidence=False)
+    assert list(classifications) == [0, 1, 1]
+    assert conf_scores == scores
+    curies, m_tet, m_wft, m_cs, m_success = _run(conf_scores=conf_scores, classifications=classifications)
+    assert [c[1]["reference_curie"] for c in m_wft.call_args_list] == curies[1:]
+    assert m_cs.call_count == 2
+    # the tags carry the model's own score, not one rescaled to the threshold
+    assert [c[1]["confidence_score"] for c in m_tet.call_args_list] == [0.87, 0.95]
+    assert m_success.call_count == 3
+
+
+def test_negative_below_the_threshold_writes_nothing_but_completes_the_job():
+    _, m_tet, m_wft, m_cs, m_success = _run(conf_scores=[0.86], classifications=[0])
     assert m_tet.call_count == 0
     assert m_wft.call_count == 0
     assert m_cs.call_count == 0
@@ -98,7 +119,7 @@ def test_negatives_never_produce_a_negated_tag_even_for_a_negated_model():
 
 def test_only_confident_papers_in_a_mixed_batch_are_dropped():
     curies, m_tet, m_wft, m_cs, m_success = _run(
-        conf_scores=[0.99, 0.5, 0.01], classifications=[1, 1, 0])
+        conf_scores=[0.99, 0.5, 0.01], classifications=[1, 0, 0])
     assert m_tet.call_count == 1
     assert m_wft.call_count == 1
     assert m_cs.call_count == 1
@@ -182,3 +203,31 @@ def test_a_pre_existing_curation_status_is_not_reported_as_an_error(caplog):
     warnings = [r for r in caplog.records if r.levelname == "WARNING"]
     assert len(warnings) == 1
     assert "not fully dropped" in warnings[0].message
+
+
+def test_process_job_batch_classifies_with_the_model_threshold():
+    model_meta_data = {"negated": False, "data_novelty": "ATP:0000335", "species": "NCBITaxon:7955",
+                       "ml_model_id": 71, "decision_threshold": 0.87, "rescale_confidence": False}
+    with patch.object(clf, "profile_pair_from_model", return_value=("profile", 1)), \
+            patch.object(clf, "classify_documents_from_abc_embeddings",
+                         return_value=([], np.array([]), [], [])) as m_classify, \
+            patch.object(clf, "send_classification_results"):
+        clf.process_job_batch([{"reference_curie": "AGRKB:101000000000001"}], "ZFIN", "ATP:0000370", 1,
+                              None, object(), model_meta_data, False, use_abc_embeddings=True,
+                              abc_use_bow=True)
+    assert m_classify.call_args.kwargs["decision_threshold"] == 0.87
+    assert m_classify.call_args.kwargs["rescale_confidence"] is False
+
+
+def test_a_model_without_the_new_columns_rescales_by_default():
+    """A metadata record from before the columns existed: no threshold (0.5), rescaling on (a no-op at 0.5)."""
+    model_meta_data = {"negated": False, "data_novelty": "ATP:0000335", "species": None, "ml_model_id": 1}
+    with patch.object(clf, "profile_pair_from_model", return_value=("profile", 1)), \
+            patch.object(clf, "classify_documents_from_abc_embeddings",
+                         return_value=([], np.array([]), [], [])) as m_classify, \
+            patch.object(clf, "send_classification_results"):
+        clf.process_job_batch([{"reference_curie": "AGRKB:101000000000001"}], "WB", "ATP:0000061", 1,
+                              None, object(), model_meta_data, False, use_abc_embeddings=True,
+                              abc_use_bow=True)
+    assert m_classify.call_args.kwargs["decision_threshold"] is None
+    assert m_classify.call_args.kwargs["rescale_confidence"] is True
