@@ -19,7 +19,7 @@ def _run(conf_scores, classifications, current_status=None, tag_result=True, spe
                        "species": species, "ml_model_id": 60}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=tag_result) as m_tet, \
             patch.object(clf, "get_current_workflow_status", return_value=current_status), \
-            patch.object(clf, "create_workflow_tag") as m_wft, \
+            patch.object(clf, "transition_workflow_tag") as m_wft, \
             patch.object(clf, "set_job_success") as m_success, \
             patch.object(clf, "set_job_started"), \
             patch.object(clf, "set_job_failure"), \

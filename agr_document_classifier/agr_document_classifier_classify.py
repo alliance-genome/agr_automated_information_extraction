@@ -19,7 +19,7 @@ from utils.abc_utils import download_md_files_for_references, send_classificatio
     set_job_success, get_tet_source_id, set_job_started, \
     download_abc_model, set_job_failure, load_all_jobs, get_model_data, \
     set_blue_api_base_url, \
-    get_cached_mod_id_from_abbreviation, get_cached_mod_species_map, create_workflow_tag, \
+    get_cached_mod_id_from_abbreviation, get_cached_mod_species_map, transition_workflow_tag, \
     get_current_workflow_status, get_reference_embedding, get_reference_abstract_text, \
     send_curation_status_to_abc
 from utils.abc_embeddings import (is_abc_embedding_model, get_profile, profile_pair_from_model,
@@ -510,8 +510,9 @@ def send_no_genetic_data_tag(reference_curie, mod_abbr, species, classification,
         current_manual_indexing_status = get_current_workflow_status(
             reference_curie, mod_abbr, MANUAL_INDEXING_PROCESS)
         if current_manual_indexing_status is None:
-            create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
-                                workflow_tag_atp_id=MANUAL_INDEXING_STATUS_TBD)
+            transition_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
+                                    workflow_tag_atp_id=MANUAL_INDEXING_STATUS_TBD,
+                                    workflow_process_atp_id=MANUAL_INDEXING_PROCESS)
         else:
             logger.debug(f"Skipping workflow tag creation for {reference_curie}: "
                          f"manual indexing workflow tag already exists "
@@ -531,8 +532,9 @@ def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, specie
     in the workflow for a curator to see.
 
     Returns whether the classification job can be marked done. Only a failed topic tag write
-    blocks that: the topic tag is idempotent so it can be retried safely, whereas re-POSTing the
-    workflow tag would hit a permanent 422 duplicate and the job would never complete. A failed
+    blocks that: the topic tag is idempotent so it can be retried safely, whereas a workflow
+    transition the table refuses would fail the same way on every retry and the job would never
+    complete. A failed
     drop write is logged and leaves the paper in the ZFIN workflow, which is the safe direction.
     """
     if classification <= 0 or conf_score is None or conf_score < ZFIN_MOLECULAR_PROBE_THRESHOLD:
@@ -551,9 +553,10 @@ def drop_probe_paper_from_acquisition_workflow(reference_curie, mod_abbr, specie
         logger.error(f"{reference_curie}: molecular probe topic tag failed; leaving the "
                      f"reference in the ZFIN acquisition workflow")
         return False
-    wont_index_ok = create_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
-                                        workflow_tag_atp_id=WONT_MANUALLY_INDEX_TAG,
-                                        curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG)
+    wont_index_ok = transition_workflow_tag(reference_curie=reference_curie, mod_abbreviation=mod_abbr,
+                                            workflow_tag_atp_id=WONT_MANUALLY_INDEX_TAG,
+                                            workflow_process_atp_id=MANUAL_INDEXING_PROCESS,
+                                            curation_tag=OUTSIDE_OF_SCOPE_CURATION_TAG)
     wont_curate_ok = send_curation_status_to_abc(reference_curie=reference_curie,
                                                  mod_abbreviation=mod_abbr,
                                                  topic=WHOLE_PAPER_TOPIC,
