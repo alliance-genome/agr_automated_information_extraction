@@ -138,83 +138,80 @@ def test_curation_status_5xx_then_201_succeeds(mock_urlopen, _tok, mock_sleep):
 
 
 # ---------------------------------------------------------------------------
-# create_workflow_tag — curation_tag passthrough
+# transition_workflow_tag — an automated transition, never a raw tag write (SCRUM-6845)
 # ---------------------------------------------------------------------------
 
+MANUAL_INDEXING = "ATP:0000273"
 
+
+@patch("utils.abc_utils.get_current_workflow_status", return_value=None)
 @patch("utils.abc_utils.get_authentication_token", return_value="t")
 @patch("utils.abc_utils.urllib.request.urlopen")
-def test_workflow_tag_posts_curation_tag_when_given(mock_urlopen, _tok):
-    mock_urlopen.return_value = _FakeResponse(201)
+def test_workflow_tag_is_an_automated_transition_with_curation_tag(mock_urlopen, _tok, _current):
+    mock_urlopen.return_value = _FakeResponse(200)
 
-    assert abc_utils.create_workflow_tag(
+    assert abc_utils.transition_workflow_tag(
         reference_curie="AGRKB:101000000000001",
         mod_abbreviation="ZFIN",
         workflow_tag_atp_id="ATP:0000343",
+        workflow_process_atp_id=MANUAL_INDEXING,
         curation_tag="ATP:0000209",
     ) is True
 
-    payload = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
-    assert payload["workflow_tag_id"] == "ATP:0000343"
-    assert payload["curation_tag"] == "ATP:0000209"
+    request = mock_urlopen.call_args[0][0]
+    assert request.full_url.endswith("/workflow_tag/transition_to_workflow_status")
+    payload = json.loads(request.data.decode("utf-8"))
+    assert payload == {"curie_or_reference_id": "AGRKB:101000000000001", "mod_abbreviation": "ZFIN",
+                       "new_workflow_tag_atp_id": "ATP:0000343", "transition_type": "automated",
+                       "curation_tag": "ATP:0000209"}
 
 
+@patch("utils.abc_utils.get_current_workflow_status", return_value=None)
 @patch("utils.abc_utils.get_authentication_token", return_value="t")
 @patch("utils.abc_utils.urllib.request.urlopen")
-def test_workflow_tag_payload_unchanged_without_curation_tag(mock_urlopen, _tok):
-    mock_urlopen.return_value = _FakeResponse(201)
+def test_workflow_tag_payload_has_no_curation_tag_without_one(mock_urlopen, _tok, _current):
+    mock_urlopen.return_value = _FakeResponse(200)
 
-    abc_utils.create_workflow_tag(
-        reference_curie="AGRKB:101000000000001",
-        mod_abbreviation="FB",
-        workflow_tag_atp_id="ATP:0000359",
-    )
+    abc_utils.transition_workflow_tag("AGRKB:101000000000001", "FB", "ATP:0000359", MANUAL_INDEXING)
 
     payload = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
     assert "curation_tag" not in payload
 
 
 # ---------------------------------------------------------------------------
-# Re-run safety: the ABC rejects all three duplicate writes, so a second pass
-# over the same reference must not create duplicate rows, burn retries, or
-# report a failure that did not happen.
+# Re-run safety: a reference already in the target state is not sent again, so a
+# second pass does not burn retries or report a failure that did not happen.
 # ---------------------------------------------------------------------------
 
 
+@patch("utils.abc_utils.get_current_workflow_status", return_value="ATP:0000343")
+@patch("utils.abc_utils.get_authentication_token", return_value="t")
+@patch("utils.abc_utils.urllib.request.urlopen")
+def test_workflow_tag_already_in_state_is_a_no_op(mock_urlopen, _tok, _current):
+    assert abc_utils.transition_workflow_tag("AGRKB:1", "ZFIN", "ATP:0000343", MANUAL_INDEXING,
+                                             curation_tag="ATP:0000209") is True
+    assert mock_urlopen.call_count == 0
+
+
+@patch("utils.abc_utils.get_current_workflow_status", return_value=None)
 @patch("utils.abc_utils.time.sleep")
 @patch("utils.abc_utils.get_authentication_token", return_value="t")
 @patch("utils.abc_utils.urllib.request.urlopen")
-def test_workflow_tag_duplicate_counts_as_already_present(mock_urlopen, _tok, mock_sleep):
-    """POST /workflow_tag/ 422s on (reference, mod, tag) that already exists.
-    The tag is present as intended, so this is success, not a failure to retry.
-    """
-    mock_urlopen.side_effect = _http_error(
-        422, "WorkflowTag with the reference_curie AGRKB:1 and mod_abbreviation ZFIN and "
-             "ATP:0000343 already exist, with id:5 can not create duplicate record.")
+def test_workflow_tag_4xx_is_not_retried(mock_urlopen, _tok, mock_sleep, _current):
+    mock_urlopen.side_effect = _http_error(422, "Transition from X to Y is NOT in the transition table")
 
-    assert abc_utils.create_workflow_tag("AGRKB:1", "ZFIN", "ATP:0000343",
-                                         curation_tag="ATP:0000209") is True
-    assert mock_urlopen.call_count == 1
-    assert mock_sleep.call_count == 0
-
-
-@patch("utils.abc_utils.time.sleep")
-@patch("utils.abc_utils.get_authentication_token", return_value="t")
-@patch("utils.abc_utils.urllib.request.urlopen")
-def test_workflow_tag_other_4xx_is_not_retried(mock_urlopen, _tok, mock_sleep):
-    mock_urlopen.side_effect = _http_error(404, "Reference not found")
-
-    assert abc_utils.create_workflow_tag("AGRKB:1", "ZFIN", "ATP:0000343") is False
+    assert abc_utils.transition_workflow_tag("AGRKB:1", "ZFIN", "ATP:0000343", MANUAL_INDEXING) is False
     assert mock_urlopen.call_count == 1
 
 
+@patch("utils.abc_utils.get_current_workflow_status", return_value=None)
 @patch("utils.abc_utils.time.sleep")
 @patch("utils.abc_utils.get_authentication_token", return_value="t")
 @patch("utils.abc_utils.urllib.request.urlopen")
-def test_workflow_tag_5xx_still_retries(mock_urlopen, _tok, mock_sleep):
+def test_workflow_tag_5xx_still_retries(mock_urlopen, _tok, mock_sleep, _current):
     mock_urlopen.side_effect = _http_error(502)
 
-    assert abc_utils.create_workflow_tag("AGRKB:1", "ZFIN", "ATP:0000343") is False
+    assert abc_utils.transition_workflow_tag("AGRKB:1", "ZFIN", "ATP:0000343", MANUAL_INDEXING) is False
     assert mock_urlopen.call_count == 3
 
 

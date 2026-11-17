@@ -30,7 +30,7 @@ def _run(conf_scores, classifications, negated_model=False, mod_abbr="ZFIN",
     model_meta_data = {"negated": negated_model, "data_novelty": "ATP:0000335",
                        "species": "NCBITaxon:7955", "ml_model_id": 71}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=True) as m_tet, \
-            patch.object(clf, "create_workflow_tag", return_value=True) as m_wft, \
+            patch.object(clf, "transition_workflow_tag", return_value=True) as m_wft, \
             patch.object(clf, "send_curation_status_to_abc", return_value=True) as m_cs, \
             patch.object(clf, "set_job_success") as m_success, \
             patch.object(clf, "set_job_started"), \
@@ -51,6 +51,7 @@ def test_confident_probe_paper_gets_topic_tag_wont_index_and_wont_curate():
     _, wft_kwargs = m_wft.call_args
     assert wft_kwargs == {"reference_curie": curies[0], "mod_abbreviation": "ZFIN",
                           "workflow_tag_atp_id": "ATP:0000343",
+                          "workflow_process_atp_id": "ATP:0000273",
                           "curation_tag": "ATP:0000209"}
 
     _, cs_kwargs = m_cs.call_args
@@ -114,7 +115,7 @@ def test_the_drop_is_skipped_when_the_topic_tag_write_fails():
     model_meta_data = {"negated": False, "data_novelty": "ATP:0000335",
                        "species": "NCBITaxon:7955", "ml_model_id": 71}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=False), \
-            patch.object(clf, "create_workflow_tag") as m_wft, \
+            patch.object(clf, "transition_workflow_tag") as m_wft, \
             patch.object(clf, "send_curation_status_to_abc") as m_cs, \
             patch.object(clf, "set_job_success") as m_success, \
             patch.object(clf, "set_job_started"), \
@@ -146,7 +147,7 @@ def test_job_still_completes_when_a_drop_write_fails():
     model_meta_data = {"negated": False, "data_novelty": "ATP:0000335",
                        "species": "NCBITaxon:7955", "ml_model_id": 71}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=True), \
-            patch.object(clf, "create_workflow_tag", return_value=False), \
+            patch.object(clf, "transition_workflow_tag", return_value=False), \
             patch.object(clf, "send_curation_status_to_abc", return_value=True) as m_cs, \
             patch.object(clf, "set_job_success") as m_success, \
             patch.object(clf, "set_job_started"), \
@@ -168,7 +169,7 @@ def test_a_pre_existing_curation_status_is_not_reported_as_an_error(caplog):
     model_meta_data = {"negated": False, "data_novelty": "ATP:0000335",
                        "species": "NCBITaxon:7955", "ml_model_id": 71}
     with patch.object(clf, "send_classification_tag_to_abc", return_value=True), \
-            patch.object(clf, "create_workflow_tag", return_value=True), \
+            patch.object(clf, "transition_workflow_tag", return_value=True), \
             patch.object(clf, "send_curation_status_to_abc", return_value=False), \
             patch.object(clf, "set_job_success"), \
             patch.object(clf, "set_job_started"), \
