@@ -232,3 +232,21 @@ def test_a_model_without_the_new_columns_rescales_by_default():
                               abc_use_bow=True)
     assert m_classify.call_args.kwargs["confidence_threshold"] is None
     assert m_classify.call_args.kwargs["rescale_confidence"] is True
+
+
+def test_a_probe_model_without_a_threshold_falls_back_to_0_87(caplog):
+    """A ZFIN probe model row with no confidence_threshold (e.g. the ABC migration isn't deployed yet) must not
+    drop papers scored 0.5-0.87 from the acquisition workflow: the classifier uses 0.87 and logs an error."""
+    model_meta_data = {"negated": False, "data_novelty": "ATP:0000335", "species": "NCBITaxon:7955",
+                       "ml_model_id": 61}
+    with patch.object(clf, "profile_pair_from_model", return_value=("profile", 1)), \
+            patch.object(clf, "classify_documents_from_abc_embeddings",
+                         return_value=([], np.array([]), [], [])) as m_classify, \
+            patch.object(clf, "send_classification_results"):
+        with caplog.at_level("ERROR"):
+            clf.process_job_batch([{"reference_curie": "AGRKB:101000000000001"}], "ZFIN", "ATP:0000370", 1,
+                                  None, object(), model_meta_data, False, use_abc_embeddings=True,
+                                  abc_use_bow=True)
+    assert m_classify.call_args.kwargs["confidence_threshold"] == 0.87
+    assert m_classify.call_args.kwargs["rescale_confidence"] is False
+    assert any("has no confidence_threshold" in r.message for r in caplog.records)

@@ -133,3 +133,34 @@ def test_resolve_confidence_settings():
     assert settings("WB", "ATP:0000041", stats=tuned) == (0.58, True)
     assert settings("WB", "ATP:0000041") == (None, True)
     assert settings("WB", "ATP:0000041", choice="0.7", keep_raw=True) == (0.7, False)
+
+
+def _skip_training_upload(tmp_path, metadata, **arg_overrides):
+    """Run upload_pre_existing_model on a metadata file and return the stats it uploads."""
+    import json
+    from argparse import Namespace
+    from unittest.mock import patch
+    from agr_document_classifier import agr_document_classifier_trainer as trainer
+
+    metadata = {"parameters": {}, "model_type": "LGBMClassifier", "precision": 0.8, "recall": 0.8,
+                "f1_score": 0.8, **metadata}
+    (tmp_path / "ZFIN_ATP_0000370_metadata.json").write_text(json.dumps(metadata))
+    args = Namespace(mod_train="ZFIN", datatype_train="ATP:0000370", data_novelty=None, data_context=None,
+                     production=False, do_not_flag_no_data=False, alternative_species=None,
+                     confidence_threshold="auto", keep_raw_confidence=False)
+    for key, value in arg_overrides.items():
+        setattr(args, key, value)
+    with patch.object(trainer, "upload_ml_model") as m_upload:
+        trainer.upload_pre_existing_model(args, {"dataset_id": 1}, str(tmp_path))
+    return m_upload.call_args.kwargs["stats"]
+
+
+def test_skip_training_upload_keeps_the_threshold(tmp_path):
+    """--skip_training re-uploads keep the metadata file's threshold, and a ZFIN probe model without one gets its
+    0.87 default instead of falling back to 0.5."""
+    stats = _skip_training_upload(tmp_path, {"confidence_threshold": 0.9, "rescale_confidence": False})
+    assert (stats["confidence_threshold"], stats["rescale_confidence"]) == (0.9, False)
+    stats = _skip_training_upload(tmp_path, {})
+    assert (stats["confidence_threshold"], stats["rescale_confidence"]) == (0.87, False)
+    stats = _skip_training_upload(tmp_path, {"confidence_threshold": 0.9}, confidence_threshold="0.95")
+    assert stats["confidence_threshold"] == 0.95

@@ -25,6 +25,7 @@ from sklearn.covariance import EllipticEnvelope
 from sklearn.neighbors import LocalOutlierFactor
 
 from agr_dataset_manager.dataset_downloader import download_md_files_from_abc_or_convert_pdf
+from agr_document_classifier.confidence_settings import MODEL_CONFIDENCE_DEFAULTS
 from agr_document_classifier.models import POSSIBLE_CLASSIFIERS
 from agr_document_classifier.rebalance import (POSITIVE_MIX_MODES, REBALANCE_MODES, Strata, balance_classes,
                                                bucket_counts, corpus_weights, format_counts,
@@ -1041,6 +1042,15 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
     stats["average_precision"] = stats["precision"]
     stats["average_recall"] = stats["recall"]
     stats["average_f1"] = stats["f1_score"]
+    # SCRUM-6482: keep the threshold the metadata file carries, unless --confidence_threshold or
+    # --keep_raw_confidence says otherwise; without one, the model's MODEL_CONFIDENCE_DEFAULTS apply.
+    if (stats.get("confidence_threshold") is not None and getattr(args, "confidence_threshold", "auto") == "auto"
+            and not getattr(args, "keep_raw_confidence", False)):
+        stats["rescale_confidence"] = stats.get("rescale_confidence") is not False
+    else:
+        stats["confidence_threshold"], stats["rescale_confidence"] = resolve_confidence_settings(args, stats)
+    logger.info(f"Confidence threshold: {stats['confidence_threshold']}, "
+                f"rescale_confidence: {stats['rescale_confidence']}")
     upload_ml_model(task_type="biocuration_topic_classification", mod_abbreviation=args.mod_train,
                     topic=args.datatype_train,
                     data_novelty=args.data_novelty,
@@ -1061,15 +1071,6 @@ def resolve_confidence_threshold(choice: str, stats: dict) -> Optional[float]:
     if choice == "auto":
         return (stats.get("tuned_threshold") or {}).get("threshold")
     return float(choice)
-
-
-# Models whose confidence settings are a curator decision rather than something the trainer tunes:
-# (MOD, topic) -> (ml_model.confidence_threshold, ml_model.rescale_confidence). ZFIN molecular probe
-# (SCRUM-5764): only papers scored 0.87 or more leave the acquisition workflow, and the tags show the
-# model's own score. The classifier no longer hard-codes either, so every new version must carry them.
-MODEL_CONFIDENCE_DEFAULTS = {
-    ("ZFIN", "ATP:0000370"): (0.87, False),
-}
 
 
 def resolve_confidence_settings(args, stats: dict) -> tuple:

@@ -15,6 +15,7 @@ import requests.exceptions
 import scipy.sparse as sp
 from gensim.models import KeyedVectors
 
+from agr_document_classifier.confidence_settings import model_confidence_settings
 from utils.abc_utils import download_md_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
@@ -57,9 +58,10 @@ MANUAL_INDEXING_PROCESS = "ATP:0000273"
 # two carrying "outside of scope" as their curation tag. A negative gets nothing at all. The
 # model's ml_model.confidence_threshold (0.87, SCRUM-6482) makes it call positive only confident
 # papers, and its ml_model.rescale_confidence (false) keeps the model's own score on the tag,
-# as ZFIN curators have always seen it. Ceri chose to let borderline papers reach a curator untouched, because wrongly dropping
-# a curatable paper is the expensive mistake -- it is never seen again -- whereas a probe paper
-# that slips through costs a few seconds of triage.
+# as ZFIN curators have always seen it (confidence_settings.MODEL_CONFIDENCE_DEFAULTS falls back to
+# both if the row lacks them). Ceri chose to let borderline papers reach a curator untouched,
+# because wrongly dropping a curatable paper is the expensive mistake -- it is never seen again --
+# whereas a probe paper that slips through costs a few seconds of triage.
 ZFIN_MOLECULAR_PROBE_TOPIC = "ATP:0000370"
 
 # Score from which a model with no ml_model.confidence_threshold calls a paper positive.
@@ -392,6 +394,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
                       include_keywords=False, include_metadata=False, use_abc_embeddings=False,
                       abc_use_bow=False):
     reference_curie_job_map = {job["reference_curie"]: job for job in job_batch}
+    confidence_threshold, rescale_confidence = model_confidence_settings(mod_abbr, topic, model_meta_data)
     if use_abc_embeddings:
         # ABC-embedding models classify from the precomputed vectors directly — no
         # MD download and no BioWordVec/max/LSH blocks. The BoW block (if the model
@@ -402,8 +405,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
         files_loaded, classifications, conf_scores, valid_embeddings = classify_documents_from_abc_embeddings(
             list(reference_curie_job_map.keys()), mod_abbr, classifier_model, use_bow=abc_use_bow,
             profile_name=embedding_profile_name, version=embedding_version,
-            confidence_threshold=model_meta_data.get("confidence_threshold"),
-            rescale_confidence=model_meta_data.get("rescale_confidence") is not False)
+            confidence_threshold=confidence_threshold, rescale_confidence=rescale_confidence)
     else:
         prepare_classification_directory()
         download_md_files_for_references(list(reference_curie_job_map.keys()),
@@ -437,8 +439,7 @@ def process_job_batch(job_batch, mod_abbr, topic, tet_source_id, embedding_model
             use_lsh_features=use_lsh_features,
             include_keywords=include_keywords,
             include_metadata=include_metadata,
-            confidence_threshold=model_meta_data.get("confidence_threshold"),
-            rescale_confidence=model_meta_data.get("rescale_confidence") is not False)
+            confidence_threshold=confidence_threshold, rescale_confidence=rescale_confidence)
     if test_mode:
         for file_path, classification, conf_score, valid_embedding in zip(files_loaded, classifications, conf_scores,
                                                                           valid_embeddings):
