@@ -1063,6 +1063,32 @@ def resolve_confidence_threshold(choice: str, stats: dict) -> Optional[float]:
     return float(choice)
 
 
+# Models whose confidence settings are a curator decision rather than something the trainer tunes:
+# (MOD, topic) -> (ml_model.confidence_threshold, ml_model.rescale_confidence). ZFIN molecular probe
+# (SCRUM-5764): only papers scored 0.87 or more leave the acquisition workflow, and the tags show the
+# model's own score. The classifier no longer hard-codes either, so every new version must carry them.
+MODEL_CONFIDENCE_DEFAULTS = {
+    ("ZFIN", "ATP:0000370"): (0.87, False),
+}
+
+
+def resolve_confidence_settings(args, stats: dict) -> tuple:
+    """(ml_model.confidence_threshold, ml_model.rescale_confidence) to upload (SCRUM-6482).
+
+    --confidence_threshold as resolve_confidence_threshold; for a model in MODEL_CONFIDENCE_DEFAULTS, 'auto' with
+    no tuned threshold takes the default instead of leaving it unset, and its scores are never rescaled.
+    --keep_raw_confidence turns rescaling off for any model."""
+    choice = getattr(args, "confidence_threshold", "auto")
+    threshold = resolve_confidence_threshold(choice, stats)
+    default = MODEL_CONFIDENCE_DEFAULTS.get((args.mod_train, args.datatype_train))
+    if default and choice == "auto" and threshold is None:
+        threshold = default[0]
+        logger.info(f"{args.mod_train} {args.datatype_train}: confidence threshold {threshold} "
+                    f"(MODEL_CONFIDENCE_DEFAULTS)")
+    rescale = not getattr(args, "keep_raw_confidence", False) and (default[1] if default else True)
+    return threshold, rescale
+
+
 def train_and_save_model(args, training_data_dir, training_set, abc_curies=None,
                          strata: Optional[Strata] = None, rebalance_info: Optional[dict] = None):
     if args.test_mode:
@@ -1099,8 +1125,7 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None,
                      if getattr(args, "fixed_model", None) else None))
     if rebalance_info:
         stats["rebalance"] = rebalance_info
-    stats["confidence_threshold"] = resolve_confidence_threshold(getattr(args, "confidence_threshold", "auto"), stats)
-    stats["rescale_confidence"] = not getattr(args, "keep_raw_confidence", False)
+    stats["confidence_threshold"], stats["rescale_confidence"] = resolve_confidence_settings(args, stats)
     logger.info(f"Confidence threshold: {stats['confidence_threshold'] or 'none (the classifier default 0.5)'}")
     logger.info(f"Best classifier stats: {str(stats)}")
     # Tag the model (via the ml_model embedding_* columns) so the classifier

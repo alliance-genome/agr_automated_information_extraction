@@ -113,3 +113,23 @@ def test_resolve_confidence_threshold():
     assert resolve_confidence_threshold("auto", {}) is None
     assert resolve_confidence_threshold("none", tuned) is None
     assert resolve_confidence_threshold("0.87", tuned) == 0.87
+
+
+def test_resolve_confidence_settings():
+    """A retrained ZFIN molecular probe model keeps 0.87 and its own score without any flag; other models take
+    the tuned threshold and are rescaled unless --keep_raw_confidence."""
+    from argparse import Namespace
+    from agr_document_classifier.agr_document_classifier_trainer import resolve_confidence_settings
+
+    def settings(mod, topic, choice="auto", keep_raw=False, stats=None):
+        args = Namespace(mod_train=mod, datatype_train=topic, confidence_threshold=choice,
+                         keep_raw_confidence=keep_raw)
+        return resolve_confidence_settings(args, stats or {})
+
+    tuned = {"tuned_threshold": {"threshold": 0.58}}
+    assert settings("ZFIN", "ATP:0000370") == (0.87, False)
+    assert settings("ZFIN", "ATP:0000370", choice="0.9") == (0.9, False)
+    assert settings("ZFIN", "ATP:0000370", choice="none") == (None, False)
+    assert settings("WB", "ATP:0000041", stats=tuned) == (0.58, True)
+    assert settings("WB", "ATP:0000041") == (None, True)
+    assert settings("WB", "ATP:0000041", choice="0.7", keep_raw=True) == (0.7, False)
