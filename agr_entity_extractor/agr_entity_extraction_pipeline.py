@@ -11,6 +11,7 @@ import dill
 import requests
 from transformers import pipeline
 
+from utils.build_info import log_build_info
 from utils.abc_utils import load_all_jobs, get_cached_mod_abbreviation_from_id, get_tet_source_id, download_abc_model, \
     download_md_files_for_references, set_job_started, set_job_success, send_entity_tag_to_abc, get_model_data, \
     set_job_failure, set_blue_api_base_url
@@ -292,6 +293,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
+    log_build_info()  # which commit this job runs (SCRUM-6878)
     env_label = "STAGE" if args.stage else "PRODUCTION"
     host = socket.gethostname()
     try:

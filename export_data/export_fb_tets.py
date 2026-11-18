@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from datetime import datetime, timedelta
 import traceback
 from agr_literature_service.lit_processing.utils.report_utils import send_report
+from utils.build_info import build_info_line
 
 
 def create_postgres_engine(verbose):
@@ -162,6 +163,7 @@ def dump_tet():
 
 
 if __name__ == "__main__":
+    print(build_info_line())  # which commit this job runs (SCRUM-6878)
     try:
         dump_tet()
     except Exception as e:

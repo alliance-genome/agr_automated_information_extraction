@@ -31,6 +31,7 @@ from agr_document_classifier.rebalance import (POSITIVE_MIX_MODES, REBALANCE_MOD
                                                bucket_counts, corpus_weights, format_counts,
                                                load_bucket_prevalence, load_strata, prevalence_weights,
                                                scored_buckets, subsample)
+from utils.build_info import log_build_info
 from utils.abc_utils import (get_training_set_from_abc, upload_ml_model, get_reference_metadata,
                              get_reference_embedding, get_reference_abstract_text,
                              default_data_context_for_mod)
@@ -1202,6 +1203,7 @@ def main():
             print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
             sys.exit(1)
     configure_logging(args.log_level)
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     train_mode(args)
 
