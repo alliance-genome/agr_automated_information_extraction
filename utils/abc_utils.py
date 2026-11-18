@@ -498,23 +498,30 @@ def get_current_workflow_status(reference_curie: str, mod_abbreviation: str, wor
         return None
 
 
-def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str,
-                        curation_tag: Optional[str] = None):
-    url = f'{blue_api_base_url}/workflow_tag/'
+def transition_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_tag_atp_id: str,
+                            workflow_process_atp_id: str, curation_tag: Optional[str] = None):
+    """Move the reference's tag in a workflow process to ``workflow_tag_atp_id`` with an automated
+    transition (SCRUM-6845): the ABC checks it against its transition table, starting the process
+    from the process term when the paper has no tag in it yet. A paper already in that state is
+    left alone, so a re-run is a no-op. ``curation_tag`` (the ATP term saying *why*, e.g. "outside
+    of scope", ATP:0000209) is set on the tag when given."""
+    if get_current_workflow_status(reference_curie, mod_abbreviation, workflow_process_atp_id) \
+            == workflow_tag_atp_id:
+        logger.debug(f"{reference_curie}: already at {workflow_tag_atp_id} for {mod_abbreviation}; nothing to do")
+        return True
+    url = f'{blue_api_base_url}/workflow_tag/transition_to_workflow_status'
     token = get_authentication_token()
     headers = generate_headers(token)
     payload = {
-        "reference_curie": reference_curie,
+        "curie_or_reference_id": reference_curie,
         "mod_abbreviation": mod_abbreviation,
-        "workflow_tag_id": workflow_tag_atp_id,
+        "new_workflow_tag_atp_id": workflow_tag_atp_id,
+        "transition_type": "automated",
     }
-    # The ATP term saying *why* the tag was applied (e.g. "outside of scope",
-    # ATP:0000209). Left out of the payload entirely when absent, so callers that
-    # do not use it keep posting exactly what they posted before.
     if curation_tag is not None:
         payload["curation_tag"] = curation_tag
-    workflow_data = json.dumps(payload).encode('utf-8')
-    request = urllib.request.Request(url=url, data=workflow_data, method='POST', headers=headers)
+    request = urllib.request.Request(url=url, data=json.dumps(payload).encode('utf-8'), method='POST',
+                                     headers=headers)
     request.add_header("Content-type", "application/json")
     request.add_header("Accept", "application/json")
     attempts = 0
@@ -522,28 +529,23 @@ def create_workflow_tag(reference_curie: str, mod_abbreviation: str, workflow_ta
         attempts += 1
         try:
             urllib.request.urlopen(request)
-            logger.debug("Successfully created workflow tag")
+            logger.debug(f"{reference_curie}: moved to {workflow_tag_atp_id} for {mod_abbreviation}")
             return True
         except HTTPError as e:
             if 400 <= e.code < 500:
+                # a transition the table does not allow, or a bad reference/mod: deterministic, so
+                # not retried
                 body = _read_http_error_body(e)
-                # 422 = this exact (reference, mod, tag) row already exists. The tag is present
-                # as intended, so a re-run over an already-tagged reference is a no-op rather
-                # than a failure. Every other client error is deterministic: do not retry.
-                if e.code == 422 and "already exist" in body:
-                    logger.debug(f"{reference_curie}: workflow tag {workflow_tag_atp_id} "
-                                 f"already exists; nothing to do")
-                    return True
-                logger.error(f"{reference_curie}: HTTP {e.code} creating workflow tag "
+                logger.error(f"{reference_curie}: HTTP {e.code} moving to workflow tag "
                              f"{workflow_tag_atp_id} for {mod_abbreviation}; not retrying: {body}")
                 return False
-            logger.warning(f"Error creating workflow tag for: {reference_curie}, {mod_abbreviation}, "
+            logger.warning(f"Error moving workflow tag for: {reference_curie}, {mod_abbreviation}, "
                            f"{workflow_tag_atp_id}: {e}")
             time.sleep(attempts)
         except Exception as e:
-            logger.error(f"Error attempt {attempts} creating workflow tag for: {reference_curie}, "
+            logger.error(f"Error attempt {attempts} moving workflow tag for: {reference_curie}, "
                          f"{mod_abbreviation}, {workflow_tag_atp_id}: {e}")
-    logger.error(f"Error creating workflow tag after 3 attempts: {reference_curie}, {mod_abbreviation}, "
+    logger.error(f"Error moving workflow tag after 3 attempts: {reference_curie}, {mod_abbreviation}, "
                  f"{workflow_tag_atp_id}")
     return False
 

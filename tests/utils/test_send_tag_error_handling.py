@@ -1,6 +1,6 @@
 """Regression tests for the SCRUM-5716 strict-REST API migration (SCRUM-6163).
 
-The send_*_to_abc / create_workflow_tag helpers POST via urllib.request.urlopen,
+The send_*_to_abc / transition_workflow_tag helpers POST via urllib.request.urlopen,
 which raises urllib.error.HTTPError / URLError — not
 requests.exceptions.RequestException. A single reference's failure must never
 crash the surrounding job batch, and the server's idempotent "already exists"
