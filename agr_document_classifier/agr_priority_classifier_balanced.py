@@ -34,6 +34,7 @@ from sklearn.ensemble import RandomForestClassifier
 from imblearn.under_sampling import RandomUnderSampler
 
 from agr_dataset_manager.dataset_downloader import download_prioritized_bib_data
+from utils.build_info import log_build_info
 from utils.abc_utils import get_cached_mod_abbreviation_from_id, download_bib_data_for_references, \
     download_bib_data_for_need_prioritization_references, set_job_success, \
     get_training_set_from_abc, upload_ml_model, download_abc_model, \
@@ -712,6 +713,7 @@ def main():
             print("Invalid alternative species specified. Must start with 'NCBITaxon:' followed by numbers ONLY")
             sys.exit(1)
     configure_logging(args.log_level)
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     # logger = logging.getLogger(__name__)
 

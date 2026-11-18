@@ -14,6 +14,7 @@ import requests.exceptions
 import scipy.sparse as sp
 from gensim.models import KeyedVectors
 
+from utils.build_info import log_build_info
 from utils.abc_utils import download_md_files_for_references, send_classification_tag_to_abc, \
     get_cached_mod_abbreviation_from_id, \
     set_job_success, get_tet_source_id, set_job_started, \
@@ -684,6 +685,7 @@ def direct_classify_mode(args: Namespace):
 def main():
     args: Namespace = parse_arguments()
     configure_logging(args.log_level)
+    log_build_info()  # which commit this job runs (SCRUM-6878)
     if args.test_mode:
         direct_classify_mode(args)
     else:

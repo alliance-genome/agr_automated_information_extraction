@@ -4,6 +4,7 @@ import dill
 
 from agr_entity_extractor.models import AllianceStringMatchingEntityExtractorConfig, \
     AllianceStringMatchingEntityExtractor, CustomTokenizer
+from utils.build_info import log_build_info
 from utils.abc_utils import upload_ml_model, download_abc_model
 from utils.ateam_utils import get_all_curated_entities
 
@@ -32,6 +33,7 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=None)
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     tfidf_vectorizer_model_file_path = (f"/data/agr_entity_extraction/tfidf_vectorization_"
                                         f"{args.mod_abbreviation}_{args.topic.replace(':', '_')}.dpkl")

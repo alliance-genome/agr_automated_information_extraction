@@ -7,6 +7,7 @@ import dill
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from agr_entity_extractor.models import CustomTokenizer
+from utils.build_info import log_build_info
 from utils.abc_utils import get_all_ref_curies, download_md_files_for_references, \
     upload_ml_model
 from utils.ateam_utils import get_all_curated_entities
@@ -112,6 +113,7 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=None)
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     if not os.path.exists(args.output_path):
 
