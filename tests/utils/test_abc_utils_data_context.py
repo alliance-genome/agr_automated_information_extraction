@@ -206,21 +206,21 @@ def _upload_with_stats(tmp_path, stats):
     return json.loads(files["model_data_file"][1].getvalue())
 
 
-def test_upload_ml_model_sends_the_decision_threshold(tmp_path):
+def test_upload_ml_model_sends_the_confidence_threshold(tmp_path):
     """SCRUM-6482: the ABC reads the model data file, so the threshold must be in it."""
     stats = {"model_name": "lgbm", "average_precision": 0.9, "average_recall": 0.8,
-             "average_f1": 0.85, "best_params": None, "decision_threshold": 0.87}
-    assert _upload_with_stats(tmp_path, stats)["decision_threshold"] == 0.87
+             "average_f1": 0.85, "best_params": None, "confidence_threshold": 0.87}
+    assert _upload_with_stats(tmp_path, stats)["confidence_threshold"] == 0.87
 
 
-def test_upload_ml_model_leaves_out_an_unset_decision_threshold(tmp_path):
+def test_upload_ml_model_leaves_out_an_unset_confidence_threshold(tmp_path):
     stats = {"model_name": "lgbm", "average_precision": 0.9, "average_recall": 0.8,
-             "average_f1": 0.85, "best_params": None, "decision_threshold": None}
-    assert "decision_threshold" not in _upload_with_stats(tmp_path, stats)
+             "average_f1": 0.85, "best_params": None, "confidence_threshold": None}
+    assert "confidence_threshold" not in _upload_with_stats(tmp_path, stats)
 
 
 def test_upload_ml_model_sends_rescale_confidence_only_when_off(tmp_path):
     stats = {"model_name": "lgbm", "average_precision": 0.9, "average_recall": 0.8,
-             "average_f1": 0.85, "best_params": None, "decision_threshold": 0.87}
+             "average_f1": 0.85, "best_params": None, "confidence_threshold": 0.87}
     assert "rescale_confidence" not in _upload_with_stats(tmp_path, dict(stats, rescale_confidence=True))
     assert _upload_with_stats(tmp_path, dict(stats, rescale_confidence=False))["rescale_confidence"] is False

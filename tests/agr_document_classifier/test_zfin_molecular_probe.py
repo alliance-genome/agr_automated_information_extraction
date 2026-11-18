@@ -11,7 +11,7 @@ acquisition workflow, which means three writes:
 with the last two carrying the "outside of scope" (ATP:0000209) curation tag.
 
 A negative gets nothing at all. The model calls positive only papers scored at
-or above its ml_model.decision_threshold, 0.87 (SCRUM-6482; it used to be
+or above its ml_model.confidence_threshold, 0.87 (SCRUM-6482; it used to be
 hard-coded here), and its ml_model.rescale_confidence is false so the tags keep
 the model's own score. Ceri chose (SCRUM-5764, 2026-08-17) to let borderline papers
 reach a curator untouched, because wrongly dropping a curatable paper is the
@@ -88,7 +88,7 @@ class _FixedScores:
 def test_the_model_threshold_decides_which_papers_are_dropped_and_keeps_the_raw_score():
     scores = [0.86, 0.87, 0.95]
     classifications, conf_scores = clf.predict_labels_and_confidence(
-        _FixedScores(scores), np.zeros((3, 1)), decision_threshold=0.87, rescale_confidence=False)
+        _FixedScores(scores), np.zeros((3, 1)), confidence_threshold=0.87, rescale_confidence=False)
     assert list(classifications) == [0, 1, 1]
     assert conf_scores == scores
     curies, m_tet, m_wft, m_cs, m_success = _run(conf_scores=conf_scores, classifications=classifications)
@@ -208,7 +208,7 @@ def test_a_pre_existing_curation_status_is_not_reported_as_an_error(caplog):
 
 def test_process_job_batch_classifies_with_the_model_threshold():
     model_meta_data = {"negated": False, "data_novelty": "ATP:0000335", "species": "NCBITaxon:7955",
-                       "ml_model_id": 71, "decision_threshold": 0.87, "rescale_confidence": False}
+                       "ml_model_id": 71, "confidence_threshold": 0.87, "rescale_confidence": False}
     with patch.object(clf, "profile_pair_from_model", return_value=("profile", 1)), \
             patch.object(clf, "classify_documents_from_abc_embeddings",
                          return_value=([], np.array([]), [], [])) as m_classify, \
@@ -216,7 +216,7 @@ def test_process_job_batch_classifies_with_the_model_threshold():
         clf.process_job_batch([{"reference_curie": "AGRKB:101000000000001"}], "ZFIN", "ATP:0000370", 1,
                               None, object(), model_meta_data, False, use_abc_embeddings=True,
                               abc_use_bow=True)
-    assert m_classify.call_args.kwargs["decision_threshold"] == 0.87
+    assert m_classify.call_args.kwargs["confidence_threshold"] == 0.87
     assert m_classify.call_args.kwargs["rescale_confidence"] is False
 
 
@@ -230,5 +230,5 @@ def test_a_model_without_the_new_columns_rescales_by_default():
         clf.process_job_batch([{"reference_curie": "AGRKB:101000000000001"}], "WB", "ATP:0000061", 1,
                               None, object(), model_meta_data, False, use_abc_embeddings=True,
                               abc_use_bow=True)
-    assert m_classify.call_args.kwargs["decision_threshold"] is None
+    assert m_classify.call_args.kwargs["confidence_threshold"] is None
     assert m_classify.call_args.kwargs["rescale_confidence"] is True

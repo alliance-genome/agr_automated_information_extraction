@@ -241,7 +241,7 @@ def train_classifier(embedding_model_path: str, training_data_dir: str, weighted
     mix, and ``rebalance="bucket_mix"`` trains with those corpus weights.
     ``positive_share`` ({bucket: estimated share of positives in the corpus}) adds a
     holdout score weighted to the estimated corpus (bucket mix and positives within
-    each bucket) and a decision threshold tuned for it, and
+    each bucket) and a confidence threshold tuned for it, and
     ``rebalance="bucket_and_positive_mix"`` trains with those weights
     (``..._balanced``: the same, with both classes scaled to equal total weight)."""
     if use_abc_embeddings:
@@ -353,7 +353,7 @@ def _supports_sample_weight(model) -> bool:
 
 
 def _decision_scores(model, X):
-    """Positive-class scores on the scale the classifier compares with ml_model.decision_threshold:
+    """Positive-class scores on the scale the classifier compares with ml_model.confidence_threshold:
     predict_proba where the model has it, else the decision function through a sigmoid (as
     predict_labels_and_confidence does), so a threshold tuned here applies there unchanged."""
     if hasattr(model, "predict_proba"):
@@ -403,7 +403,7 @@ def _cross_validate(model, X, y, fit_weight, folds, n_jobs):
 
 def _tuned_threshold_stats(best_classifier, X_train_val, y_train_val, X_test, y_test, idx_train_val, idx_test,
                            fit_weight, buckets, strata, positive_share, folds, oof=None, n_jobs=1):
-    """Decision threshold for the estimated corpus (SCRUM-6482), and the holdout scored with it.
+    """Confidence threshold for the estimated corpus (SCRUM-6482), and the holdout scored with it.
 
     The cut-off is chosen on out-of-fold scores of the train+val rows (the selected model's settings refit per
     fold, with the training weights), weighted to the estimated corpus, so the holdout is not used to choose it.
@@ -701,7 +701,7 @@ def _select_and_fit_model(X, y, remove_outliers, outlier_method, outlier_contami
             logger.info(f"Holdout test set weighted to the estimated corpus (NNC mix and positives per bucket): "
                         f"F1={estimated['f1']:.3f}, Precision={estimated['precision']:.3f}, "
                         f"Recall={estimated['recall']:.3f}")
-            logger.info("Tuning the decision threshold for the estimated corpus on out-of-fold scores...")
+            logger.info("Tuning the confidence threshold for the estimated corpus on out-of-fold scores...")
             tuned = _tuned_threshold_stats(
                 best_classifier, X_train_val, y_train_val, X_test, y_test, idx_train_val, idx_test,
                 fit_params.get("sample_weight"), buckets, strata, positive_share, stratified_k_folds,
@@ -900,14 +900,14 @@ def parse_arguments():
                              "of downloading it again. Delete the directory after a re-embedding. Default: no cache")
     parser.add_argument("--embedding_fetch_workers", type=int, default=1,
                         help="References to fetch from the ABC in parallel when loading embeddings (default: 1)")
-    parser.add_argument("--decision_threshold", type=str, default="auto",
+    parser.add_argument("--confidence_threshold", type=str, default="auto",
                         help="Score from which the classifier calls a paper positive, uploaded as "
-                             "ml_model.decision_threshold (the confidence score on the tags stays the model's own "
+                             "ml_model.confidence_threshold (the confidence score on the tags stays the model's own "
                              "score, rescaled so the threshold maps to 0.5 unless --keep_raw_confidence). 'auto': the threshold tuned for the estimated corpus when "
                              "--bucket_prevalence_tsv is given, else none; 'none': the classifier's default 0.5; "
                              "or a number between 0 and 1. Default: auto")
     parser.add_argument("--keep_raw_confidence", action="store_true",
-                        help="Upload ml_model.rescale_confidence=false: with a --decision_threshold, tags keep the "
+                        help="Upload ml_model.rescale_confidence=false: with a --confidence_threshold, tags keep the "
                              "model's own score instead of one rescaled so the threshold maps to 0.5 (as ZFIN's "
                              "molecular probe model does). Default: rescale")
     args = parser.parse_args()
@@ -917,13 +917,13 @@ def parse_arguments():
         parser.error("--bucket_prevalence_tsv needs --nnc_strata_csv")
     if args.rebalance in POSITIVE_MIX_MODES and not args.bucket_prevalence_tsv:
         parser.error(f"--rebalance {args.rebalance} needs --bucket_prevalence_tsv")
-    if args.decision_threshold not in ("auto", "none"):
+    if args.confidence_threshold not in ("auto", "none"):
         try:
-            threshold = float(args.decision_threshold)
+            threshold = float(args.confidence_threshold)
         except ValueError:
             threshold = None
         if threshold is None or not 0 < threshold < 1:
-            parser.error("--decision_threshold must be 'auto', 'none' or a number between 0 and 1")
+            parser.error("--confidence_threshold must be 'auto', 'none' or a number between 0 and 1")
     if args.remove_outliers and args.nnc_strata_csv:
         parser.error("--remove_outliers cannot be combined with --nnc_strata_csv")
     # SCRUM-5697. Resolve the per-MOD default only when the caller stated
@@ -1053,8 +1053,8 @@ def upload_pre_existing_model(args, training_set, training_data_dir):
                     stats=stats, dataset_id=training_set["dataset_id"], file_extension="joblib")
 
 
-def resolve_decision_threshold(choice: str, stats: dict) -> Optional[float]:
-    """The ml_model.decision_threshold to upload (SCRUM-6482): ``choice`` is --decision_threshold. 'auto' takes
+def resolve_confidence_threshold(choice: str, stats: dict) -> Optional[float]:
+    """The ml_model.confidence_threshold to upload (SCRUM-6482): ``choice`` is --confidence_threshold. 'auto' takes
     the threshold tuned for the estimated corpus when one was tuned, 'none' leaves it unset (0.5)."""
     if choice == "none":
         return None
@@ -1099,9 +1099,9 @@ def train_and_save_model(args, training_data_dir, training_set, abc_curies=None,
                      if getattr(args, "fixed_model", None) else None))
     if rebalance_info:
         stats["rebalance"] = rebalance_info
-    stats["decision_threshold"] = resolve_decision_threshold(getattr(args, "decision_threshold", "auto"), stats)
+    stats["confidence_threshold"] = resolve_confidence_threshold(getattr(args, "confidence_threshold", "auto"), stats)
     stats["rescale_confidence"] = not getattr(args, "keep_raw_confidence", False)
-    logger.info(f"Decision threshold: {stats['decision_threshold'] or 'none (the classifier default 0.5)'}")
+    logger.info(f"Confidence threshold: {stats['confidence_threshold'] or 'none (the classifier default 0.5)'}")
     logger.info(f"Best classifier stats: {str(stats)}")
     # Tag the model (via the ml_model embedding_* columns) so the classifier
     # fetches ABC embeddings for it and rebuilds the identical embedding+BoW

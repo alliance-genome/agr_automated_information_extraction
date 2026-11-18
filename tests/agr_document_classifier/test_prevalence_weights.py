@@ -106,10 +106,10 @@ def test_fixed_model_skips_the_search_and_reports_cv_and_threshold():
     assert "threshold" in stats["tuned_threshold"]
 
 
-def test_resolve_decision_threshold():
-    from agr_document_classifier.agr_document_classifier_trainer import resolve_decision_threshold
+def test_resolve_confidence_threshold():
+    from agr_document_classifier.agr_document_classifier_trainer import resolve_confidence_threshold
     tuned = {"tuned_threshold": {"threshold": 0.31}}
-    assert resolve_decision_threshold("auto", tuned) == 0.31
-    assert resolve_decision_threshold("auto", {}) is None
-    assert resolve_decision_threshold("none", tuned) is None
-    assert resolve_decision_threshold("0.87", tuned) == 0.87
+    assert resolve_confidence_threshold("auto", tuned) == 0.31
+    assert resolve_confidence_threshold("auto", {}) is None
+    assert resolve_confidence_threshold("none", tuned) is None
+    assert resolve_confidence_threshold("0.87", tuned) == 0.87

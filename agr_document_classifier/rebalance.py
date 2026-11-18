@@ -16,7 +16,7 @@ in one of these ways (``--rebalance``):
     then has the corpus's (low) share of positives.
   - ``bucket_and_positive_mix_balanced``: as ``bucket_and_positive_mix``, then all positives scaled up together
     so both classes carry the same total weight: the positives still look like the corpus's positives and the
-    negatives like its negatives, but the model learns from a 50/50 class mix. Its decision threshold then has to
+    negatives like its negatives, but the model learns from a 50/50 class mix. Its confidence threshold then has to
     be set for the real share of positives (the trainer's tuned threshold).
 
 The same per-paper corpus weights also give an estimate of how a model would score on the corpus mix rather

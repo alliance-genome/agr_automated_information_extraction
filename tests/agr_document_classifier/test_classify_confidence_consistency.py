@@ -83,13 +83,13 @@ def test_linear_svc_decision_function_fallback_is_consistent():
         assert (label > 0) == (score >= 0.5)
 
 
-def test_decision_threshold_rescales_the_score_so_the_threshold_is_0_5():
-    """SCRUM-6482: ml_model.decision_threshold moves the cut-off and, by default, the
+def test_confidence_threshold_rescales_the_score_so_the_threshold_is_0_5():
+    """SCRUM-6482: ml_model.confidence_threshold moves the cut-off and, by default, the
     confidence is rescaled so a positive always has at least 0.5."""
     X, y = _overlapping_dataset()
     model = SVC(probability=True, random_state=42).fit(X, y)
     _, raw_scores = predict_labels_and_confidence(model, X)
-    classifications, scores = predict_labels_and_confidence(model, X, decision_threshold=0.3)
+    classifications, scores = predict_labels_and_confidence(model, X, confidence_threshold=0.3)
 
     assert scores == [rescale_to_threshold(s, 0.3) for s in raw_scores]
     for label, raw, score in zip(classifications, raw_scores, scores):
@@ -101,7 +101,7 @@ def test_rescale_confidence_false_keeps_the_model_score():
     X, y = _overlapping_dataset()
     model = SVC(probability=True, random_state=42).fit(X, y)
     _, raw_scores = predict_labels_and_confidence(model, X)
-    classifications, scores = predict_labels_and_confidence(model, X, decision_threshold=0.8,
+    classifications, scores = predict_labels_and_confidence(model, X, confidence_threshold=0.8,
                                                             rescale_confidence=False)
 
     assert scores == raw_scores
@@ -121,10 +121,10 @@ def test_rescale_to_threshold(threshold):
         assert np.allclose(rescaled, grid)
 
 
-def test_no_decision_threshold_means_0_5():
+def test_no_confidence_threshold_means_0_5():
     X, y = _overlapping_dataset()
     model = LinearSVC(random_state=42, max_iter=5000).fit(X, y)
     default = predict_labels_and_confidence(model, X)
-    explicit = predict_labels_and_confidence(model, X, decision_threshold=0.5)
+    explicit = predict_labels_and_confidence(model, X, confidence_threshold=0.5)
     assert list(default[0]) == list(explicit[0])
     assert default[1] == explicit[1]
