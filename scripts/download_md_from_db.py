@@ -76,10 +76,11 @@ def md5sums_for_curies(curies: list[str]) -> dict:
         """
         SELECT r.curie, rf.md5sum
         FROM reference r
-        JOIN referencefile rf ON rf.reference_id = r.reference_id
+        JOIN referencefile rf ON rf.reference_id = r.id
         WHERE r.curie = ANY(%s)
           AND rf.file_class = 'converted_merged_main'
           AND rf.file_extension = 'md'
+          AND rf.file_publication_status = 'final'
         """,
         (curies,),
     )
@@ -96,13 +97,14 @@ def md5sums_for_mod(mod_abbr: str, corpus_only: bool) -> dict:
         f"""
         SELECT DISTINCT ON (r.curie) r.curie, rf.md5sum
         FROM reference r
-        JOIN mod_corpus_association mca ON mca.reference_id = r.reference_id
-        JOIN mod m ON m.mod_id = mca.mod_id AND m.abbreviation = %s
-        JOIN referencefile rf ON rf.reference_id = r.reference_id
+        JOIN mod_corpus_association mca ON mca.reference_id = r.id
+        JOIN mod m ON m.id = mca.mod_id AND m.abbreviation = %s
+        JOIN referencefile rf ON rf.reference_id = r.id
          AND rf.file_class = 'converted_merged_main'
          AND rf.file_extension = 'md'
+         AND rf.file_publication_status = 'final'
         {corpus_clause}
-        ORDER BY r.curie, rf.referencefile_id
+        ORDER BY r.curie, rf.id
         """,
         (mod_abbr,),
     )

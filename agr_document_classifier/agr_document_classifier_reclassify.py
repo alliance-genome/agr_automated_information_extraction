@@ -44,6 +44,7 @@ import psycopg2
 from utils.abc_utils import (download_abc_model, get_model_data, get_tet_source_id,
                              send_classification_tag_to_abc, set_blue_api_base_url)
 from utils.abc_embeddings import profile_pair_from_model
+from agr_document_classifier.confidence_settings import model_confidence_settings
 from agr_document_classifier.agr_document_classifier_classify import (
     classify_documents_from_abc_embeddings, get_confidence_level, configure_logging)
 
@@ -154,13 +155,15 @@ def _load_model(topic):
 
 def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
     classifier, meta = _load_model(topic)
+    threshold, rescale = model_confidence_settings(MOD, topic, meta)
     logger.info(f"[{topic} {name}] classifying {len(curies)} references")
     species = meta["species"] if (meta.get("species") or "").startswith("NCBITaxon:") else None
     negated_model = bool(meta.get("negated"))
     profile_name, profile_version = profile_pair_from_model(meta)
     ids, classifications, confidences, valid = classify_documents_from_abc_embeddings(
         curies, MOD, classifier, use_bow=True, embedding_cache=cache,
-        profile_name=profile_name, version=profile_version)
+        profile_name=profile_name, version=profile_version,
+        confidence_threshold=threshold, rescale_confidence=rescale)
     sent = skipped = not_tagged = 0
     for curie, cls, conf, ok in zip(ids, classifications, confidences, valid):
         if not ok:
@@ -191,6 +194,7 @@ def reclassify_tet_topic(topic, name, curies, tet_source_id, cache, dry_run):
 
 def reclassify_no_gen_data(cache, dry_run, limit, curies_override=None):
     classifier, meta = _load_model(NO_GEN_DATA_TOPIC)
+    threshold, rescale = model_confidence_settings(MOD, NO_GEN_DATA_TOPIC, meta)
     if curies_override:
         curies = curies_override
     else:
@@ -201,7 +205,8 @@ def reclassify_no_gen_data(cache, dry_run, limit, curies_override=None):
     profile_name, profile_version = profile_pair_from_model(meta)
     ids, classifications, confidences, valid = classify_documents_from_abc_embeddings(
         curies, MOD, classifier, use_bow=True, embedding_cache=cache,
-        profile_name=profile_name, version=profile_version)
+        profile_name=profile_name, version=profile_version,
+        confidence_threshold=threshold, rescale_confidence=rescale)
     curie_to_conf = {curie: float(conf) for curie, conf, ok in zip(ids, confidences, valid) if ok}
     skipped = len(ids) - len(curie_to_conf)
     if dry_run:
