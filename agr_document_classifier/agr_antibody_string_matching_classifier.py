@@ -18,6 +18,7 @@ import traceback
 from argparse import Namespace
 
 from agr_document_classifier.antibody_rules import build_regexes, match_antibody_spans
+from utils.build_info import log_build_info
 from utils.abc_utils import (
     download_md_files_for_references,
     get_cached_mod_id_from_abbreviation,
@@ -251,6 +252,7 @@ def direct_classify_mode(args: Namespace) -> None:
 def main() -> None:
     args = parse_arguments()
     configure_logging(args.log_level)
+    log_build_info()  # which commit this job runs (SCRUM-6878)
     if args.stage:
         set_blue_api_base_url("https://stage-literature-rest.alliancegenome.org")
         os.environ['ABC_API_SERVER'] = "https://stage-literature-rest.alliancegenome.org"

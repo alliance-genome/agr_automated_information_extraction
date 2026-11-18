@@ -3,6 +3,7 @@ import csv
 import logging
 import os
 
+from utils.build_info import log_build_info
 from utils.abc_utils import (get_curie_from_xref,
                              download_md_files_for_references, download_bib_data_for_references)
 
@@ -123,6 +124,7 @@ def main():
     # Set up logging
     logging.basicConfig(level=args.log_level,
                         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     out_dir = os.path.abspath(args.output_dir)
     os.makedirs(out_dir, exist_ok=True)

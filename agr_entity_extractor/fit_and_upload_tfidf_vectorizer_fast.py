@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 from scipy.sparse import diags
 
 from agr_entity_extractor.models import CustomTokenizer
+from utils.build_info import log_build_info
 from utils.abc_utils import (
     get_all_ref_curies,
     download_md_files_for_references,
@@ -205,6 +206,7 @@ def main():
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     if not os.path.exists(args.output_path):
         vect = fit_vectorizer_on_agr_corpus(

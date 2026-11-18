@@ -2,6 +2,7 @@ import csv
 import logging
 import sys
 
+from utils.build_info import log_build_info
 from utils.abc_utils import get_curie_from_xref, create_dataset, add_entry_to_dataset
 
 logger = logging.getLogger(__name__)
@@ -43,5 +44,6 @@ if __name__ == "__main__":
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     upload_dataset_from_csv(args.csv_file, args.title, args.description, args.mod_abbreviation, args.topic)

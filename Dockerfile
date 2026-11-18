@@ -1,3 +1,14 @@
+# Records which commit the build context is checked out at (SCRUM-6878), however the image
+# is built; every job logs it when it starts (utils/build_info.py). Only the two small files
+# reach the final image; .git does not.
+FROM python:3.11-alpine3.20 AS build_info
+RUN apk add --no-cache git
+COPY .git /tmp/repo.git
+RUN mkdir /build_info && \
+    (git -c safe.directory='*' --git-dir=/tmp/repo.git rev-parse --short=8 HEAD || echo unknown) \
+        > /build_info/commit && \
+    date -u +%Y-%m-%dT%H:%M:%SZ > /build_info/build_date
+
 FROM agr_document_classifier_base
 
 ENV TZ=UTC
@@ -49,5 +60,13 @@ RUN python3 -c "import nltk; nltk.download('stopwords'); nltk.download('punkt');
 RUN git lfs install --force
 RUN git clone https://huggingface.co/cgrivaz/FlyBaseGeneAbstractClassifier.git
 RUN export PYTHONPATH=/usr/src/app/bert_entity_extraction:/usr/src/app/bert_entity_extraction/gene_finding:/usr/src/app/
+
+# Which commit this image was built from (SCRUM-6878): read from .git by the build_info stage;
+# GIT_SHA/BUILD_DATE build arguments take precedence when passed.
+COPY --from=build_info /build_info /etc/abc_build_info
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_SHA=${GIT_SHA} BUILD_DATE=${BUILD_DATE}
+LABEL org.opencontainers.image.revision=${GIT_SHA} org.opencontainers.image.created=${BUILD_DATE}
 
 CMD ["/bin/bash"]

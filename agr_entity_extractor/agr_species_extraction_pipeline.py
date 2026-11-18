@@ -9,6 +9,7 @@ from typing import List, Tuple
 import requests
 from transformers.utils.logging import set_verbosity_error
 
+from utils.build_info import log_build_info
 from utils.abc_utils import (
     load_all_jobs,
     get_cached_mod_abbreviation_from_id,
@@ -422,6 +423,7 @@ def main():
         datefmt='%Y-%m-%d %H:%M:%S',
         stream=sys.stdout
     )
+    log_build_info()  # which commit this job runs (SCRUM-6878)
 
     mod_topic_jobs = load_all_jobs("_extraction_job", args=None)
 
