@@ -23,12 +23,11 @@ ADD agr_document_classifier/agr_document_classification_pipeline.py .
 ADD agr_document_classifier/agr_document_classifier_classify.py .
 ADD agr_document_classifier/agr_document_classifier_trainer.py .
 ADD agr_document_classifier/agr_priority_classifier_balanced.py .
-# Antibody string-matching classifier (SCRUM-5601): copy as an importable package so
-# `python3 -m agr_document_classifier.agr_antibody_string_matching_classifier` can resolve
-# `from agr_document_classifier.antibody_rules import ...`.
-ADD agr_document_classifier/__init__.py ./agr_document_classifier/__init__.py
-ADD agr_document_classifier/antibody_rules.py ./agr_document_classifier/antibody_rules.py
-ADD agr_document_classifier/agr_antibody_string_matching_classifier.py ./agr_document_classifier/agr_antibody_string_matching_classifier.py
+# The whole package, not a file list: the scripts above import their shared modules as
+# `agr_document_classifier.<module>` (confidence_settings, models, rebalance, antibody_rules),
+# and `python3 -m agr_document_classifier.<script>` needs the package. A file list misses
+# every module added later -- confidence_settings.py (SCRUM-6482) failed classify at import.
+ADD agr_document_classifier/ ./agr_document_classifier/
 ADD agr_dataset_manager/dataset_downloader.py .
 ADD agr_dataset_manager/dataset_upload_from_csv.py .
 ADD agr_entity_extractor/agr_entity_extraction_pipeline.py .
@@ -43,10 +42,6 @@ ADD utils ./bert_entity_extraction/utils
 ADD Makefile .
 ADD utils/ ./utils
 ADD agr_dataset_manager/ ./agr_dataset_manager
-# POSSIBLE_CLASSIFIERS is imported as `agr_document_classifier.models` by the trainer and
-# by scripts/evaluate_probe_classifiers.py, so it has to land inside the package here --
-# the image otherwise has an importable agr_document_classifier/ with no models.py in it.
-ADD agr_document_classifier/models.py ./agr_document_classifier/models.py
 ADD export_data/export_fb_tets.py .
 ADD export_data/export_fb_tets_using_score.py .
 ADD bin/ ./bin/
