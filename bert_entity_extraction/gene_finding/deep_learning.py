@@ -60,6 +60,9 @@ def get_genes_with_dl(paper_file: str, gene_dict: typing.Dict[str, str],
                                   False, False, False, exceptions_path)
         if not candidates:
             logger.info(f"no italic gene candidates found in body of {paper_file}")
+        else:
+            # Each candidate is one model call on CPU, the slow part of a paper.
+            logger.info(f"{len(candidates)} gene candidates in {paper_file}; scoring each with the model")
         results = {}
         for fbrf in candidates:
             gene = get_gene(fbrf, candidates[fbrf], fbid_to_symbol)

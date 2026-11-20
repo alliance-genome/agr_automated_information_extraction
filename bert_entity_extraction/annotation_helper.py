@@ -239,6 +239,9 @@ def main():  # noqa C901
         stream=sys.stdout,
         force=True,
     )
+    # urllib3 logs every request URL at DEBUG, query string included, so a --log_level DEBUG
+    # run would write NCBI_API_KEY and NCBI_EMAIL from the efetch call into the log.
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
     # Probes prove which source file is running and that logging is alive.
     print(f"[PROBE] annotation_helper.py running from {__file__}", flush=True)
     print(f"[PROBE] args = {args}", flush=True)
@@ -285,7 +288,9 @@ def main():  # noqa C901
                            "to identify papers of interest for curation data types")
     # If we do other mods this will need changing to a look up
     species = 'NCBITaxon:7227'
-    for job in jobs:
+    for job_num, job in enumerate(jobs, start=1):
+        logger.info(f"Job {job_num}/{len(jobs)}: reference_id={job['reference_id']} "
+                    f"job_id={job['reference_workflow_tag_id']}")
         logger.debug(f"Start Job {job}")
         if not set_job_started(job):
             logger.error(f"Problem setting to job started {job}!!!")
@@ -301,6 +306,7 @@ def main():  # noqa C901
         pmcid = ref_to_pmc[ref_id]
         logger.debug(f"pmcid -> {pmcid} job_id-> {job['reference_workflow_tag_id']} ref_id -> {ref_id}")
 
+        job_start = time.monotonic()
         try:
             xml_path = fetch_pmc_xml(pmcid)
         except requests.exceptions.RequestException as e:
@@ -315,6 +321,8 @@ def main():  # noqa C901
             results, status = deep_learning.get_genes_with_dl(
                 xml_path,
                 gene_dict, fbid_to_symbol, EXCEPTIONS_PATH)
+            logger.info(f"pmcid={pmcid}: {len(results)} genes scored in "
+                        f"{time.monotonic() - job_start:.1f}s (download and model)")
             if results:
                 okay = True
                 for fbgn in results:
