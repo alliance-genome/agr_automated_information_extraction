@@ -5,7 +5,7 @@ import os
 import time
 import urllib.request
 from argparse import Namespace
-from collections import defaultdict
+from collections import Counter, defaultdict
 from typing import List, Tuple, Dict, Union, Optional
 from urllib.error import HTTPError, URLError
 
@@ -1448,6 +1448,10 @@ def load_all_jobs(job_label: str, args: Namespace) -> Dict[Tuple[str, str], List
     limit = 1000
     offset = 0
     jobs_already_added = set()
+    # ABC matches job_label as a substring, so "_extraction_job" also returns jobs that
+    # ABC runs itself and that have no topic, such as email_extraction_job (thousands per run).
+    # Count them instead of logging each one.
+    skipped_by_job_name: Counter = Counter()
     logger.info("Loading jobs from ABC ...")
 
     while all_jobs := get_jobs_batch(job_label=job_label, limit=limit, offset=offset, args=args):
@@ -1456,12 +1460,16 @@ def load_all_jobs(job_label: str, args: Namespace) -> Dict[Tuple[str, str], List
             topic = job["topic_id"]
             mod_id = job["mod_id"]
             if topic is None or mod_id is None:
-                logger.warning(f"Skipping job with missing topic_id or mod_id: {job}")
+                skipped_by_job_name[job.get("job_name")] += 1
                 continue
             if (mod_id, topic, reference_id) not in jobs_already_added:
                 mod_datatype_jobs[(mod_id, topic)].append(job)
                 jobs_already_added.add((mod_id, topic, reference_id))
         offset += limit
 
+    if skipped_by_job_name:
+        by_name = sorted(skipped_by_job_name.items(), key=lambda item: str(item[0]))
+        counts = ", ".join(f"{name}={count}" for name, count in by_name)
+        logger.info(f"Skipped {sum(skipped_by_job_name.values())} jobs without topic_id or mod_id: {counts}")
     logger.info("Finished loading jobs to classify from ABC ...")
     return mod_datatype_jobs
